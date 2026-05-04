@@ -31,6 +31,8 @@
 ### 部署
 - **平台**：Cloudflare Pages，獨立專案綁本 repo（main branch 自動部署）
 - **網域**：`tools.zcreation.art`（與主站 `zcreation.art` 各自獨立）
+- **GitHub repo**：`github.com/ZhihlinC/zcreation-tools`（private）
+- **Pages 專案**：`zcreation-tools`（已綁 `tools.zcreation.art`，2026-05-04 上線）
 
 ### 技術棧
 - 純 HTML + Vanilla JS + p5.js（CDN）

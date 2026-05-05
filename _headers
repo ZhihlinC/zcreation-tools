@@ -3,12 +3,14 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: interest-cohort=()
 
-# Always revalidate CSS / JS so edits land for users without manual version
-# bumps. Cost is one ETag round-trip per asset (304 with no body) — negligible
-# for the 1 CSS + 1 JS each tool ships. HTML is handled by Cloudflare Pages
-# defaults (max-age=0, must-revalidate). See CLAUDE.md "Cloudflare 快取策略".
-/coverage/*.js
-  Cache-Control: no-cache
-
-/coverage/*.css
+# Always revalidate every asset under /coverage/ so edits land for users
+# without manual version bumps. Cost is one ETag round-trip per asset (304
+# with no body) — negligible for the small surface each tool ships.
+#
+# Splat note: Cloudflare Pages requires `*` at end of path; mid-path globs
+# like `/coverage/*.js` silently no-op. Hence the whole-subtree match. HTML
+# under /coverage/ also takes no-cache, which is functionally identical to
+# CF Pages' HTML default (max-age=0, must-revalidate). See CLAUDE.md
+# "Cloudflare 快取策略" — future tools must add their own /<tool>/* block.
+/coverage/*
   Cache-Control: no-cache

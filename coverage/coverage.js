@@ -37,7 +37,7 @@ const STATE = {
       'listening-centre': true,
       speakers: true, cones: true, axes: true, coords: false,
       'coverage-heat': true, triangulation: false,
-      phantoms: true, 'health-panel': false,
+      phantoms: true, 'health-panel': true,
     },
   },
 };
@@ -685,11 +685,13 @@ function computeHullMetrics(points, faces) {
   const N = faces.length;
   const areas = new Array(N);
   const maxAngles = new Array(N);
+  const regions = new Array(N);
   for (let i = 0; i < N; i++) {
     const f = faces[i];
     const A = points[f.a].dir, B = points[f.b].dir, C = points[f.c].dir;
     areas[i] = sphericalTriangleArea(A, B, C);
     maxAngles[i] = sphericalTriangleMaxAngle(A, B, C);
+    regions[i] = faceRegion(A, B, C);
   }
   const medianArea = median(areas);
   const metrics = new Array(N);
@@ -697,10 +699,71 @@ function computeHullMetrics(points, faces) {
   for (let i = 0; i < N; i++) {
     const ratio = medianArea > 0 ? areas[i] / medianArea : 1;
     const level = classifyTriangle(areas[i], maxAngles[i], ratio);
-    metrics[i] = { area: areas[i], maxAngle: maxAngles[i], areaRatio: ratio, level };
+    metrics[i] = {
+      area: areas[i],
+      maxAngle: maxAngles[i],
+      areaRatio: ratio,
+      level,
+      region: regions[i],
+    };
     summary[level]++;
   }
   return { metrics, medianArea, summary };
+}
+
+// ---------------------------------------------------------------------------
+// Region labels (SPEC §8.3) — coarse direction tag for a triangle's
+// centroid. Maps a unit-vector direction to one of the 8 fixed labels:
+//   upper hemisphere / lower hemisphere / front / rear /
+//   right side / left side / centerline / surround ring
+//
+// Decision tree:
+//  1. |z| > 0.7              → upper / lower hemisphere (strong vertical)
+//  2. |y| > 0.7              → front / rear              (strong forward/back)
+//  3. |x| > 0.7              → right / left side         (strong horizontal)
+//  4. |x| < 0.3              → centerline                (no x dominance)
+//  5. |z| < 0.3              → surround ring             (mostly horizontal)
+//  6. otherwise              → 'the surround region'     (no clean label)
+//
+// dominantRegion picks the most-common label across triangles matching the
+// requested level. Ties broken by first occurrence (Map preserves insertion
+// order). Used by composeHealthLines to fill the [region] slot of the
+// dynamic warning text.
+// ---------------------------------------------------------------------------
+
+function regionForCentroid(c) {
+  if (c.z >  0.7) return 'upper hemisphere';
+  if (c.z < -0.7) return 'lower hemisphere';
+  if (c.y >  0.7) return 'front';
+  if (c.y < -0.7) return 'rear';
+  if (c.x >  0.7) return 'right side';
+  if (c.x < -0.7) return 'left side';
+  if (Math.abs(c.x) < 0.3) return 'centerline';
+  if (Math.abs(c.z) < 0.3) return 'surround ring';
+  return 'the surround region';
+}
+
+function faceRegion(A, B, C) {
+  const cx = (A.x + B.x + C.x) / 3;
+  const cy = (A.y + B.y + C.y) / 3;
+  const cz = (A.z + B.z + C.z) / 3;
+  const m = Math.sqrt(cx*cx + cy*cy + cz*cz);
+  if (m < 1e-12) return 'the surround region';  // degenerate, shouldn't happen
+  return regionForCentroid({ x: cx / m, y: cy / m, z: cz / m });
+}
+
+function dominantRegion(metrics, level) {
+  const counts = new Map();
+  for (const m of metrics) {
+    if (m.level !== level) continue;
+    counts.set(m.region, (counts.get(m.region) || 0) + 1);
+  }
+  let bestRegion = 'the layout';
+  let bestCount = 0;
+  for (const [region, count] of counts) {
+    if (count > bestCount) { bestCount = count; bestRegion = region; }
+  }
+  return bestRegion;
 }
 
 // ---------------------------------------------------------------------------
@@ -936,20 +999,16 @@ function mergeNote(r) {
   return r.mergeReduction > 0 ? ` (${r.mergeReduction} sliver-merged)` : '';
 }
 
-// Symmetry suffix — only emitted on yellow / red, since green is the
-// expected baseline and adding a "✓" badge each time clutters the caption.
-// Format: " · sym Δ=0.07⚠" or " · sym Δ=0.18✗".
-function symmetryNote(sym) {
-  if (!sym || sym.level === 'green' || sym.level == null) return '';
-  const emoji = sym.level === 'red' ? '✗' : '⚠';
-  return ` · sym Δ=${sym.delta.toFixed(2)}${emoji}`;
-}
-
+// Caption under the triangulation layer toggle is intentionally minimal:
+// it answers "what kind of layout is this and how many points / triangles"
+// — the Layout Health panel (M3.E) carries the health and symmetry warnings
+// that used to live here as suffixes. Keeping mergeNote because it's a
+// non-health input-vs-effective-count fact the panel doesn't surface.
 function triangulationStatusText(r) {
   if (!r) return '';
   switch (r.kind) {
     case 'too-few':
-      return `Add ≥ 4 enabled speakers or phantoms to enable triangulation. Currently: ${r.count}${symmetryNote(r.symmetry)}${mergeNote(r)}.`;
+      return `Add ≥ 4 enabled speakers or phantoms to enable triangulation. Currently: ${r.count}${mergeNote(r)}.`;
     case 'point-at-centre': {
       // 1 → "X sits", 2 → "X and Y sit", 3-4 → "X, Y, and Z sit",
       // 5+ → first three names + "...and N more sit". Cap is to keep the
@@ -970,24 +1029,15 @@ function triangulationStatusText(r) {
       return `${head} ${verb} on the listening centre — cannot triangulate.`;
     }
     case 'collinear':
-      return `Speakers are collinear from the listening centre — layout needs spatial spread${symmetryNote(r.symmetry)}${mergeNote(r)}.`;
+      return `Speakers are collinear from the listening centre — layout needs spatial spread${mergeNote(r)}.`;
     case 'planar':
       // Note: mergeNote moved outside the parens (was nested inside before
       // M3.D, which produced awkward "(4 points (1 sliver-merged))"). The
       // new form is "(4 points) (1 sliver-merged)" — fewer nested parens.
-      return `Planar layout — 2D ring shown in place of triangulation (${r.points.length} points)${symmetryNote(r.symmetry)}${mergeNote(r)}.`;
-    case 'ok': {
-      // Health summary: prepend yellow ⚠ count then red ✗ count, both omitted
-      // when zero. M3.E will replace this caption with the full Layout Health
-      // panel; for now it's a one-line peek so M3.C metrics are visually
-      // verifiable without extra UI scaffolding.
-      const s = r.healthSummary;
-      const parts = [];
-      if (s.yellow) parts.push(`${s.yellow}⚠`);
-      if (s.red)    parts.push(`${s.red}✗`);
-      const health = parts.length ? ` · ${parts.join(' ')}` : '';
-      return `3D layout — ${r.points.length} points → ${r.faces.length} triangles${health}${symmetryNote(r.symmetry)}${mergeNote(r)}.`;
-    }
+      return `Planar layout — 2D ring shown in place of triangulation (${r.points.length} points)${mergeNote(r)}.`;
+    case 'ok':
+      // Health summary + symmetry now live in the Layout Health panel.
+      return `3D layout — ${r.points.length} points → ${r.faces.length} triangles${mergeNote(r)}.`;
     default:
       return '';
   }
@@ -1001,6 +1051,114 @@ function updateTriangulationStatusDom() {
   // Tag the row by kind so CSS can colour-code (red / yellow / green) in M3.E.
   const row = el.closest('.triangulation-status');
   if (row) row.dataset.kind = TRIANGULATION.result ? TRIANGULATION.result.kind : '';
+  // Layout Health panel mirrors the same result through a richer surface.
+  updateHealthPanelDom();
+}
+
+// ---------------------------------------------------------------------------
+// Layout Health panel (M3.E, SPEC §8.3). Produces a list of {text, level}
+// lines from the analyseTriangulation result, where level ∈ {ok, info,
+// warn, fail} drives the icon and colour. The panel framing paragraph is
+// static markup in index.html — these lines fill the dynamic status block.
+//
+// Lines emitted:
+//   1. A primary line summarising the layout kind:
+//      - ok 'green'            → ✓ Layout looks healthy.
+//      - ok 'yellow'           → ⚠ N suspect triangle(s) detected in <region>. Coverage may degrade.
+//      - ok 'red'              → ✗ N problematic triangle(s) detected in <region>. Consider adding phantom speaker(s).
+//      - planar                → ℹ Planar layout — 2D ring shown in place of triangulation.
+//      - too-few               → ⚠ Add ≥ 4 enabled speakers or phantoms — only N reachable.
+//      - collinear             → ⚠ Speakers are collinear from the listening centre — layout needs spatial spread.
+//      - point-at-centre       → ✗ N point(s) sit on the listening centre — cannot triangulate.
+//   2. (independent) Symmetry warning when level is yellow / red:
+//      - ⚠ Layout is asymmetric (L/R, Δ = X.XX rad). Sources panning across the centerline may behave inconsistently.
+// ---------------------------------------------------------------------------
+
+function pluralize(n, singular, plural) {
+  return n === 1 ? singular : (plural || singular + 's');
+}
+
+function composeHealthLines(r) {
+  if (!r) return [];
+  const lines = [];
+
+  switch (r.kind) {
+    case 'too-few':
+      lines.push({
+        level: 'warn',
+        text: `⚠ Add ≥ 4 enabled speakers or phantoms — only ${r.count} reachable.`,
+      });
+      break;
+    case 'point-at-centre': {
+      const n = r.names.length;
+      const verb = pluralize(n, 'sits', 'sit');
+      const noun = pluralize(n, 'point', 'points');
+      lines.push({
+        level: 'fail',
+        text: `✗ ${n} ${noun} ${verb} on the listening centre — cannot triangulate.`,
+      });
+      break;
+    }
+    case 'collinear':
+      lines.push({
+        level: 'warn',
+        text: '⚠ Speakers are collinear from the listening centre — layout needs spatial spread.',
+      });
+      break;
+    case 'planar':
+      lines.push({
+        level: 'info',
+        text: 'ℹ Planar layout — 2D ring shown in place of triangulation.',
+      });
+      break;
+    case 'ok': {
+      const s = r.healthSummary;
+      if (s.red > 0) {
+        const region = dominantRegion(r.metrics, 'red');
+        const noun = pluralize(s.red, 'triangle');
+        lines.push({
+          level: 'fail',
+          text: `✗ ${s.red} problematic ${noun} detected in ${region}. Consider adding phantom speaker(s).`,
+        });
+      } else if (s.yellow > 0) {
+        const region = dominantRegion(r.metrics, 'yellow');
+        const noun = pluralize(s.yellow, 'triangle');
+        lines.push({
+          level: 'warn',
+          text: `⚠ ${s.yellow} suspect ${noun} detected in ${region}. Coverage may degrade.`,
+        });
+      } else {
+        lines.push({ level: 'ok', text: '✓ Layout looks healthy.' });
+      }
+      break;
+    }
+  }
+
+  // Symmetry — independent line, only on yellow / red. SPEC §8.3 uses ⚠
+  // for both levels (the magnitude is conveyed by the Δ value, not the icon).
+  if (r.symmetry && (r.symmetry.level === 'yellow' || r.symmetry.level === 'red')) {
+    lines.push({
+      level: r.symmetry.level === 'red' ? 'fail' : 'warn',
+      text: `⚠ Layout is asymmetric (L/R, Δ = ${r.symmetry.delta.toFixed(2)} rad). Sources panning across the centerline may behave inconsistently.`,
+    });
+  }
+
+  return lines;
+}
+
+function updateHealthPanelDom() {
+  const host = document.getElementById('health-panel-status');
+  if (!host) return;
+  const lines = composeHealthLines(TRIANGULATION.result);
+  // Rebuild the status block from scratch — line count varies (0 / 1 / 2)
+  // and content is short, so DOM diffing buys nothing.
+  host.innerHTML = '';
+  for (const { text, level } of lines) {
+    const p = document.createElement('p');
+    p.className = 'health-line health-line-' + level;
+    p.textContent = text;
+    host.appendChild(p);
+  }
 }
 
 // Stroke colour per health level. Aligns with SPEC §14's emoji-colour rule
@@ -1341,17 +1499,28 @@ function __triangulationDevTests() {
   check('regular-tetra-all-red',
     r.healthSummary.red === 4 && r.healthSummary.yellow === 0 && r.healthSummary.green === 0,
     r.healthSummary);
-  // The regular tetrahedron with vertices at (±1, ±1, ±1)/√3 alternating
-  // signs is rotation-symmetric but NOT mirror-symmetric across X=0 (the
-  // mirror set has none of the 4 originals as a self-mirror nor as a pair).
-  // Each original's nearest mirror is at acos(1/3) ≈ 1.2310 rad, so symmetry
-  // suffix Δ=1.23✗ joins the all-red triangle warning in the status caption.
-  check('regular-tetra-status',
-    triangulationStatusText(r) === '3D layout — 4 points → 4 triangles · 4✗ · sym Δ=1.23✗.',
+  // M3.E moved health summary and symmetry warnings out of the caption and
+  // into the Layout Health panel. Caption now reports only the kind +
+  // counts; the panel surface carries severity / symmetry signals.
+  check('regular-tetra-caption',
+    triangulationStatusText(r) === '3D layout — 4 points → 4 triangles.',
     triangulationStatusText(r));
   check('regular-tetra-symmetry-red',
     r.symmetry && r.symmetry.level === 'red' && approx(r.symmetry.delta, Math.acos(1/3)),
     r.symmetry);
+  // Panel composition: red triangles + red symmetry both surface as fail
+  // lines. Region of all 4 red triangles for the regular tetrahedron is
+  // determined by their centroids — verify a fail-level line is emitted.
+  {
+    const lines = composeHealthLines(r);
+    check('regular-tetra-panel-2-lines', lines.length === 2, lines);
+    check('regular-tetra-panel-fail-triangles',
+      lines[0].level === 'fail' && /problematic triangles? detected/.test(lines[0].text),
+      lines[0]);
+    check('regular-tetra-panel-asymmetric',
+      lines[1].level === 'fail' && /Layout is asymmetric/.test(lines[1].text),
+      lines[1]);
+  }
 
   // 15. Regular octahedron metrics — 8 equilateral spherical triangles with
   // arc length π/2 (90°). Area = π/2 per face, max interior angle = π/2.
@@ -1431,9 +1600,14 @@ function __triangulationDevTests() {
   check('left-heavy-red',
     r.symmetry && r.symmetry.level === 'red',
     r.symmetry);
-  check('left-heavy-status-suffix',
-    / · sym Δ=\d+\.\d{2}✗\.$/.test(triangulationStatusText(r)),
-    triangulationStatusText(r));
+  // Panel emits a separate symmetry line on red — verify wording + level.
+  {
+    const lines = composeHealthLines(r);
+    const symLine = lines.find(l => /Layout is asymmetric/.test(l.text));
+    check('left-heavy-panel-symmetry-fail',
+      symLine && symLine.level === 'fail',
+      symLine);
+  }
 
   // S6. Symmetric on planar layout — should attach symmetry to the 'planar'
   // result kind too.
@@ -1447,6 +1621,133 @@ function __triangulationDevTests() {
   check('planar-carries-symmetry',
     r.kind === 'planar' && r.symmetry && r.symmetry.level === 'green',
     { kind: r.kind, sym: r.symmetry });
+
+  // ===== Region detection (M3.E) =====
+
+  check('region-upper',  regionForCentroid({ x: 0, y: 0, z:  0.9 }) === 'upper hemisphere',  '');
+  check('region-lower',  regionForCentroid({ x: 0, y: 0, z: -0.9 }) === 'lower hemisphere',  '');
+  check('region-front',  regionForCentroid({ x: 0, y:  0.9, z: 0.2 }) === 'front',           '');
+  check('region-rear',   regionForCentroid({ x: 0, y: -0.9, z: 0.2 }) === 'rear',            '');
+  check('region-right',  regionForCentroid({ x:  0.9, y: 0.2, z: 0.2 }) === 'right side',    '');
+  check('region-left',   regionForCentroid({ x: -0.9, y: 0.2, z: 0.2 }) === 'left side',     '');
+  check('region-centerline',
+    regionForCentroid({ x: 0.0, y: 0.5, z: 0.5 }) === 'centerline',
+    '');
+  check('region-surround-ring',
+    regionForCentroid({ x: 0.5, y: 0.5, z: 0.0 }) === 'surround ring',
+    '');
+
+  // ===== composeHealthLines via synthetic results (M3.E) =====
+  // Build minimal result objects that satisfy the lines composer's reads,
+  // bypassing analyseTriangulation. This isolates the line composition logic
+  // from the upstream pipeline so we can hit every branch deterministically.
+
+  const synthGreen = (level = 'green') => ({
+    kind: 'ok',
+    points: [{}, {}, {}, {}],
+    faces: [{}, {}, {}, {}],
+    metrics: [
+      { level: 'green', region: 'front' },
+      { level: 'green', region: 'rear' },
+      { level: 'green', region: 'upper hemisphere' },
+      { level: 'green', region: 'lower hemisphere' },
+    ],
+    healthSummary: { green: 4, yellow: 0, red: 0 },
+    symmetry: { delta: 0, level },
+    inputCount: 4, mergeReduction: 0,
+  });
+
+  let lines = composeHealthLines(synthGreen('green'));
+  check('lines-ok-all-green',
+    lines.length === 1 && lines[0].level === 'ok'
+    && lines[0].text === '✓ Layout looks healthy.',
+    lines);
+
+  lines = composeHealthLines(synthGreen('yellow'));
+  check('lines-ok-green-with-asymmetric',
+    lines.length === 2
+    && lines[0].text === '✓ Layout looks healthy.'
+    && lines[1].level === 'warn'
+    && /Layout is asymmetric/.test(lines[1].text),
+    lines);
+
+  // ok with 3 yellow triangles, all in upper hemisphere → dominantRegion
+  // selects 'upper hemisphere'.
+  lines = composeHealthLines({
+    kind: 'ok',
+    points: [{}, {}, {}, {}],
+    faces: [{}, {}, {}, {}],
+    metrics: [
+      { level: 'yellow', region: 'upper hemisphere' },
+      { level: 'yellow', region: 'upper hemisphere' },
+      { level: 'yellow', region: 'front' },
+      { level: 'green', region: 'rear' },
+    ],
+    healthSummary: { green: 1, yellow: 3, red: 0 },
+    symmetry: { delta: 0, level: 'green' },
+    inputCount: 4, mergeReduction: 0,
+  });
+  check('lines-ok-yellow-region',
+    lines.length === 1 && lines[0].level === 'warn'
+    && lines[0].text === '⚠ 3 suspect triangles detected in upper hemisphere. Coverage may degrade.',
+    lines);
+
+  // ok with red dominates: red line wins over yellow.
+  lines = composeHealthLines({
+    kind: 'ok',
+    points: [{}, {}, {}, {}],
+    faces: [{}, {}, {}, {}],
+    metrics: [
+      { level: 'red', region: 'rear' },
+      { level: 'yellow', region: 'front' },
+      { level: 'green', region: 'centerline' },
+      { level: 'green', region: 'centerline' },
+    ],
+    healthSummary: { green: 2, yellow: 1, red: 1 },
+    symmetry: { delta: 0, level: 'green' },
+    inputCount: 4, mergeReduction: 0,
+  });
+  check('lines-ok-red-wins',
+    lines.length === 1 && lines[0].level === 'fail'
+    && lines[0].text === '✗ 1 problematic triangle detected in rear. Consider adding phantom speaker(s).',
+    lines);
+
+  // too-few kind
+  lines = composeHealthLines({
+    kind: 'too-few', count: 3, inputCount: 3, mergeReduction: 0,
+    symmetry: { delta: 0, level: 'green' },
+  });
+  check('lines-too-few',
+    lines.length === 1 && lines[0].level === 'warn'
+    && lines[0].text === '⚠ Add ≥ 4 enabled speakers or phantoms — only 3 reachable.',
+    lines);
+
+  // planar kind → info line, no severity
+  lines = composeHealthLines({
+    kind: 'planar', points: [{}, {}, {}, {}], normal: {}, inputCount: 4, mergeReduction: 0,
+    symmetry: { delta: 0, level: 'green' },
+  });
+  check('lines-planar',
+    lines.length === 1 && lines[0].level === 'info'
+    && /Planar layout/.test(lines[0].text),
+    lines);
+
+  // point-at-centre with multiple names → fail level + plural grammar
+  lines = composeHealthLines({ kind: 'point-at-centre', names: ['L', 'R'] });
+  check('lines-point-at-centre-plural',
+    lines.length === 1 && lines[0].level === 'fail'
+    && lines[0].text === '✗ 2 points sit on the listening centre — cannot triangulate.',
+    lines);
+
+  // collinear kind
+  lines = composeHealthLines({
+    kind: 'collinear', count: 4, inputCount: 4, mergeReduction: 0,
+    symmetry: { delta: 0, level: 'green' },
+  });
+  check('lines-collinear',
+    lines.length === 1 && lines[0].level === 'warn'
+    && /Speakers are collinear/.test(lines[0].text),
+    lines);
 
   STATE.speakers = stash.speakers;
   STATE.phantoms = stash.phantoms;
@@ -2422,9 +2723,23 @@ window.addEventListener('DOMContentLoaded', () => {
   // Layer toggles
   document.querySelectorAll('#layers-panel input[data-layer]').forEach(inp => {
     inp.addEventListener('change', () => {
-      STATE.view.layers[inp.dataset.layer] = inp.checked;
+      const key = inp.dataset.layer;
+      STATE.view.layers[key] = inp.checked;
+      // health-panel is an HTML aside, not a 3D draw layer — toggle the
+      // element's hidden attribute directly. (Other layers gate inside
+      // drawScene each frame, so they don't need DOM updates here.)
+      if (key === 'health-panel') {
+        const el = document.getElementById('health-panel');
+        if (el) el.hidden = !inp.checked;
+      }
     });
   });
+
+  // Initial visibility for the health-panel layer — the checkbox starts
+  // checked per the layout in index.html, but we mirror that into the DOM
+  // explicitly to handle any future default change in one place.
+  const healthEl = document.getElementById('health-panel');
+  if (healthEl) healthEl.hidden = !STATE.view.layers['health-panel'];
 
   // Layout name
   const nameInput = document.getElementById('layout-name');

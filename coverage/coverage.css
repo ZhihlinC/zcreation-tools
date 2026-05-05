@@ -586,6 +586,65 @@ canvas { display: block; }
 }
 
 /* =============================================================================
+   Layout Health panel (M3.E, SPEC §8.3) — bottom-right floating, mirrors
+   audience-panel's positioning style. Framing paragraph is always shown;
+   health-status block is rebuilt by composeHealthLines() on every refresh.
+   Per-line emoji icon + colour conveys severity (✓ green / ⚠ yellow / ✗ red
+   / ℹ neutral); the icon glyph is part of the text content itself so
+   accessibility tools narrate it.
+   ============================================================================= */
+#health-panel {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  width: 320px;
+  z-index: 10;
+}
+#health-panel h2 {
+  margin: 0 0 0.5rem;
+}
+#health-panel .health-framing {
+  margin: 0 0 0.55rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+#health-panel .health-status {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+#health-panel .health-line {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  padding: 0.3rem 0.4rem;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-variant-numeric: tabular-nums;
+}
+#health-panel .health-line-ok {
+  color: #2a7a3e;
+  background: rgba( 80, 180, 100, 0.10);
+  border-color: rgba( 80, 180, 100, 0.35);
+}
+#health-panel .health-line-warn {
+  color: #8a6a10;
+  background: rgba(240, 200,  70, 0.14);
+  border-color: rgba(220, 170,  40, 0.40);
+}
+#health-panel .health-line-fail {
+  color: #a82a2a;
+  background: rgba(225,  70,  70, 0.10);
+  border-color: rgba(225,  70,  70, 0.40);
+}
+#health-panel .health-line-info {
+  color: var(--fg);
+  background: rgba(120, 130, 160, 0.08);
+  border-color: rgba(120, 130, 160, 0.30);
+}
+
+/* =============================================================================
    Overlay labels — axis labels + speaker name labels.
    ============================================================================= */
 #overlay-labels {

@@ -104,7 +104,7 @@
         <li><label><input type="checkbox" data-layer="triangulation"> Triangulation</label></li>
         <li class="triangulation-status" data-kind=""><span id="triangulation-status">…</span></li>
         <li><label><input type="checkbox" data-layer="phantoms" checked> Phantoms</label></li>
-        <li class="placeholder"><label><input type="checkbox" data-layer="health-panel" disabled> Layout Health <em>(M3)</em></label></li>
+        <li><label><input type="checkbox" data-layer="health-panel" checked> Layout Health</label></li>
       </ul>
     </section>
 
@@ -140,6 +140,20 @@
       <label><span>Width</span><input type="number" data-audience="width" step="any"></label>
       <label><span>Listen height</span><input type="number" data-audience="listeningHeight" step="any"></label>
     </div>
+  </aside>
+
+  <!-- Bottom right: Layout Health panel (SPEC §8.3). Framing paragraph is
+       static and always visible; #health-panel-status hosts the dynamic
+       lines composed by composeHealthLines() in coverage.js. -->
+  <aside id="health-panel" class="panel" aria-label="Layout Health">
+    <h2>Layout Health</h2>
+    <p class="health-framing">
+      These triangles are the geometric backbone every sphere-panning renderer
+      (VBAP, AllRAD-decoded ambisonics, …) works from. Sources panned across
+      an unhealthy triangle will localise poorly regardless of which renderer
+      you use later.
+    </p>
+    <div id="health-panel-status" class="health-status"></div>
   </aside>
 
   <!-- Mobile banner stub — M5 will style and persist. -->

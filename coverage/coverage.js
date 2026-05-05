@@ -606,6 +606,103 @@ function buildSphericalHull(points) {
   return { faces };
 }
 
+// ---------------------------------------------------------------------------
+// Per-triangle metrics (M3.C) — spherical area via L'Huilier theorem and
+// max interior angle via spherical law of cosines. Both inputs are unit
+// vectors on the sphere. Returned units: steradians (radians²) for area,
+// radians for max angle. Caller is responsible for converting to the
+// classification per SPEC §8.2 (area ratio vs median, angle thresholds).
+// ---------------------------------------------------------------------------
+
+const SPHERICAL_SIDE_EPS = 1e-9;  // arc-length below this → degenerate
+
+function clamp1(x) { return x < -1 ? -1 : x > 1 ? 1 : x; }
+function arcLen(u, v) { return Math.acos(clamp1(u.x*v.x + u.y*v.y + u.z*v.z)); }
+
+function sphericalTriangleArea(A, B, C) {
+  const a = arcLen(B, C);
+  const b = arcLen(C, A);
+  const c = arcLen(A, B);
+  // Degenerate (one side ≈ 0): area is 0 by definition.
+  if (a < SPHERICAL_SIDE_EPS || b < SPHERICAL_SIDE_EPS || c < SPHERICAL_SIDE_EPS) return 0;
+  const s = (a + b + c) / 2;
+  // Float-safety: tan products can go slightly negative near degenerate.
+  const t = Math.tan(s/2)
+          * Math.tan((s-a)/2)
+          * Math.tan((s-b)/2)
+          * Math.tan((s-c)/2);
+  return 4 * Math.atan(Math.sqrt(Math.max(0, t)));
+}
+
+function sphericalTriangleMaxAngle(A, B, C) {
+  const a = arcLen(B, C);
+  const b = arcLen(C, A);
+  const c = arcLen(A, B);
+  // Degenerate side → return π so the triangle trips the red threshold.
+  if (a < SPHERICAL_SIDE_EPS || b < SPHERICAL_SIDE_EPS || c < SPHERICAL_SIDE_EPS) return Math.PI;
+  // Spherical law of cosines: angle at A (opposite side a) =
+  //   acos((cos a − cos b cos c) / (sin b sin c))
+  const angleAt = (oppositeSide, adj1, adj2) => {
+    const sinProd = Math.sin(adj1) * Math.sin(adj2);
+    if (sinProd < SPHERICAL_SIDE_EPS) return Math.PI;
+    return Math.acos(clamp1(
+      (Math.cos(oppositeSide) - Math.cos(adj1) * Math.cos(adj2)) / sinProd
+    ));
+  };
+  return Math.max(
+    angleAt(a, b, c),
+    angleAt(b, c, a),
+    angleAt(c, a, b),
+  );
+}
+
+// Median of a numeric array. Returns 0 for empty input. Uses (lo+hi)/2 for
+// even counts. Operates on a copy so the caller's order is preserved.
+function median(values) {
+  if (values.length === 0) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+// SPEC §8.2 classification thresholds. Hardcoded for v1.
+const HEALTH_ANGLE_YELLOW = 70 * Math.PI / 180;  //  > 70° → yellow
+const HEALTH_ANGLE_RED    = 90 * Math.PI / 180;  //  > 90° → red
+const HEALTH_RATIO_YELLOW = 1.5;                 //  > 1.5× median → yellow
+const HEALTH_RATIO_RED    = 2.5;                 //  > 2.5× median → red
+
+function classifyTriangle(area, maxAngle, areaRatio) {
+  // Worst-of across both metrics. Order matters: red can't be downgraded.
+  let level = 'green';
+  if (maxAngle > HEALTH_ANGLE_RED)         level = 'red';
+  else if (maxAngle > HEALTH_ANGLE_YELLOW) level = 'yellow';
+  if (areaRatio > HEALTH_RATIO_RED)         level = 'red';
+  else if (areaRatio > HEALTH_RATIO_YELLOW && level !== 'red') level = 'yellow';
+  return level;
+}
+
+function computeHullMetrics(points, faces) {
+  const N = faces.length;
+  const areas = new Array(N);
+  const maxAngles = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const f = faces[i];
+    const A = points[f.a].dir, B = points[f.b].dir, C = points[f.c].dir;
+    areas[i] = sphericalTriangleArea(A, B, C);
+    maxAngles[i] = sphericalTriangleMaxAngle(A, B, C);
+  }
+  const medianArea = median(areas);
+  const metrics = new Array(N);
+  const summary = { green: 0, yellow: 0, red: 0 };
+  for (let i = 0; i < N; i++) {
+    const ratio = medianArea > 0 ? areas[i] / medianArea : 1;
+    const level = classifyTriangle(areas[i], maxAngles[i], ratio);
+    metrics[i] = { area: areas[i], maxAngle: maxAngles[i], areaRatio: ratio, level };
+    summary[level]++;
+  }
+  return { metrics, medianArea, summary };
+}
+
 // Diagnostic-only manifold check used by the dev tests. Throws on violation.
 // Conditions: every directed edge appears exactly once; its reverse exists
 // (= each undirected edge shared by exactly 2 faces); Euler V − E + F = 2.
@@ -765,10 +862,14 @@ function analyseTriangulation() {
       inputCount, mergeReduction,
     };
   }
+  const { metrics, medianArea, summary } = computeHullMetrics(merged, hull.faces);
   return {
     kind: 'ok',
     points: merged,
     faces: hull.faces,
+    metrics,
+    medianArea,
+    healthSummary: summary,
     inputCount, mergeReduction,
   };
 }
@@ -807,8 +908,18 @@ function triangulationStatusText(r) {
       return `Speakers are collinear from the listening centre — layout needs spatial spread${mergeNote(r)}.`;
     case 'planar':
       return `Planar layout — 2D ring shown in place of triangulation (${r.points.length} points${mergeNote(r)}).`;
-    case 'ok':
-      return `3D layout — ${r.points.length} points → ${r.faces.length} triangles${mergeNote(r)}.`;
+    case 'ok': {
+      // Health summary: prepend yellow ⚠ count then red ✗ count, both omitted
+      // when zero. M3.E will replace this caption with the full Layout Health
+      // panel; for now it's a one-line peek so M3.C metrics are visually
+      // verifiable without extra UI scaffolding.
+      const s = r.healthSummary;
+      const parts = [];
+      if (s.yellow) parts.push(`${s.yellow}⚠`);
+      if (s.red)    parts.push(`${s.red}✗`);
+      const health = parts.length ? ` · ${parts.join(' ')}` : '';
+      return `3D layout — ${r.points.length} points → ${r.faces.length} triangles${health}${mergeNote(r)}.`;
+    }
     default:
       return '';
   }
@@ -824,28 +935,43 @@ function updateTriangulationStatusDom() {
   if (row) row.dataset.kind = TRIANGULATION.result ? TRIANGULATION.result.kind : '';
 }
 
+// Stroke colour per health level. Aligns with SPEC §14's emoji-colour rule
+// (✓ green / ⚠ yellow / ✗ red). Alpha tuned to read clearly above the
+// heatmap without overwhelming it; matches the 2D-ring purple's alpha.
+const LEVEL_STROKE = {
+  green:  [ 80, 180, 100, 220],
+  yellow: [240, 200,  70, 220],
+  red:    [225,  70,  70, 220],
+};
+
 function drawTriangulation() {
   const r = TRIANGULATION.result;
   if (!r) return;
   // Caller (drawScene) already disabled DEPTH_TEST for this pass.
   push();
   noFill();
-  // Muted purple — harmonises with the phantom violet but darker, so it
-  // reads as "structural overlay" rather than "another speaker marker".
-  stroke(95, 70, 145, 220);
-  strokeWeight(1.3);
+  // Triangulation is a user-activated diagnostic — sits above cone wires
+  // (1.0–1.2) and floor grid (1.0), below axes (2.0). 1.8 keeps health
+  // colours legible at typical zoom without dwarfing the geometry.
+  strokeWeight(1.8);
 
   if (r.kind === 'planar') {
-    strokeWeight(1.5);
+    // Planar layout has no per-triangle metrics, so use the original
+    // structural-overlay purple to signal "this is a 2D ring, not a hull".
+    stroke(95, 70, 145, 220);
     beginShape();
     for (const p of r.points) vertex(p.pos.x, p.pos.y, p.pos.z);
     endShape(CLOSE);
   } else if (r.kind === 'ok') {
-    // Draw triangle edges. Note: each undirected edge is shared by exactly
-    // two faces, so drawing per-face we paint each edge twice — at this
-    // stroke alpha and weight the doubling is invisible, and avoiding it
-    // would require a per-edge dedup pass with no visual gain.
-    for (const f of r.faces) {
+    // Each undirected edge is shared by two faces; we paint per-face, so
+    // shared edges get painted twice. When neighbours have different levels
+    // (e.g. one yellow / one red), the second draw wins for that edge —
+    // visually the user sees a mix of both colours in the area, which is
+    // the right read since "this region has a problematic neighbourhood".
+    for (let i = 0; i < r.faces.length; i++) {
+      const f = r.faces[i];
+      const [cr, cg, cb, ca] = LEVEL_STROKE[r.metrics[i].level];
+      stroke(cr, cg, cb, ca);
       const a = r.points[f.a].pos;
       const b = r.points[f.b].pos;
       const c = r.points[f.c].pos;
@@ -961,9 +1087,12 @@ function __triangulationDevTests() {
   } catch (e) {
     check('ok-tetrahedron-manifold', false, e.message);
   }
-  check('ok-status-text-format',
-    triangulationStatusText(r) === '3D layout — 4 points → 4 triangles.',
-    triangulationStatusText(r));
+  check('ok-metrics-shape',
+    r.kind === 'ok'
+    && Array.isArray(r.metrics) && r.metrics.length === 4
+    && r.healthSummary.green + r.healthSummary.yellow + r.healthSummary.red === 4
+    && typeof r.medianArea === 'number',
+    r);
 
   // 5. Mixed speakers + phantoms — both contribute.
   setLayout(
@@ -1068,8 +1197,8 @@ function __triangulationDevTests() {
   check('sliver-merge-count',
     r.kind === 'ok' && r.points.length === 4 && r.inputCount === 5 && r.mergeReduction === 1,
     r);
-  check('sliver-merge-status',
-    triangulationStatusText(r) === '3D layout — 4 points → 4 triangles (1 sliver-merged).',
+  check('sliver-merge-status-format',
+    /^3D layout — 4 points → 4 triangles( · \S.*?)? \(1 sliver-merged\)\.$/.test(triangulationStatusText(r)),
     triangulationStatusText(r));
 
   // 12. Sliver merge can reduce below 4 → 'too-few'. 4 inputs in 2 sliver pairs.
@@ -1111,6 +1240,61 @@ function __triangulationDevTests() {
   } catch (e) {
     check('random50-manifold', false, e.message);
   }
+  // healthSummary buckets must sum to the total face count. Catches both
+  // missing classification and double-counting.
+  {
+    const s = r.healthSummary;
+    check('random50-summary-totals',
+      s.green + s.yellow + s.red === r.faces.length,
+      { summary: s, faces: r.faces.length });
+  }
+
+  // 14. Regular tetrahedron metrics — 4 equilateral spherical triangles with
+  // arc length acos(−1/3) ≈ 109.47°. Closed-form values: area = π per face,
+  // max interior angle = 2π/3 (120°). All faces classify red (max > 90°).
+  // Vertex placements chosen so directions = ±(1,1,1)/√3, etc.
+  const approx = (x, y, eps = 1e-9) => Math.abs(x - y) < eps;
+  setLayout([
+    { x:  100, y:  100, z: 220 },  // direction (+1,+1,+1)/√3
+    { x:  100, y: -100, z:  20 },  // direction (+1,−1,−1)/√3
+    { x: -100, y:  100, z:  20 },  // direction (−1,+1,−1)/√3
+    { x: -100, y: -100, z: 220 },  // direction (−1,−1,+1)/√3
+  ]);
+  r = analyseTriangulation();
+  check('regular-tetra-area',
+    r.metrics.every(m => approx(m.area, Math.PI)),
+    r.metrics.map(m => m.area));
+  check('regular-tetra-max-angle',
+    r.metrics.every(m => approx(m.maxAngle, 2 * Math.PI / 3)),
+    r.metrics.map(m => m.maxAngle));
+  check('regular-tetra-area-ratio',
+    r.metrics.every(m => approx(m.areaRatio, 1)),
+    r.metrics.map(m => m.areaRatio));
+  check('regular-tetra-all-red',
+    r.healthSummary.red === 4 && r.healthSummary.yellow === 0 && r.healthSummary.green === 0,
+    r.healthSummary);
+  check('regular-tetra-status',
+    triangulationStatusText(r) === '3D layout — 4 points → 4 triangles · 4✗.',
+    triangulationStatusText(r));
+
+  // 15. Regular octahedron metrics — 8 equilateral spherical triangles with
+  // arc length π/2 (90°). Area = π/2 per face, max interior angle = π/2.
+  // Classification: YELLOW (max angle > 70° but NOT strictly > 90°).
+  setLayout([
+    { x:  1000, y:     0, z:  120 }, { x: -1000, y:    0, z:  120 },
+    { x:     0, y:  1000, z:  120 }, { x:     0, y: -1000, z:  120 },
+    { x:     0, y:     0, z: 1120 }, { x:     0, y:    0, z: -880 },
+  ]);
+  r = analyseTriangulation();
+  check('regular-octa-area',
+    r.metrics.every(m => approx(m.area, Math.PI / 2)),
+    r.metrics.map(m => m.area));
+  check('regular-octa-max-angle',
+    r.metrics.every(m => approx(m.maxAngle, Math.PI / 2)),
+    r.metrics.map(m => m.maxAngle));
+  check('regular-octa-all-yellow',
+    r.healthSummary.yellow === 8 && r.healthSummary.red === 0 && r.healthSummary.green === 0,
+    r.healthSummary);
 
   STATE.speakers = stash.speakers;
   STATE.phantoms = stash.phantoms;

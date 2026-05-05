@@ -206,6 +206,15 @@
 
 ### 8.3 警示文字（顯示於 Layout Health panel）
 
+**Panel 開頭文字**（永遠顯示，作為框架說明，獨立於下方動態警示）：
+
+- **中**：這些三角形是任何 sphere-panning renderer（VBAP、AllRAD ambisonic decoder 等）背後共同的幾何骨架。三角形不健康，無論之後用哪個 renderer，跨過該區域的 phantom source 都會定位不清。
+- **EN**：These triangles are the geometric backbone every sphere-panning renderer (VBAP, AllRAD-decoded ambisonics, …) works from. Sources panned across an unhealthy triangle will localise poorly regardless of which renderer you use later.
+
+> 這段是 §2 disclaimer 的「正向版」。§2 否定「我們不模擬 renderer」；這段補上「但 triangulation 是任何 sphere-panning renderer 共有的幾何前提，所以這個工具仍然有意義」——使用者一看就懂「我看的不是聲音，是聲音的幾何前提」。
+
+**動態警示**（依當下 layout 狀態切換）：
+
 - 全綠：`✓ Layout looks healthy.`
 - 有黃但無紅：`⚠ N suspect triangle(s) detected in [region]. Coverage may degrade.`
 - 有紅：`✗ N problematic triangle(s) detected in [region]. Consider adding phantom speaker(s).`
@@ -224,6 +233,8 @@ phantom speaker 完全由使用者手動放置。
 這是 v1 的核心設計決定，不要為了「對使用者更友善」而違反。
 
 放下 phantom 後，三角剖分 + 警示**即時 re-evaluate**——這個 feedback loop 是工具最有教育意義的部分。
+
+**Phantom speaker 的語義**：phantom 是「我假裝這個方向有顆音響、看 layout 健康度怎麼變」的 sketch 工具，**不一定要事後補成實體音響**。Spat / Panoramix 的實際 workflow 也是這樣：phantom speaker 在 render 時，靠 triangulation 把 gain 攤回鄰近的實體 speaker（zenith / nadir 補洞最常見）。Tool UI 文字應把 phantom 框成「在球面上預訂一個 panning 位置」（reserve a panning slot），而不是「未來要買的音響」——這個用語選擇影響使用者怎麼理解工具用途。
 
 ---
 

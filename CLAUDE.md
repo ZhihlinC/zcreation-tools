@@ -83,15 +83,19 @@ zcreation-tools/
 - **每次工作階段結束**：若架構變動，更新 `CLAUDE.md`；若 SPEC 有調整，更新 `SPEC.md`
 - **commit 訊息**：以英文撰寫，conventional commit 風格（`feat: `, `fix: `, `chore: `, `docs: `）
 
-### Cloudflare 快取 / 版本號（暫定，視情況啟用）
+### Cloudflare 快取策略
 
-主站 ZCreation 有「修改 CSS / JS 後 bump version query string」的強制規則
-（見主站 `CLAUDE_CONTEXT.md`）。本 repo v1 暫**不啟用**此規則，因為：
+CSS / JS 採 **`_headers` 設 `Cache-Control: no-cache`**，瀏覽器每次都 revalidate。
+HTML 由 CF Pages 預設處理（`max-age=0, must-revalidate`），不另外規範。
 
-1. 工具尚未上線、無使用者快取問題
-2. 未來若改為 inline 模式，CSS/JS 不再是獨立資源
+選擇此策略而非主站「version query string bump」的理由：
 
-若上線後遇到 Cloudflare edge cache 問題，再啟用同樣規則並補進此檔。
+- 工具規模小（每個 tool 1 CSS + 1 JS），revalidation overhead（304 無 body）可忽略
+- 主站方案需要每次改 CSS/JS 都記得 bump，是必踩的人為錯誤源頭
+- 此設定一次定案、永久免維護
+- 若 M4 改成 inline mode，此規則自動成為 no-op（沒有獨立 CSS/JS 可規範），不需 rollback
+
+新增工具（例如未來的 `/spectrogram`）時，**`_headers` 要補對應的 `/<tool>/*.js` / `*.css` 規則**，不會自動 inherit。
 
 ---
 

@@ -2,3 +2,13 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: interest-cohort=()
+
+# Always revalidate CSS / JS so edits land for users without manual version
+# bumps. Cost is one ETag round-trip per asset (304 with no body) — negligible
+# for the 1 CSS + 1 JS each tool ships. HTML is handled by Cloudflare Pages
+# defaults (max-age=0, must-revalidate). See CLAUDE.md "Cloudflare 快取策略".
+/coverage/*.js
+  Cache-Control: no-cache
+
+/coverage/*.css
+  Cache-Control: no-cache

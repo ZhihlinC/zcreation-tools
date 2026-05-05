@@ -445,12 +445,12 @@ A 資料模型 + UI / B 球面凸包（含 sliver merge）/ C per-triangle metri
 - Meta（§15）：description 中英、OG preview（用工具預設視角截圖）、sitemap.xml 含 `/coverage`
 - robots.txt：允許全部、無 noindex
 - **M5.E — 公開化收尾**（launch day 當天最後做）：
-  - `LICENSE`（MIT，三行）
-  - `README.md` 改寫：對外說明 + 截圖 + 連結（live tool / GitHub / ZCreation 主站）；保留現有的開發 notes 但分到「Development」段落
-  - landing page 加 GitHub link（footer 或工具卡片旁的 icon）
-  - GitHub repo visibility：private → public
-  - Git tag：`v1.0.0`
-  - 注意：`SPEC.md` / `CLAUDE.md` / `ROADMAP.md` 都**留著**，作為「AI-assisted 開發過程透明化」的一部分
+    - `LICENSE`（MIT，三行）
+    - `README.md` 改寫：對外說明 + 截圖 + 連結（live tool / GitHub / ZCreation 主站）；保留現有的開發 notes 但分到「Development」段落
+    - landing page 加 GitHub link（footer 或工具卡片旁的 icon）
+    - GitHub repo visibility：private → public
+    - Git tag：`v1.0.0`
+    - 注意：`SPEC.md` / `CLAUDE.md` / `ROADMAP.md` 都**留著**，作為「AI-assisted 開發過程透明化」的一部分
 
 **動到的檔案**
 

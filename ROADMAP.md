@@ -434,7 +434,7 @@ A 資料模型 + UI / B 球面凸包（含 sliver merge）/ C per-triangle metri
 
 ---
 
-## M5 — i18n / mobile banner / landing / meta
+## M5 — i18n / mobile banner / landing / meta / 公開化
 
 **範圍**
 
@@ -444,6 +444,13 @@ A 資料模型 + UI / B 球面凸包（含 sliver merge）/ C per-triangle metri
 - Landing page (`/index.html`) 正式化：簡潔 header、工具卡片（先只有 coverage）、ZCreation 主站 footer 連結
 - Meta（§15）：description 中英、OG preview（用工具預設視角截圖）、sitemap.xml 含 `/coverage`
 - robots.txt：允許全部、無 noindex
+- **M5.E — 公開化收尾**（launch day 當天最後做）：
+  - `LICENSE`（MIT，三行）
+  - `README.md` 改寫：對外說明 + 截圖 + 連結（live tool / GitHub / ZCreation 主站）；保留現有的開發 notes 但分到「Development」段落
+  - landing page 加 GitHub link（footer 或工具卡片旁的 icon）
+  - GitHub repo visibility：private → public
+  - Git tag：`v1.0.0`
+  - 注意：`SPEC.md` / `CLAUDE.md` / `ROADMAP.md` 都**留著**，作為「AI-assisted 開發過程透明化」的一部分
 
 **動到的檔案**
 
@@ -451,19 +458,31 @@ A 資料模型 + UI / B 球面凸包（含 sliver merge）/ C per-triangle metri
 - `coverage/index.html` + `coverage/coverage.css`
 - `index.html`（landing 改寫）
 - `sitemap.xml`、`robots.txt`、各 HTML 的 `<head>` meta tags
+- `LICENSE`、`README.md`（M5.E）
 
 **視覺檢核**
 
 1. 第一次造訪（清 localStorage）：瀏覽器中文設定 → 顯示中文 UI；英文設定 → 英文 UI。
 2. 切換語言按鈕 → 所有 UI 字串切換、§2 定位語句切換（中英兩版都完整）；reload 後仍是上次選擇。
 3. Resize < 1024px → banner 出現；點 ✕ 收起；reload 後再出現。
-4. Landing page 簡潔好讀，連到 `/coverage` 正常。
+4. Landing page 簡潔好讀，連到 `/coverage` 正常、GitHub link 點得開。
 5. View source → meta description / OG / canonical 正確。
 6. 用 Twitter / Facebook 的 OG debugger（或本機檢查 `<meta property="og:*">`）確認預覽圖正確。
+7. M5.E 後：repo 在無痕視窗能存取（已 public）、`v1.0.0` tag 出現在 GitHub releases 頁。
 
 **收尾備註**
 
 （完成後填寫）
+
+---
+
+## v1.1 Backlog（v1 上線後回頭做）
+
+beta 期間或 launch 後若有人提出再評估，不擋 v1。
+
+- **舞台平面圖上傳**（§見對話 2026-05-05）：把建築圖貼到地板 texture。需要比例尺校正（點兩點 + 輸入實際距離）、位置 / 旋轉 handle、self-contained HTML 是否 base64 嵌圖（會肥很多）。schema 不必預留欄位，因為 M4.C loader 已對未知欄位 silently drop（forward-compat 已就緒）。
+- **教學 / 使用示範影片**（YT）：v1.0 + 7 月 workshop 之後再錄；需要工具 UI / 文案先穩定一輪。錄完放到 landing page 工具卡片的「demo」按鈕。
+- **CHANGELOG.md**：第一次發 v1.1 patch 時開檔，回填 v1.0.0 → v1.1.0 之間的 user-facing 變化。v1 之前不必。
 
 ---
 

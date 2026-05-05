@@ -166,6 +166,16 @@
     <div class="tt-line tt-line-vertices"><span class="tt-label">Vertices</span><span class="tt-value" data-tt="vertices"></span></div>
   </div>
 
+  <!-- Speaker hover tooltip (M3.G, SPEC §9.3). Same picking framework as
+       the triangle tooltip; takes priority when both would hit. -->
+  <div id="speaker-tooltip" class="tooltip" role="tooltip" hidden>
+    <div class="tt-header" data-tt="name"></div>
+    <div class="tt-line"><span class="tt-label">Position</span><span class="tt-value" data-tt="position"></span></div>
+    <div class="tt-line"><span class="tt-label">Orientation</span><span class="tt-value" data-tt="orientation"></span></div>
+    <div class="tt-line"><span class="tt-label">Spread</span><span class="tt-value" data-tt="spread"></span></div>
+    <div class="tt-line"><span class="tt-label">Distance</span><span class="tt-value" data-tt="distance"></span></div>
+  </div>
+
   <!-- Mobile banner stub — M5 will style and persist. -->
   <aside id="mobile-banner" hidden>
     <span>This tool is designed for desktop. The editing experience is limited on smaller screens.</span>

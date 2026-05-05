@@ -373,7 +373,7 @@ function ensureTriangulationFresh() {
   TRIANGULATION.dirty = false;
   // Hover cache references the previous result's face indices — invalidate
   // so the next mousemove re-reads metrics from the new result.
-  if (typeof TOOLTIP !== 'undefined') TOOLTIP.lastIdx = -1;
+  if (typeof HOVER !== 'undefined') HOVER.lastTriIdx = -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -921,21 +921,32 @@ function analyseTriangulation() {
     };
   }
 
-  // Find the most numerically stable plane-normal candidate.
+  // Plane-normal candidate via the most numerically stable triple. We use
+  // EDGE crosses (b−a)×(c−a) rather than vertex crosses a×b — vertex crosses
+  // only detect planes through origin (great circles). Edge crosses also
+  // catch affine-coplanar inputs (small circles of latitude), e.g. four
+  // overhead cabinets at constant z=180cm aimed down at a seated listener
+  // — same panning topology as a horizontal ring, just shifted off origin.
+  // O(N³) on N≤32 = trivial.
   let nx = 0, ny = 0, nz = 0, bestMag = 0;
   for (let i = 0; i < merged.length; i++) {
     const a = merged[i].dir;
     for (let j = i + 1; j < merged.length; j++) {
       const b = merged[j].dir;
-      const cx = a.y * b.z - a.z * b.y;
-      const cy = a.z * b.x - a.x * b.z;
-      const cz = a.x * b.y - a.y * b.x;
-      const m2 = cx*cx + cy*cy + cz*cz;
-      if (m2 > bestMag * bestMag) {
-        bestMag = Math.sqrt(m2);
-        nx = cx / bestMag;
-        ny = cy / bestMag;
-        nz = cz / bestMag;
+      const ex = b.x - a.x, ey = b.y - a.y, ez = b.z - a.z;
+      for (let k = j + 1; k < merged.length; k++) {
+        const c = merged[k].dir;
+        const fx = c.x - a.x, fy = c.y - a.y, fz = c.z - a.z;
+        const cx = ey * fz - ez * fy;
+        const cy = ez * fx - ex * fz;
+        const cz = ex * fy - ey * fx;
+        const m2 = cx*cx + cy*cy + cz*cz;
+        if (m2 > bestMag * bestMag) {
+          bestMag = Math.sqrt(m2);
+          nx = cx / bestMag;
+          ny = cy / bestMag;
+          nz = cz / bestMag;
+        }
       }
     }
   }
@@ -948,20 +959,33 @@ function analyseTriangulation() {
     };
   }
 
+  // Reference projection — any merged point's projection onto n. Affine-
+  // coplanar means all projections share this value; |proj - d0| < eps tests
+  // both small (d0 ≠ 0) and great circles (d0 ≈ 0) in one branch.
+  const d0 = merged[0].dir.x * nx + merged[0].dir.y * ny + merged[0].dir.z * nz;
   let maxDeviation = 0;
   for (const p of merged) {
-    const d = Math.abs(p.dir.x * nx + p.dir.y * ny + p.dir.z * nz);
-    if (d > maxDeviation) maxDeviation = d;
+    const proj = p.dir.x * nx + p.dir.y * ny + p.dir.z * nz;
+    const dev = Math.abs(proj - d0);
+    if (dev > maxDeviation) maxDeviation = dev;
   }
 
   if (maxDeviation < PLANAR_EPS) {
-    const u = merged[0].dir;
-    const vx = ny * u.z - nz * u.y;
-    const vy = nz * u.x - nx * u.z;
-    const vz = nx * u.y - ny * u.x;
+    // Tangent basis for azimuth sort. Subtract V0's normal component so u
+    // lies in the plane regardless of d0; for great circles (d0 ≈ 0) this
+    // reduces to V0 itself.
+    const u0 = merged[0].dir;
+    let ux = u0.x - d0 * nx;
+    let uy = u0.y - d0 * ny;
+    let uz = u0.z - d0 * nz;
+    const umag = Math.sqrt(ux*ux + uy*uy + uz*uz);
+    ux /= umag; uy /= umag; uz /= umag;
+    const vx = ny * uz - nz * uy;
+    const vy = nz * ux - nx * uz;
+    const vz = nx * uy - ny * ux;
     const azimuth = (d) => Math.atan2(
       d.x * vx + d.y * vy + d.z * vz,
-      d.x * u.x + d.y * u.y + d.z * u.z,
+      d.x * ux + d.y * uy + d.z * uz,
     );
     const sorted = merged.slice().sort((p, q) => azimuth(p.dir) - azimuth(q.dir));
     return {
@@ -975,11 +999,17 @@ function analyseTriangulation() {
   // 3D — build the spherical convex hull.
   const hull = buildSphericalHull(merged);
   if (!hull) {
-    // Numerical fallback: shouldn't happen given the prior checks, but if
-    // the seed-tetrahedron search bails (extreme float edge case), report
-    // collinear rather than crash.
+    // Hull-open: directions span 3D from origin (we passed the planar
+    // check) but happen to lie in a single AFFINE plane that doesn't
+    // contain origin. seedTetrahedron's 4th-stage |det| test correctly
+    // rejects this — geometrically, the convex hull is a 2D patch on the
+    // sphere, not a closed surface around the listening centre. The
+    // canonical fix per SPEC §8.4 is to add a phantom above or below the
+    // layout (zenith / nadir) so the directions span 3D affinely too,
+    // letting the hull close. Common trigger: 4+ speakers all at the
+    // same height around an audience, with the listening centre below.
     return {
-      kind: 'collinear',
+      kind: 'hull-open',
       count: merged.length,
       inputCount, mergeReduction, symmetry,
     };
@@ -1033,6 +1063,8 @@ function triangulationStatusText(r) {
     }
     case 'collinear':
       return `Speakers are collinear from the listening centre — layout needs spatial spread${mergeNote(r)}.`;
+    case 'hull-open':
+      return `Open hull — ${r.count} points don't enclose the listening centre${mergeNote(r)}.`;
     case 'planar':
       // Note: mergeNote moved outside the parens (was nested inside before
       // M3.D, which produced awkward "(4 points (1 sliver-merged))"). The
@@ -1106,6 +1138,12 @@ function composeHealthLines(r) {
       lines.push({
         level: 'warn',
         text: '⚠ Speakers are collinear from the listening centre — layout needs spatial spread.',
+      });
+      break;
+    case 'hull-open':
+      lines.push({
+        level: 'warn',
+        text: '⚠ Layout doesn\'t enclose the listening centre — add a phantom above or below to close the panning grid.',
       });
       break;
     case 'planar':
@@ -1215,17 +1253,28 @@ function drawTriangulation() {
 }
 
 // ---------------------------------------------------------------------------
-// Triangle hover tooltip (M3.F, SPEC §9.3).
+// Hover tooltips (M3.F triangle, M3.G speaker).
 //
-// pickTriangle: project each hull face's three vertices to canvas pixel
-// coordinates via projectToScreen, run a 2D point-in-triangle test against
-// the mouse, and return the index of the triangle whose centroid is
-// closest to the camera (front-most among hits). Returns -1 on miss.
+// Two tooltips share a picking framework: speaker takes priority over
+// triangle when both would hit (speakers are foreground markers; user
+// usually wants speaker info if their cursor is on one). Each tooltip is
+// a separate DOM element; the unified updateHoverTooltips handler decides
+// which to show and which to hide based on pickSpeaker / pickTriangle.
 //
-// updateTooltip: read TRIANGULATION.result.metrics[i] for the picked face,
-// format the values, position the tooltip near the mouse with a small
-// offset, and clamp inside the viewport. Hidden when the layer is off /
-// kind isn't 'ok' / pointer is over a panel / no hit.
+// Triangle picking: project each hull face's three world-space vertices
+// to canvas pixels via projectToScreen, run point-in-triangle, depth-
+// tiebreak by world-space distance from camera eye to face centroid.
+//
+// Speaker picking: project each enabled speaker's position; hit if mouse
+// is within SPEAKER_PICK_PX pixels of the projected center; depth-tiebreak
+// by world-space distance to eye.
+//
+// Hide gates (apply to both): triangulation/speakers layer off (per
+// tooltip), pointer over a panel, orbit drag in progress, no hit.
+//
+// HOVER state: { speakerId, lastTriIdx } — speakerId drives the 3D
+// highlight in drawSpeakerBody; lastTriIdx is a write-skip cache so
+// same-triangle moves only reposition without rewriting text.
 // ---------------------------------------------------------------------------
 
 function pointInTriangle(px, py, ax, ay, bx, by, cx, cy) {
@@ -1274,47 +1323,45 @@ function pickTriangle(mx, my) {
   return bestIdx;
 }
 
-const TOOLTIP = { lastIdx: -1, mx: 0, my: 0 };
+// Pixel-radius tolerance for speaker hits. Speaker bodies are drawn as
+// sphere(26) in world units; the projected screen radius varies with
+// camera distance, but for typical orbit zooms a fixed 28-px tolerance
+// covers the marker generously without overlapping neighbours at common
+// 5.1 / 7.1 spacings.
+const SPEAKER_PICK_PX = 28;
 
-function updateTooltip(mx, my, hideForPanel) {
-  const el = document.getElementById('triangle-tooltip');
-  if (!el) return;
-  const r = TRIANGULATION.result;
-  // Hide while orbiting — picking is meaningless mid-drag and the tooltip
-  // would jitter wildly. mouseIsPressed comes from p5 globals.
-  const orbiting = (typeof mouseIsPressed !== 'undefined' && mouseIsPressed) && !_dragStartedOnPanel;
-  const hit = (hideForPanel || orbiting) ? -1 : pickTriangle(mx, my);
-  if (hit < 0 || !r || r.kind !== 'ok') {
-    el.hidden = true;
-    TOOLTIP.lastIdx = -1;
-    return;
+function pickSpeaker(mx, my) {
+  if (!cam) return null;
+  if (!STATE.view.layers.speakers) return null;
+
+  let best = null;
+  let bestDepthSq = Infinity;
+  const ex = cam.eyeX, ey = cam.eyeY, ez = cam.eyeZ;
+  const tolSq = SPEAKER_PICK_PX * SPEAKER_PICK_PX;
+
+  for (let i = 0; i < STATE.speakers.length; i++) {
+    const s = STATE.speakers[i];
+    if (!s.enabled) continue;
+    const proj = projectToScreen(s.x, s.y, s.z);
+    if (!proj || proj.behind) continue;
+    const ddx = proj.sx - mx, ddy = proj.sy - my;
+    if (ddx*ddx + ddy*ddy > tolSq) continue;
+    // Depth tiebreak — world-space distance from eye, squared.
+    const wx = s.x - ex, wy = s.y - ey, wz = s.z - ez;
+    const wDistSq = wx*wx + wy*wy + wz*wz;
+    if (wDistSq < bestDepthSq) {
+      bestDepthSq = wDistSq;
+      best = { idx: i, id: s.id, speaker: s };
+    }
   }
+  return best;
+}
 
-  const m = r.metrics[hit];
-  const f = r.faces[hit];
-  // Vertex names from each merged point's `names` array (sliver-merge groups
-  // join with " + "). For unmerged points, names is just [originalName].
-  const vNames = [f.a, f.b, f.c]
-    .map(i => (r.points[i].names || [r.points[i].name]).join(' + '))
-    .join(', ');
+const HOVER = { speakerId: null, lastTriIdx: -1 };
 
-  // Update text only when hit changed — saves DOM writes during dragging
-  // mousemove across the same triangle.
-  if (hit !== TOOLTIP.lastIdx) {
-    el.querySelector('[data-tt="maxAngle"]').textContent = `${(m.maxAngle * 180 / Math.PI).toFixed(1)}°`;
-    el.querySelector('[data-tt="area"]').textContent = `${m.area.toFixed(3)} sr (${m.areaRatio.toFixed(2)}× median)`;
-    el.querySelector('[data-tt="level"]').textContent = m.level;
-    el.querySelector('[data-tt="region"]').textContent = m.region;
-    el.querySelector('[data-tt="vertices"]').textContent = vNames;
-    el.dataset.level = m.level;
-    TOOLTIP.lastIdx = hit;
-  }
-
-  // Position with offset; clamp inside viewport.
-  el.hidden = false;
+function positionTooltip(el, mx, my) {
   const rect = el.getBoundingClientRect();
-  const pad = 10;
-  const offsetX = 14, offsetY = 14;
+  const pad = 10, offsetX = 14, offsetY = 14;
   let left = mx + offsetX;
   let top  = my + offsetY;
   if (left + rect.width  + pad > window.innerWidth)  left = mx - rect.width  - offsetX;
@@ -1325,21 +1372,97 @@ function updateTooltip(mx, my, hideForPanel) {
   el.style.top  = top  + 'px';
 }
 
+function showTriangleTooltip(hit, mx, my, el) {
+  const r = TRIANGULATION.result;
+  const m = r.metrics[hit];
+  const f = r.faces[hit];
+  // Vertex names from each merged point's `names` array (sliver-merge groups
+  // join with " + "). For unmerged points, names is just [originalName].
+  if (hit !== HOVER.lastTriIdx) {
+    const vNames = [f.a, f.b, f.c]
+      .map(i => (r.points[i].names || [r.points[i].name]).join(' + '))
+      .join(', ');
+    el.querySelector('[data-tt="maxAngle"]').textContent = `${(m.maxAngle * 180 / Math.PI).toFixed(1)}°`;
+    el.querySelector('[data-tt="area"]').textContent = `${m.area.toFixed(3)} sr (${m.areaRatio.toFixed(2)}× median)`;
+    el.querySelector('[data-tt="level"]').textContent = m.level;
+    el.querySelector('[data-tt="region"]').textContent = m.region;
+    el.querySelector('[data-tt="vertices"]').textContent = vNames;
+    el.dataset.level = m.level;
+    HOVER.lastTriIdx = hit;
+  }
+  el.hidden = false;
+  positionTooltip(el, mx, my);
+}
+
+function showSpeakerTooltip(hit, mx, my, el) {
+  const s = hit.speaker;
+  // Always rewrite — speaker properties (yaw/pitch/spread/distance) can
+  // change while hovering, e.g. user adjusts a slider. Tiny DOM cost.
+  const u = STATE.view.unit;
+  el.querySelector('[data-tt="name"]').textContent = s.name || '(unnamed)';
+  el.querySelector('[data-tt="position"]').textContent =
+    `${fmtCoord(s.x)}, ${fmtCoord(s.y)}, ${fmtCoord(s.z)} ${u}`;
+  el.querySelector('[data-tt="orientation"]').textContent =
+    `Yaw ${s.yaw}°, Pitch ${s.pitch}°`;
+  el.querySelector('[data-tt="spread"]').textContent =
+    `H ${s.angleH}°, V ${s.angleV}°`;
+  // Distance + delay — same formula as the per-speaker caption.
+  const dx = s.x;
+  const dy = s.y;
+  const dz = s.z - STATE.audience.listeningHeight;
+  const cm = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  const ms = (cm / 100 / SPEED_OF_SOUND_MPS) * 1000;
+  const dist = u === 'm' ? `${(cm/100).toFixed(2)} m` : `${cm.toFixed(0)} cm`;
+  el.querySelector('[data-tt="distance"]').textContent = `${dist} · ${ms.toFixed(1)} ms`;
+  el.hidden = false;
+  positionTooltip(el, mx, my);
+}
+
+function updateHoverTooltips(mx, my, hideForPanel) {
+  const triEl = document.getElementById('triangle-tooltip');
+  const spkEl = document.getElementById('speaker-tooltip');
+  if (!triEl || !spkEl) return;
+
+  // Hide while orbiting — picking is meaningless mid-drag and the tooltip
+  // would jitter wildly. mouseIsPressed comes from p5 globals.
+  const orbiting = (typeof mouseIsPressed !== 'undefined' && mouseIsPressed) && !_dragStartedOnPanel;
+  if (hideForPanel || orbiting) {
+    triEl.hidden = true;
+    spkEl.hidden = true;
+    HOVER.speakerId = null;
+    HOVER.lastTriIdx = -1;
+    return;
+  }
+
+  // Speaker takes priority over triangle when both would hit.
+  const spk = pickSpeaker(mx, my);
+  if (spk) {
+    triEl.hidden = true;
+    HOVER.lastTriIdx = -1;
+    HOVER.speakerId = spk.id;
+    showSpeakerTooltip(spk, mx, my, spkEl);
+    return;
+  }
+  HOVER.speakerId = null;
+  spkEl.hidden = true;
+
+  const triHit = pickTriangle(mx, my);
+  if (triHit < 0) {
+    triEl.hidden = true;
+    HOVER.lastTriIdx = -1;
+    return;
+  }
+  showTriangleTooltip(triHit, mx, my, triEl);
+}
+
 function installTooltipHandlers() {
   // Listen on document so we get events regardless of which element is the
   // direct target. Existing _pointerCurrentlyOverPanel tracks panel hover
-  // (set by the panel-guard mousemove listener) — we reuse that signal.
+  // (set by the panel-guard mousemove listener in capture phase) — we reuse
+  // that signal.
   document.addEventListener('mousemove', (e) => {
-    TOOLTIP.mx = e.clientX;
-    TOOLTIP.my = e.clientY;
-    updateTooltip(e.clientX, e.clientY, _pointerCurrentlyOverPanel);
+    updateHoverTooltips(e.clientX, e.clientY, _pointerCurrentlyOverPanel);
   });
-  // Refresh tooltip after camera changes (orbit / preset switch) — mouse
-  // hasn't moved but the projection has. Cheap to do every frame; piggyback
-  // on the next mouse event by no-op'ing here. (Implemented via the draw
-  // loop indirectly: when cam projection updates, the next mousemove
-  // re-picks. If the user keeps the cursor still during an orbit, the
-  // tooltip text becomes stale until they move — acceptable for v1.)
 }
 
 // Dev test harness — run from devtools console: __triangulationDevTests().
@@ -1880,6 +2003,49 @@ function __triangulationDevTests() {
     && /Speakers are collinear/.test(lines[0].text),
     lines);
 
+  // Small-circle planar: 4 speakers all at constant height above ear level
+  // (e.g. overhead cabinets at z=240, listener at z=120). Directions land on
+  // a small circle of latitude (z = const ≠ 0). Same panning topology as
+  // ear-height speakers (great circle) — both render as a 2D ring under the
+  // unified planar branch.
+  setLayout([
+    { x: -300, y: -300, z: 240 },
+    { x:  300, y: -300, z: 240 },
+    { x:  300, y:  300, z: 240 },
+    { x: -300, y:  300, z: 240 },
+  ]);
+  r = analyseTriangulation();
+  check('small-circle-planar',
+    r.kind === 'planar' && r.points.length === 4,
+    r);
+  // Adding a phantom above the layout breaks the affine-coplanar geometry
+  // → directions span 3D properly → hull closes → kind 'ok'.
+  setLayout(
+    [
+      { x: -300, y: -300, z: 240 },
+      { x:  300, y: -300, z: 240 },
+      { x:  300, y:  300, z: 240 },
+      { x: -300, y:  300, z: 240 },
+    ],
+    [{ x: 0, y: 0, z: 600 }],
+  );
+  r = analyseTriangulation();
+  check('small-circle-closed-by-phantom',
+    r.kind === 'ok' && r.points.length === 5 && r.faces.length === 6,
+    { kind: r.kind, points: r.points && r.points.length, faces: r.faces && r.faces.length });
+
+  // hull-open kind itself becomes a defensive fallback (unreachable through
+  // typical user flow now that small-circle inputs are caught as planar).
+  // composeHealthLines still handles it for safety; verify the wording.
+  lines = composeHealthLines({
+    kind: 'hull-open', count: 4, inputCount: 4, mergeReduction: 0,
+    symmetry: { delta: 0, level: 'green' },
+  });
+  check('lines-hull-open-defensive',
+    lines.length === 1 && lines[0].level === 'warn'
+    && /add a phantom above or below/.test(lines[0].text),
+    lines);
+
   // ===== pointInTriangle (M3.F) =====
   // Reference triangle: A=(0,0), B=(10,0), C=(0,10). Centroid (10/3, 10/3).
   check('pit-inside-centroid', pointInTriangle(3, 3, 0, 0, 10, 0, 0, 10) === true,  '');
@@ -2106,7 +2272,14 @@ function drawSpeakerBody(s) {
   // black, so spheres looked like flat discs. This tone keeps the "tasteful
   // dark" feel but lives in the range where the directional gradient is
   // actually visible.
-  fill(110, 122, 150);
+  // Hover highlight (M3.G): the speaker pointed at by HOVER.speakerId
+  // brightens toward a soft sky tone so the user can confirm "this is the
+  // speaker the tooltip describes". Same hue family as the base, just lifted.
+  if (HOVER.speakerId === s.id) {
+    fill(180, 200, 240);
+  } else {
+    fill(110, 122, 150);
+  }
   translate(s.x, s.y, s.z);
   sphere(26);
   pop();
@@ -2875,12 +3048,17 @@ window.addEventListener('DOMContentLoaded', () => {
         const el = document.getElementById('health-panel');
         if (el) el.hidden = !inp.checked;
       }
-      // Triangulation toggle off → hide any visible tooltip without waiting
+      // Layer-off → hide the corresponding tooltip immediately, don't wait
       // for the next mousemove.
       if (key === 'triangulation' && !inp.checked) {
         const tt = document.getElementById('triangle-tooltip');
         if (tt) tt.hidden = true;
-        TOOLTIP.lastIdx = -1;
+        HOVER.lastTriIdx = -1;
+      }
+      if (key === 'speakers' && !inp.checked) {
+        const tt = document.getElementById('speaker-tooltip');
+        if (tt) tt.hidden = true;
+        HOVER.speakerId = null;
       }
     });
   });

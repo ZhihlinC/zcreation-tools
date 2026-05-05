@@ -295,6 +295,43 @@ canvas { display: block; }
   color: var(--muted);
 }
 
+/* Bulk-paste dev affordance — one folded panel under each list. Number
+   triplets parse out of any text (commas / brackets / newlines all ignored)
+   so the user can drop "(100, 100, 220), (-100, …)" directly. */
+.bulk-paste {
+  margin-bottom: 0.45rem;
+  font-size: 0.78rem;
+}
+.bulk-paste summary {
+  cursor: pointer;
+  user-select: none;
+  color: var(--muted);
+  padding: 0.2rem 0;
+  font-size: 0.75rem;
+}
+.bulk-paste summary em {
+  font-style: normal;
+  color: #aaa;
+  font-size: 0.68rem;
+  margin-left: 0.3rem;
+}
+.bulk-paste textarea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.7rem;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  resize: vertical;
+  min-height: 2.4em;
+  box-sizing: border-box;
+}
+.bulk-paste button {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  padding: 0.2rem 0.6rem;
+}
+
 /* Speakers */
 #speakers-panel #speakers-list {
   list-style: none;
@@ -351,6 +388,16 @@ canvas { display: block; }
 }
 .speaker-item button:hover { color: var(--fg); }
 .speaker-item .delete-btn:hover { color: #c83232; }
+/* Distance + delay caption — always visible per speaker, useful for delay-line
+   alignment work (delay = distance / speed-of-sound). Indented to align with
+   the name input above it. */
+.speaker-item .speaker-derived {
+  padding: 0 0.35rem 0.25rem 1.85rem;
+  margin-top: -0.15rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .speaker-editor {
   display: none;  /* shown only when .speaker-item.expanded — see toggle below */
   grid-template-columns: repeat(2, 1fr);

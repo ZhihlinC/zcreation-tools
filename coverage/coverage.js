@@ -703,6 +703,54 @@ function computeHullMetrics(points, faces) {
   return { metrics, medianArea, summary };
 }
 
+// ---------------------------------------------------------------------------
+// L/R symmetry deviation (M3.D). For each merged point's direction, find
+// the nearest direction in the X-mirrored set; return the mean angular
+// distance (radians). 0 → perfectly mirror-symmetric across the listening
+// centerline (X=0 plane). Larger → asymmetric.
+//
+// Greedy nearest-neighbour pairing (each original maps to its closest
+// mirror) rather than bipartite minimum matching. Hungarian-style matching
+// would be more rigorous but materially differs only on pathological
+// inputs (clustered duplicates pulling toward the same mirror); for
+// typical speaker layouts (N ≤ 32 distinct directions) greedy is correct
+// and ~10× cheaper. Acceptable trade for v1.
+//
+// Thresholds per SPEC §8.2 (v1 estimate; ROADMAP discussion item 2 to
+// recalibrate before launch with real layouts):
+//   > 0.05 rad → yellow
+//   > 0.15 rad → red
+// ---------------------------------------------------------------------------
+
+const SYMMETRY_DELTA_YELLOW = 0.05;
+const SYMMETRY_DELTA_RED    = 0.15;
+
+function computeSymmetryDelta(points) {
+  const N = points.length;
+  if (N === 0) return null;
+  let total = 0;
+  for (const p of points) {
+    let minAngle = Infinity;
+    const px = p.dir.x, py = p.dir.y, pz = p.dir.z;
+    for (const q of points) {
+      // mirror(q).dir = (-q.dir.x, q.dir.y, q.dir.z); dot with p =
+      // -px*qx + py*qy + pz*qz. Pure inline — no allocation.
+      const dot = -px * q.dir.x + py * q.dir.y + pz * q.dir.z;
+      const angle = Math.acos(clamp1(dot));
+      if (angle < minAngle) minAngle = angle;
+    }
+    total += minAngle;
+  }
+  return total / N;
+}
+
+function classifySymmetry(delta) {
+  if (delta == null) return null;
+  if (delta > SYMMETRY_DELTA_RED)    return 'red';
+  if (delta > SYMMETRY_DELTA_YELLOW) return 'yellow';
+  return 'green';
+}
+
 // Diagnostic-only manifold check used by the dev tests. Throws on violation.
 // Conditions: every directed edge appears exactly once; its reverse exists
 // (= each undirected edge shared by exactly 2 faces); Euler V − E + F = 2.
@@ -791,11 +839,19 @@ function analyseTriangulation() {
   const merged = premergeSlivers(points);
   const mergeReduction = inputCount - merged.length;
 
+  // L/R symmetry — layout-wide property, computed once and attached to
+  // every post-merge return so the caption can warn about asymmetric
+  // layouts even when triangulation isn't possible (too-few / collinear).
+  const symmetryDelta = computeSymmetryDelta(merged);
+  const symmetry = symmetryDelta == null
+    ? null
+    : { delta: symmetryDelta, level: classifySymmetry(symmetryDelta) };
+
   if (merged.length < 4) {
     return {
       kind: 'too-few',
       count: merged.length,
-      inputCount, mergeReduction,
+      inputCount, mergeReduction, symmetry,
     };
   }
 
@@ -822,7 +878,7 @@ function analyseTriangulation() {
     return {
       kind: 'collinear',
       count: merged.length,
-      inputCount, mergeReduction,
+      inputCount, mergeReduction, symmetry,
     };
   }
 
@@ -846,7 +902,7 @@ function analyseTriangulation() {
       kind: 'planar',
       points: sorted,
       normal: { x: nx, y: ny, z: nz },
-      inputCount, mergeReduction,
+      inputCount, mergeReduction, symmetry,
     };
   }
 
@@ -859,7 +915,7 @@ function analyseTriangulation() {
     return {
       kind: 'collinear',
       count: merged.length,
-      inputCount, mergeReduction,
+      inputCount, mergeReduction, symmetry,
     };
   }
   const { metrics, medianArea, summary } = computeHullMetrics(merged, hull.faces);
@@ -870,7 +926,7 @@ function analyseTriangulation() {
     metrics,
     medianArea,
     healthSummary: summary,
-    inputCount, mergeReduction,
+    inputCount, mergeReduction, symmetry,
   };
 }
 
@@ -880,11 +936,20 @@ function mergeNote(r) {
   return r.mergeReduction > 0 ? ` (${r.mergeReduction} sliver-merged)` : '';
 }
 
+// Symmetry suffix — only emitted on yellow / red, since green is the
+// expected baseline and adding a "✓" badge each time clutters the caption.
+// Format: " · sym Δ=0.07⚠" or " · sym Δ=0.18✗".
+function symmetryNote(sym) {
+  if (!sym || sym.level === 'green' || sym.level == null) return '';
+  const emoji = sym.level === 'red' ? '✗' : '⚠';
+  return ` · sym Δ=${sym.delta.toFixed(2)}${emoji}`;
+}
+
 function triangulationStatusText(r) {
   if (!r) return '';
   switch (r.kind) {
     case 'too-few':
-      return `Add ≥ 4 enabled speakers or phantoms to enable triangulation. Currently: ${r.count}${mergeNote(r)}.`;
+      return `Add ≥ 4 enabled speakers or phantoms to enable triangulation. Currently: ${r.count}${symmetryNote(r.symmetry)}${mergeNote(r)}.`;
     case 'point-at-centre': {
       // 1 → "X sits", 2 → "X and Y sit", 3-4 → "X, Y, and Z sit",
       // 5+ → first three names + "...and N more sit". Cap is to keep the
@@ -905,9 +970,12 @@ function triangulationStatusText(r) {
       return `${head} ${verb} on the listening centre — cannot triangulate.`;
     }
     case 'collinear':
-      return `Speakers are collinear from the listening centre — layout needs spatial spread${mergeNote(r)}.`;
+      return `Speakers are collinear from the listening centre — layout needs spatial spread${symmetryNote(r.symmetry)}${mergeNote(r)}.`;
     case 'planar':
-      return `Planar layout — 2D ring shown in place of triangulation (${r.points.length} points${mergeNote(r)}).`;
+      // Note: mergeNote moved outside the parens (was nested inside before
+      // M3.D, which produced awkward "(4 points (1 sliver-merged))"). The
+      // new form is "(4 points) (1 sliver-merged)" — fewer nested parens.
+      return `Planar layout — 2D ring shown in place of triangulation (${r.points.length} points)${symmetryNote(r.symmetry)}${mergeNote(r)}.`;
     case 'ok': {
       // Health summary: prepend yellow ⚠ count then red ✗ count, both omitted
       // when zero. M3.E will replace this caption with the full Layout Health
@@ -918,7 +986,7 @@ function triangulationStatusText(r) {
       if (s.yellow) parts.push(`${s.yellow}⚠`);
       if (s.red)    parts.push(`${s.red}✗`);
       const health = parts.length ? ` · ${parts.join(' ')}` : '';
-      return `3D layout — ${r.points.length} points → ${r.faces.length} triangles${health}${mergeNote(r)}.`;
+      return `3D layout — ${r.points.length} points → ${r.faces.length} triangles${health}${symmetryNote(r.symmetry)}${mergeNote(r)}.`;
     }
     default:
       return '';
@@ -1273,9 +1341,17 @@ function __triangulationDevTests() {
   check('regular-tetra-all-red',
     r.healthSummary.red === 4 && r.healthSummary.yellow === 0 && r.healthSummary.green === 0,
     r.healthSummary);
+  // The regular tetrahedron with vertices at (±1, ±1, ±1)/√3 alternating
+  // signs is rotation-symmetric but NOT mirror-symmetric across X=0 (the
+  // mirror set has none of the 4 originals as a self-mirror nor as a pair).
+  // Each original's nearest mirror is at acos(1/3) ≈ 1.2310 rad, so symmetry
+  // suffix Δ=1.23✗ joins the all-red triangle warning in the status caption.
   check('regular-tetra-status',
-    triangulationStatusText(r) === '3D layout — 4 points → 4 triangles · 4✗.',
+    triangulationStatusText(r) === '3D layout — 4 points → 4 triangles · 4✗ · sym Δ=1.23✗.',
     triangulationStatusText(r));
+  check('regular-tetra-symmetry-red',
+    r.symmetry && r.symmetry.level === 'red' && approx(r.symmetry.delta, Math.acos(1/3)),
+    r.symmetry);
 
   // 15. Regular octahedron metrics — 8 equilateral spherical triangles with
   // arc length π/2 (90°). Area = π/2 per face, max interior angle = π/2.
@@ -1295,6 +1371,82 @@ function __triangulationDevTests() {
   check('regular-octa-all-yellow',
     r.healthSummary.yellow === 8 && r.healthSummary.red === 0 && r.healthSummary.green === 0,
     r.healthSummary);
+  // Regular octahedron has full L/R symmetry: ±X, ±Y, ±Z are all closed
+  // under the mirror operation (x → -x), so each original's nearest mirror
+  // is itself or its antipode at distance 0.
+  check('regular-octa-symmetry-green',
+    r.symmetry && r.symmetry.level === 'green' && approx(r.symmetry.delta, 0),
+    r.symmetry);
+
+  // ===== Symmetry tests (M3.D) =====
+
+  // S1. Symmetric LCR: mirror pair (L, R) + on-axis (C, P) → Δ ≈ 0, green.
+  setLayout([
+    { name: 'L', x: -300, y: 200, z: 240 },
+    { name: 'R', x:  300, y: 200, z: 240 },
+    { name: 'C', x:    0, y: 200, z: 240 },
+    { name: 'P', x:    0, y: -200, z: 240 },
+  ]);
+  r = analyseTriangulation();
+  check('symmetric-lcr-green',
+    r.symmetry && r.symmetry.level === 'green' && r.symmetry.delta < 1e-9,
+    r.symmetry);
+
+  // S2. Slight asymmetry — R nudged to 400 (not the mirror of L's 300) →
+  // Δ around 0.07 rad, in the yellow band (0.05 < Δ ≤ 0.15).
+  setLayout([
+    { name: 'L', x: -300, y: 200, z: 240 },
+    { name: 'R', x:  400, y: 200, z: 240 },
+    { name: 'C', x:    0, y: 200, z: 240 },
+    { name: 'P', x:    0, y: -200, z: 240 },
+  ]);
+  r = analyseTriangulation();
+  check('asymmetric-r-shift-yellow',
+    r.symmetry && r.symmetry.level === 'yellow',
+    r.symmetry);
+
+  // S3. Heavy asymmetry — single off-X-axis speaker (no mirror partner
+  // anywhere in the set) → Δ large, red. Tests the "1 point" path too.
+  setLayout([{ name: 'X', x: 200, y: 0, z: 240 }]);
+  r = analyseTriangulation();
+  check('single-off-axis-red',
+    r.kind === 'too-few' && r.symmetry && r.symmetry.level === 'red',
+    { kind: r.kind, sym: r.symmetry });
+
+  // S4. Single speaker on the X=0 centerline → mirror is self → Δ exactly 0.
+  setLayout([{ name: 'X', x: 0, y: 200, z: 240 }]);
+  r = analyseTriangulation();
+  check('single-on-centerline-green',
+    r.kind === 'too-few' && r.symmetry && r.symmetry.level === 'green' && r.symmetry.delta === 0,
+    { kind: r.kind, sym: r.symmetry });
+
+  // S5. Left-heavy layout (3 L vs 1 R, ROADMAP M3 visual check #4) → red.
+  setLayout([
+    { name: 'L1', x: -300, y:  200, z: 240 },
+    { name: 'L2', x: -200, y: -100, z: 240 },
+    { name: 'L3', x: -400, y:   50, z: 240 },
+    { name: 'R',  x:  300, y:  100, z: 240 },
+  ]);
+  r = analyseTriangulation();
+  check('left-heavy-red',
+    r.symmetry && r.symmetry.level === 'red',
+    r.symmetry);
+  check('left-heavy-status-suffix',
+    / · sym Δ=\d+\.\d{2}✗\.$/.test(triangulationStatusText(r)),
+    triangulationStatusText(r));
+
+  // S6. Symmetric on planar layout — should attach symmetry to the 'planar'
+  // result kind too.
+  setLayout([
+    { name: 'A', x:  300, y:    0, z: 120 },
+    { name: 'B', x: -300, y:    0, z: 120 },
+    { name: 'C', x:    0, y:  300, z: 120 },
+    { name: 'D', x:    0, y: -300, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('planar-carries-symmetry',
+    r.kind === 'planar' && r.symmetry && r.symmetry.level === 'green',
+    { kind: r.kind, sym: r.symmetry });
 
   STATE.speakers = stash.speakers;
   STATE.phantoms = stash.phantoms;
@@ -1873,6 +2025,38 @@ function installPanelEventGuards() {
 // Editor UI — speaker list, audience inputs, layout name, unit toggle.
 // =============================================================================
 
+// Speed of sound for delay estimates. Standard 343 m/s for ~20 °C dry air;
+// the variation across realistic theatre temperatures (15–28 °C) is ≲ 1%,
+// well below typical delay-alignment tolerance, so a fixed constant is
+// honest enough for the "delay-line ballpark" use case.
+const SPEED_OF_SOUND_MPS = 343;
+
+// Update one speaker's distance / delay caption from the current STATE.
+// Distance is the 3D Euclidean from speaker (s.x, s.y, s.z) to the listening
+// centre (0, 0, listeningHeight); delay = distance / speed-of-sound.
+function updateSpeakerDerived(s, el) {
+  const dx = s.x;
+  const dy = s.y;
+  const dz = s.z - STATE.audience.listeningHeight;
+  const cm = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  const ms = (cm / 100 / SPEED_OF_SOUND_MPS) * 1000;
+  const dist = STATE.view.unit === 'm'
+    ? `${(cm / 100).toFixed(2)} m`
+    : `${cm.toFixed(0)} cm`;
+  el.textContent = `${dist} · ${ms.toFixed(1)} ms`;
+}
+
+// Refresh every visible speaker row's caption — used when a global input
+// changes (listeningHeight moves, unit toggle flips).
+function updateAllSpeakerDerived() {
+  for (const item of document.querySelectorAll('.speaker-item')) {
+    const id = item.dataset.id;
+    const s = STATE.speakers.find(x => x.id === id);
+    const el = item.querySelector('.speaker-derived');
+    if (s && el) updateSpeakerDerived(s, el);
+  }
+}
+
 const SPEAKER_FIELDS = [
   { key: 'x', label: 'X', kind: 'len',
     title: 'Right (+) / left (-) of listening centre' },
@@ -1949,6 +2133,14 @@ function buildSpeakerItem(s) {
   header.append(enabled, name, expandBtn, deleteBtn);
   li.appendChild(header);
 
+  // Distance + delay caption. Always visible (one row per speaker, even when
+  // collapsed) — sound designers scan this for delay-line alignment.
+  const derived = document.createElement('div');
+  derived.className = 'speaker-derived';
+  derived.title = 'Distance from listening centre · estimated delay at 343 m/s (20 °C dry air)';
+  updateSpeakerDerived(s, derived);
+  li.appendChild(derived);
+
   // Editor body. Visibility is controlled by the .expanded class on `li`
   // (see CSS) — do NOT set the `hidden` attribute here, because the editor
   // has `display: grid` which overrides hidden's implicit display: none.
@@ -1973,6 +2165,7 @@ function buildSpeakerItem(s) {
       const v = parseFloat(inp.value);
       if (isNaN(v)) return;
       s[f.key] = f.kind === 'len' ? lenStore(v) : v;
+      if (f.kind === 'len') updateSpeakerDerived(s, derived);
       markCoverageDirty();
       markTriangulationDirty();
     });
@@ -2153,6 +2346,62 @@ function refreshUnitInputs() {
       inp.value = lenDisplay(p[inp.dataset.field]);
     });
   }
+  // Distance / delay caption text depends on the displayed unit too.
+  updateAllSpeakerDerived();
+}
+
+// =============================================================================
+// Bulk paste (dev) — fast scenario seeding for testing. Parses every signed
+// integer / float out of the textarea (commas / brackets / newlines / labels
+// all ignored), groups in triplets as x/y/z. Trailing tokens that don't make
+// a full triplet are dropped silently — caller sees the resulting speaker /
+// phantom count via the rendered list. M4 will introduce full state import
+// from a downloaded HTML file; this is the lighter-weight cousin for ad-hoc
+// scenario testing during development.
+// =============================================================================
+
+function parseBulkTriplets(text) {
+  const nums = (text.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
+  const out = [];
+  for (let i = 0; i + 2 < nums.length; i += 3) {
+    out.push({ x: nums[i], y: nums[i + 1], z: nums[i + 2] });
+  }
+  return out;
+}
+
+function bulkReplaceSpeakers(text) {
+  const trips = parseBulkTriplets(text);
+  STATE.speakers = trips.map((t, i) => {
+    const aim = aimAtCentre(t.x, t.y, t.z);
+    return {
+      id: nextSpeakerId(),
+      name: 'Speaker ' + (i + 1),
+      enabled: true,
+      x: t.x, y: t.y, z: t.z,
+      yaw: aim.yaw,
+      pitch: aim.pitch,
+      angleH: 90,
+      angleV: 60,
+    };
+  });
+  syncSpeakerLabels();
+  syncCoordLabels();
+  renderSpeakersList();
+  markCoverageDirty();
+  markTriangulationDirty();
+}
+
+function bulkReplacePhantoms(text) {
+  const trips = parseBulkTriplets(text);
+  STATE.phantoms = trips.map((t, i) => ({
+    id: nextPhantomId(),
+    name: 'Phantom ' + (i + 1),
+    x: t.x, y: t.y, z: t.z,
+  }));
+  syncPhantomLabels();
+  syncCoordLabels();
+  renderPhantomsList();
+  markTriangulationDirty();
 }
 
 // =============================================================================
@@ -2205,6 +2454,8 @@ window.addEventListener('DOMContentLoaded', () => {
       if (key === 'listeningHeight' && STATE.view.cameraPreset === 'listening') {
         applyCamera();
       }
+      // listeningHeight moves the centre → every speaker's distance changes.
+      if (key === 'listeningHeight') updateAllSpeakerDerived();
       markCoverageDirty();
       markTriangulationDirty();
     });
@@ -2259,6 +2510,18 @@ window.addEventListener('DOMContentLoaded', () => {
       markTriangulationDirty();
     });
   }
+
+  // Bulk paste buttons (dev affordance) — both Speaker and Phantom panels
+  // share the same data-bulk-go / data-bulk attribute pattern.
+  document.querySelectorAll('button[data-bulk-go]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.bulkGo;
+      const ta = document.querySelector(`textarea[data-bulk="${target}"]`);
+      if (!ta) return;
+      if (target === 'speakers') bulkReplaceSpeakers(ta.value);
+      else if (target === 'phantoms') bulkReplacePhantoms(ta.value);
+    });
+  });
 
   // Initial renders
   renderLayoutName();

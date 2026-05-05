@@ -21,8 +21,8 @@
 - [x] **M1** — 場景骨架 + 資料模型 + 音響 / cone / camera / 圖層 toggle（完成 2026-05-05，commit `4855bb4`）
 - [x] **M2** — 聽覺平面 + 覆蓋熱區（grid sampling + gradient）（完成 2026-05-05，commit `5fa8124`）
 - [x] **M3** — Phantom speaker + 球面凸包三角剖分 + Layout Health（完成 2026-05-05）
-- [ ] **M4** — HTML 下載 / 上傳（self-contained）+ PNG 截圖
-- [ ] **M5** — i18n + mobile banner + landing page 正式化 + meta / OG / sitemap
+- [x] **M4** — HTML 下載 / 上傳（self-contained）+ PNG 截圖（完成 2026-05-06，A → C 三階段）
+- [ ] **M5** — i18n + mobile banner + landing page 正式化 + meta / OG / 公開化
 
 ---
 
@@ -430,7 +430,15 @@ A 資料模型 + UI / B 球面凸包（含 sliver merge）/ C per-triangle metri
 
 **收尾備註**
 
-（完成後填寫）
+完成 2026-05-06，分成 A → C 三階段：
+
+- **M4.A**（commit `4db4313`）—— Save PNG：composite WEBGL canvas + HTML overlay labels onto a 2× viewport scratch canvas via Canvas2D；panel UI / tooltip 不入鏡。需要 `setAttributes('preserveDrawingBuffer', true)` 否則 `drawImage(canvas)` 抓到空白。labels 用 `getBoundingClientRect()` 中心 + `getComputedStyle` 拿字型 / 顏色，halo 用 shadowBlur stamp 三次模擬 multi-layer text-shadow。
+- **M4.B**（commit `d690ebe`）—— Save HTML：DOMParser clone 當前 document → 替換 `<link>` / `<script src=>` 成 inline → 注入 `script#coverage-state` JSON → 加 metadata HTML comment → trigger download。Boot loader IIFE 在 module top 執行，比 setup() 早把 STATE 換掉。踩過：state script **必須 insertBefore inline coverage.js**（inline script 沒 defer，parse 到就執行）；`document.documentElement.outerHTML` 會把 p5 動態加的 `<canvas>` 也存進去 → 必須 strip `#canvas-host`；file:// 上重存的 inline-tag fallback 已實作但被 hide 條件擋掉用不到，留著作為 single-source-of-truth；snapshot 模式（下載出的 HTML）hide Save HTML / Open HTML，file I/O 只屬於 live tool。
+- **M4.C**（commit `638d3a6`）—— Open from HTML：FileReader → DOMParser → `script#coverage-state` → JSON.parse → `applyLoadedState()` → `syncUiFromState()`。錯誤分支各自 alert（找不到 state / 空 state / JSON 壞 / schemaVersion 不符）。`applyLoadedState` 的 schemaVersion guard 在所有 STATE 寫入之前 throw → 載失敗 STATE 一個 bit 都不動。loader 對未知欄位 silently drop，v1.1（如 floor plan）可加 optional 欄位不必 bump schema。
+
+QA：8 項 visual checks 全過，包含 round-trip / 錯誤分支 / 空 layoutName / 重複選同檔 / snapshot mode 隱藏。
+
+未解：朋友 Chrome 開檔顯示異常（Safari / Edge OK），等朋友 console 輸出回來再 reproduce；不擋 M5 啟動。
 
 ---
 

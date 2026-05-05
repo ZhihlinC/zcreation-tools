@@ -156,6 +156,16 @@
     <div id="health-panel-status" class="health-status"></div>
   </aside>
 
+  <!-- Triangle hover tooltip (M3.F). Hidden by default; populated and
+       positioned by pickTriangle()/updateTooltip() in coverage.js. -->
+  <div id="triangle-tooltip" class="tooltip" role="tooltip" hidden>
+    <div class="tt-line"><span class="tt-label">Max angle</span><span class="tt-value" data-tt="maxAngle"></span></div>
+    <div class="tt-line"><span class="tt-label">Area</span><span class="tt-value" data-tt="area"></span></div>
+    <div class="tt-line"><span class="tt-label">Health</span><span class="tt-value" data-tt="level"></span></div>
+    <div class="tt-line"><span class="tt-label">Region</span><span class="tt-value" data-tt="region"></span></div>
+    <div class="tt-line tt-line-vertices"><span class="tt-label">Vertices</span><span class="tt-value" data-tt="vertices"></span></div>
+  </div>
+
   <!-- Mobile banner stub — M5 will style and persist. -->
   <aside id="mobile-banner" hidden>
     <span>This tool is designed for desktop. The editing experience is limited on smaller screens.</span>

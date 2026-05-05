@@ -596,7 +596,9 @@ canvas { display: block; }
 #health-panel {
   position: fixed;
   bottom: 1rem;
-  right: 1rem;
+  /* Sit clear of the right column (260px wide at right: 1rem). Adding the
+     1rem inter-panel gap on top yields right: 260+32 = 292px. */
+  right: calc(260px + 2rem);
   width: 320px;
   z-index: 10;
 }
@@ -642,6 +644,64 @@ canvas { display: block; }
   color: var(--fg);
   background: rgba(120, 130, 160, 0.08);
   border-color: rgba(120, 130, 160, 0.30);
+}
+
+/* =============================================================================
+   Triangle hover tooltip (M3.F, SPEC §9.3) — small floating card that
+   follows the cursor while hovering a hull triangle. Left border colour
+   echoes the triangle's health level (green / yellow / red); info uses the
+   neutral panel border. Pointer-events disabled so the tooltip can never
+   steal hover from the canvas underneath.
+   ============================================================================= */
+#triangle-tooltip {
+  position: fixed;
+  z-index: 20;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid var(--panel-border);
+  border-left-width: 3px;
+  border-radius: 4px;
+  padding: 0.35rem 0.55rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  min-width: 130px;
+  max-width: 260px;
+}
+#triangle-tooltip[data-level="green"]  { border-left-color: rgba( 80, 180, 100, 0.85); }
+#triangle-tooltip[data-level="yellow"] { border-left-color: rgba(220, 170,  40, 0.85); }
+#triangle-tooltip[data-level="red"]    { border-left-color: rgba(225,  70,  70, 0.85); }
+#triangle-tooltip .tt-line {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+}
+#triangle-tooltip .tt-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  min-width: 4.5rem;
+}
+#triangle-tooltip .tt-value {
+  flex: 1 1 auto;
+  text-align: right;
+  color: var(--fg);
+}
+/* Vertices line stacks label above the names so all speaker names land on
+   one row even when there are 3 long names — wrapping inside a narrow
+   right-aligned column was the original layout's failure mode. */
+#triangle-tooltip .tt-line-vertices {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.05rem;
+}
+#triangle-tooltip .tt-line-vertices .tt-value {
+  text-align: right;
+  font-size: 0.7rem;
+  color: var(--muted);
 }
 
 /* =============================================================================

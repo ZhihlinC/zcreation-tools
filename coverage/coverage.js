@@ -371,6 +371,9 @@ function ensureTriangulationFresh() {
   if (!TRIANGULATION.dirty) return;
   TRIANGULATION.result = analyseTriangulation();
   TRIANGULATION.dirty = false;
+  // Hover cache references the previous result's face indices — invalidate
+  // so the next mousemove re-reads metrics from the new result.
+  if (typeof TOOLTIP !== 'undefined') TOOLTIP.lastIdx = -1;
 }
 
 // ---------------------------------------------------------------------------
@@ -1211,6 +1214,134 @@ function drawTriangulation() {
   pop();
 }
 
+// ---------------------------------------------------------------------------
+// Triangle hover tooltip (M3.F, SPEC §9.3).
+//
+// pickTriangle: project each hull face's three vertices to canvas pixel
+// coordinates via projectToScreen, run a 2D point-in-triangle test against
+// the mouse, and return the index of the triangle whose centroid is
+// closest to the camera (front-most among hits). Returns -1 on miss.
+//
+// updateTooltip: read TRIANGULATION.result.metrics[i] for the picked face,
+// format the values, position the tooltip near the mouse with a small
+// offset, and clamp inside the viewport. Hidden when the layer is off /
+// kind isn't 'ok' / pointer is over a panel / no hit.
+// ---------------------------------------------------------------------------
+
+function pointInTriangle(px, py, ax, ay, bx, by, cx, cy) {
+  // Sign of the 2D cross products (px-bx, py-by) × (ax-bx, ay-by) for each
+  // edge. If all signs agree, point is inside (with edges treated as inside
+  // when the cross product is exactly 0).
+  const d1 = (px - bx) * (ay - by) - (ax - bx) * (py - by);
+  const d2 = (px - cx) * (by - cy) - (bx - cx) * (py - cy);
+  const d3 = (px - ax) * (cy - ay) - (cx - ax) * (py - ay);
+  const hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+  const hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+  return !(hasNeg && hasPos);
+}
+
+function pickTriangle(mx, my) {
+  const r = TRIANGULATION.result;
+  if (!r || r.kind !== 'ok') return -1;
+  if (!STATE.view.layers.triangulation) return -1;
+  if (!cam) return -1;
+
+  let bestIdx = -1;
+  let bestDepthSq = Infinity;
+  const ex = cam.eyeX, ey = cam.eyeY, ez = cam.eyeZ;
+
+  for (let i = 0; i < r.faces.length; i++) {
+    const f = r.faces[i];
+    const pa = r.points[f.a].pos;
+    const pb = r.points[f.b].pos;
+    const pc = r.points[f.c].pos;
+    const sa = projectToScreen(pa.x, pa.y, pa.z);
+    const sb = projectToScreen(pb.x, pb.y, pb.z);
+    const sc = projectToScreen(pc.x, pc.y, pc.z);
+    if (!sa || !sb || !sc) continue;
+    if (sa.behind || sb.behind || sc.behind) continue;
+    if (!pointInTriangle(mx, my, sa.sx, sa.sy, sb.sx, sb.sy, sc.sx, sc.sy)) continue;
+
+    // Depth tiebreak: distance from camera eye to face centroid (squared,
+    // since we only compare).
+    const cx = (pa.x + pb.x + pc.x) / 3;
+    const cy = (pa.y + pb.y + pc.y) / 3;
+    const cz = (pa.z + pb.z + pc.z) / 3;
+    const dx = cx - ex, dy = cy - ey, dz = cz - ez;
+    const d2 = dx*dx + dy*dy + dz*dz;
+    if (d2 < bestDepthSq) { bestDepthSq = d2; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+const TOOLTIP = { lastIdx: -1, mx: 0, my: 0 };
+
+function updateTooltip(mx, my, hideForPanel) {
+  const el = document.getElementById('triangle-tooltip');
+  if (!el) return;
+  const r = TRIANGULATION.result;
+  // Hide while orbiting — picking is meaningless mid-drag and the tooltip
+  // would jitter wildly. mouseIsPressed comes from p5 globals.
+  const orbiting = (typeof mouseIsPressed !== 'undefined' && mouseIsPressed) && !_dragStartedOnPanel;
+  const hit = (hideForPanel || orbiting) ? -1 : pickTriangle(mx, my);
+  if (hit < 0 || !r || r.kind !== 'ok') {
+    el.hidden = true;
+    TOOLTIP.lastIdx = -1;
+    return;
+  }
+
+  const m = r.metrics[hit];
+  const f = r.faces[hit];
+  // Vertex names from each merged point's `names` array (sliver-merge groups
+  // join with " + "). For unmerged points, names is just [originalName].
+  const vNames = [f.a, f.b, f.c]
+    .map(i => (r.points[i].names || [r.points[i].name]).join(' + '))
+    .join(', ');
+
+  // Update text only when hit changed — saves DOM writes during dragging
+  // mousemove across the same triangle.
+  if (hit !== TOOLTIP.lastIdx) {
+    el.querySelector('[data-tt="maxAngle"]').textContent = `${(m.maxAngle * 180 / Math.PI).toFixed(1)}°`;
+    el.querySelector('[data-tt="area"]').textContent = `${m.area.toFixed(3)} sr (${m.areaRatio.toFixed(2)}× median)`;
+    el.querySelector('[data-tt="level"]').textContent = m.level;
+    el.querySelector('[data-tt="region"]').textContent = m.region;
+    el.querySelector('[data-tt="vertices"]').textContent = vNames;
+    el.dataset.level = m.level;
+    TOOLTIP.lastIdx = hit;
+  }
+
+  // Position with offset; clamp inside viewport.
+  el.hidden = false;
+  const rect = el.getBoundingClientRect();
+  const pad = 10;
+  const offsetX = 14, offsetY = 14;
+  let left = mx + offsetX;
+  let top  = my + offsetY;
+  if (left + rect.width  + pad > window.innerWidth)  left = mx - rect.width  - offsetX;
+  if (top  + rect.height + pad > window.innerHeight) top  = my - rect.height - offsetY;
+  if (left < pad) left = pad;
+  if (top  < pad) top  = pad;
+  el.style.left = left + 'px';
+  el.style.top  = top  + 'px';
+}
+
+function installTooltipHandlers() {
+  // Listen on document so we get events regardless of which element is the
+  // direct target. Existing _pointerCurrentlyOverPanel tracks panel hover
+  // (set by the panel-guard mousemove listener) — we reuse that signal.
+  document.addEventListener('mousemove', (e) => {
+    TOOLTIP.mx = e.clientX;
+    TOOLTIP.my = e.clientY;
+    updateTooltip(e.clientX, e.clientY, _pointerCurrentlyOverPanel);
+  });
+  // Refresh tooltip after camera changes (orbit / preset switch) — mouse
+  // hasn't moved but the projection has. Cheap to do every frame; piggyback
+  // on the next mouse event by no-op'ing here. (Implemented via the draw
+  // loop indirectly: when cam projection updates, the next mousemove
+  // re-picks. If the user keeps the cursor still during an orbit, the
+  // tooltip text becomes stale until they move — acceptable for v1.)
+}
+
 // Dev test harness — run from devtools console: __triangulationDevTests().
 // Pure-function checks against analyseTriangulation. Stashes & restores STATE
 // so the running app isn't disturbed. Not auto-run.
@@ -1749,6 +1880,17 @@ function __triangulationDevTests() {
     && /Speakers are collinear/.test(lines[0].text),
     lines);
 
+  // ===== pointInTriangle (M3.F) =====
+  // Reference triangle: A=(0,0), B=(10,0), C=(0,10). Centroid (10/3, 10/3).
+  check('pit-inside-centroid', pointInTriangle(3, 3, 0, 0, 10, 0, 0, 10) === true,  '');
+  check('pit-outside-far',     pointInTriangle(20, 20, 0, 0, 10, 0, 0, 10) === false, '');
+  check('pit-on-vertex',       pointInTriangle(0, 0, 0, 0, 10, 0, 0, 10) === true,  '');
+  check('pit-on-edge-AB',      pointInTriangle(5, 0, 0, 0, 10, 0, 0, 10) === true,  '');
+  check('pit-on-edge-hypot',   pointInTriangle(5, 5, 0, 0, 10, 0, 0, 10) === true,  '');
+  check('pit-just-outside-AB', pointInTriangle(5, -0.01, 0, 0, 10, 0, 0, 10) === false, '');
+  // Reverse vertex winding — pointInTriangle is winding-agnostic (sign test).
+  check('pit-reverse-winding', pointInTriangle(3, 3, 0, 0, 0, 10, 10, 0) === true,  '');
+
   STATE.speakers = stash.speakers;
   STATE.phantoms = stash.phantoms;
   STATE.audience.listeningHeight = stash.listeningHeight;
@@ -1781,6 +1923,7 @@ function setup() {
   syncPhantomLabels();
   syncCoordLabels();
   installPanelEventGuards();
+  installTooltipHandlers();
   computeCoverage();
 }
 
@@ -2731,6 +2874,13 @@ window.addEventListener('DOMContentLoaded', () => {
       if (key === 'health-panel') {
         const el = document.getElementById('health-panel');
         if (el) el.hidden = !inp.checked;
+      }
+      // Triangulation toggle off → hide any visible tooltip without waiting
+      // for the next mousemove.
+      if (key === 'triangulation' && !inp.checked) {
+        const tt = document.getElementById('triangle-tooltip');
+        if (tt) tt.hidden = true;
+        TOOLTIP.lastIdx = -1;
       }
     });
   });

@@ -86,7 +86,14 @@
         <li><label><input type="checkbox" data-layer="cones" checked> Cones</label></li>
         <li><label><input type="checkbox" data-layer="axes" checked> Axes</label></li>
         <li><label><input type="checkbox" data-layer="coords"> Coordinates</label></li>
-        <li class="placeholder"><label><input type="checkbox" data-layer="coverage-heat" disabled> Coverage heatmap <em>(M2)</em></label></li>
+        <li><label><input type="checkbox" data-layer="coverage-heat" checked> Coverage heatmap</label></li>
+        <li class="coverage-legend" aria-label="Coverage heatmap legend">
+          <span class="chip" data-c="0"></span><span>0</span>
+          <span class="chip" data-c="1"></span><span>1</span>
+          <span class="chip" data-c="2"></span><span>2</span>
+          <span class="chip" data-c="3"></span><span>3+</span>
+          <span class="legend-suffix">speakers covering</span>
+        </li>
         <li class="placeholder"><label><input type="checkbox" data-layer="triangulation" disabled> Triangulation <em>(M3)</em></label></li>
         <li class="placeholder"><label><input type="checkbox" data-layer="phantoms" disabled> Phantoms <em>(M3)</em></label></li>
         <li class="placeholder"><label><input type="checkbox" data-layer="health-panel" disabled> Layout Health <em>(M3)</em></label></li>

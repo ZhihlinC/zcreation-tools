@@ -36,7 +36,7 @@ const STATE = {
       floor: true, audience: true, 'listening-plane': true,
       'listening-centre': true,
       speakers: true, cones: true, axes: true, coords: false,
-      'coverage-heat': false, triangulation: false,
+      'coverage-heat': true, triangulation: false,
       phantoms: false, 'health-panel': false,
     },
   },
@@ -168,6 +168,157 @@ function coneCorners(s, length) {
 }
 
 // =============================================================================
+// Coverage heatmap (SPEC §7).
+//
+// Grid-sample the listening plane, count enabled speakers covering each cell
+// via the rectangular-pyramid test (§7.2), colour by count (§7.3).
+//
+// Render path: instead of building a p5.Image and using texture() — which is
+// flaky in p5 v1.11 WEBGL with hand-painted pixel buffers (the GPU upload
+// silently misses, leaving the quad with whatever fill happened to be
+// active) — we bucket cells by colour band during compute and draw 4 batched
+// QUADS shapes per frame (one per colour). Lighting is disabled for this
+// pass so the colours render at their declared RGB rather than being
+// modulated by the directional light.
+//
+// Recompute is leading-edge throttled to 50ms so dragging an angle/position
+// field gives near-real-time feedback without flooding the main loop.
+// =============================================================================
+
+const COVERAGE = {
+  resX: 80,
+  resY: 80,
+  counts: null,                      // Uint8Array(resX * resY) — kept for M3 hover lookups
+  groupVerts: [[], [], [], []],      // flat (x0,y0,x1,y0,x1,y1,x0,y1) repeated, per colour bucket 0/1/2/3+
+  dirty: true,
+  scheduled: false,
+};
+
+function markCoverageDirty() {
+  COVERAGE.dirty = true;
+  if (COVERAGE.scheduled) return;
+  COVERAGE.scheduled = true;
+  setTimeout(() => {
+    COVERAGE.scheduled = false;
+    if (COVERAGE.dirty) computeCoverage();
+  }, 50);
+}
+
+function computeCoverage() {
+  const lx = STATE.audience.length / 2;
+  const ly = STATE.audience.width  / 2;
+  const z  = STATE.audience.listeningHeight;
+  const nx = COVERAGE.resX;
+  const ny = COVERAGE.resY;
+
+  if (!COVERAGE.counts || COVERAGE.counts.length !== nx * ny) {
+    COVERAGE.counts = new Uint8Array(nx * ny);
+  }
+
+  // Pre-bake speaker bases + half-angle tangents. Flat-property objects so
+  // the inner loop touches no nested .x/.y/.z lookups.
+  const speakers = [];
+  for (const s of STATE.speakers) {
+    if (!s.enabled) continue;
+    const { f, r, u } = speakerBasis(s.yaw, s.pitch);
+    speakers.push({
+      x: s.x, y: s.y, z: s.z,
+      fx: f.x, fy: f.y, fz: f.z,
+      rx: r.x, ry: r.y, rz: r.z,
+      ux: u.x, uy: u.y, uz: u.z,
+      tanH: Math.tan(radians(s.angleH / 2)),
+      tanV: Math.tan(radians(s.angleV / 2)),
+    });
+  }
+
+  const dx = (2 * lx) / nx;
+  const dy = (2 * ly) / ny;
+
+  // Reset colour buckets. Reusing the arrays (length = 0) keeps the JS
+  // engine's hidden class instead of reallocating, but recomputes are
+  // throttled to 50ms so allocation cost is negligible either way.
+  for (let g = 0; g < 4; g++) COVERAGE.groupVerts[g].length = 0;
+
+  for (let iy = 0; iy < ny; iy++) {
+    const py = -ly + (iy + 0.5) * dy;
+    const y0 = -ly + iy * dy;
+    const y1 = y0 + dy;
+    for (let ix = 0; ix < nx; ix++) {
+      const px = -lx + (ix + 0.5) * dx;
+      let count = 0;
+      for (const s of speakers) {
+        const ddx = px - s.x;
+        const ddy = py - s.y;
+        const ddz = z  - s.z;
+        const fp = ddx * s.fx + ddy * s.fy + ddz * s.fz;
+        if (fp <= 0) continue;
+        const rp = ddx * s.rx + ddy * s.ry + ddz * s.rz;
+        const up = ddx * s.ux + ddy * s.uy + ddz * s.uz;
+        // Multiply instead of divide so the comparison stays well-defined
+        // when fp is tiny-positive.
+        if (Math.abs(rp) <= fp * s.tanH && Math.abs(up) <= fp * s.tanV) {
+          count++;
+        }
+      }
+      COVERAGE.counts[iy * nx + ix] = count > 255 ? 255 : count;
+
+      const x0 = -lx + ix * dx;
+      const x1 = x0 + dx;
+      const bucket = count >= 3 ? 3 : count;
+      const arr = COVERAGE.groupVerts[bucket];
+      arr.push(x0, y0, x1, y0, x1, y1, x0, y1);
+    }
+  }
+
+  COVERAGE.dirty = false;
+}
+
+// SPEC §7.3 lookup. Alpha is moderate-high — high enough that the four
+// bands stay distinguishable after compositing over the listening-plane
+// fill and grey background, low enough that the floor grid below remains
+// legible through the heatmap ("不蓋掉地面格線"). The companion fix:
+// when the heatmap layer is on, drawListeningPlane() skips its blue fill
+// so the heatmap colours don't get washed by an extra translucent layer.
+function coverageColour(count) {
+  switch (count) {
+    case 0:  return [225,  70,  70, 175];  // red — uncovered hole
+    case 1:  return [240, 200,  70, 175];  // yellow — single coverage
+    case 2:  return [180, 210,  90, 175];  // orange-green — double
+    default: return [ 80, 180, 100, 175];  // green — 3+ healthy
+  }
+}
+
+function drawCoverageHeat() {
+  // 1cm above the listening plane so we don't z-fight its outline. From the
+  // listening camera (eye exactly at z = listeningHeight) the heatmap shows
+  // edge-on as expected — sitting just above ear level.
+  const z = STATE.audience.listeningHeight + 1;
+
+  push();
+  noStroke();
+  // Disable lighting for this pass — the directional light would otherwise
+  // modulate the heatmap RGB, washing reds toward green-grey under the
+  // current directional vector. Re-enable when the pass ends.
+  if (typeof noLights === 'function') noLights();
+
+  for (let bucket = 0; bucket < 4; bucket++) {
+    const verts = COVERAGE.groupVerts[bucket];
+    if (verts.length === 0) continue;
+    const [r, g, b, a] = coverageColour(bucket);
+    fill(r, g, b, a);
+    beginShape(QUADS);
+    for (let i = 0; i < verts.length; i += 8) {
+      vertex(verts[i],     verts[i + 1], z);
+      vertex(verts[i + 2], verts[i + 3], z);
+      vertex(verts[i + 4], verts[i + 5], z);
+      vertex(verts[i + 6], verts[i + 7], z);
+    }
+    endShape();
+  }
+  pop();
+}
+
+// =============================================================================
 // p5 lifecycle
 // =============================================================================
 
@@ -187,6 +338,7 @@ function setup() {
   syncSpeakerLabels();
   syncCoordLabels();
   installPanelEventGuards();
+  computeCoverage();
 }
 
 function windowResized() {
@@ -235,6 +387,10 @@ function drawScene() {
   if (L.axes)               drawAxesLines();
   if (L.audience)           drawAudience();
   if (L['listening-plane']) drawListeningPlane();
+  // Heatmap sits 1cm above the listening plane; render it after the plane so
+  // ordering matches the eye-line order. Depth test stays on so cones / drop
+  // line below the heatmap are unaffected.
+  if (L['coverage-heat'])   drawCoverageHeat();
   // Drop line is depth-tested so it sits "inside" the scene properly
   // (audience plane, listening plane, etc. occlude it where appropriate).
   if (L['listening-centre']) drawListeningCentreDropLine();
@@ -322,12 +478,19 @@ function drawListeningPlane() {
   const lx = STATE.audience.length / 2;
   const ly = STATE.audience.width / 2;
   const z  = STATE.audience.listeningHeight;
+  // When the coverage heatmap is on, skip the blue fill — the heatmap will
+  // tint the same plane just above (z+1cm), and the extra translucent layer
+  // here would only mute the heatmap's colour bands. Outline still drawn so
+  // the plane edge stays legible.
+  const fillPlane = !STATE.view.layers['coverage-heat'];
   push();
-  noStroke();
-  fill(180, 200, 255, 45);
-  beginShape();
-  vertex(-lx, -ly, z); vertex(+lx, -ly, z); vertex(+lx, +ly, z); vertex(-lx, +ly, z);
-  endShape(CLOSE);
+  if (fillPlane) {
+    noStroke();
+    fill(180, 200, 255, 45);
+    beginShape();
+    vertex(-lx, -ly, z); vertex(+lx, -ly, z); vertex(+lx, +ly, z); vertex(-lx, +ly, z);
+    endShape(CLOSE);
+  }
   stroke(140, 170, 220, 140);
   strokeWeight(1);
   noFill();
@@ -390,20 +553,26 @@ function drawListeningCentreMarker() {
 // direction, so it always renders as a real rectangle regardless of pitch.
 // Speaker body is drawn with depth test off elsewhere, so we don't need to
 // avoid the apex.
+//
+// Edge alphas are tuned for "readable on top of heatmap": rays carry the
+// least information (just connect apex to corners) so they get the lowest
+// alpha; the base outline shows where the cone's footprint lands and is
+// kept stronger.
 function drawSpeakerCone(s) {
   const length = 400;
   const corners = coneCorners(s, length);
 
   push();
-  // very faint base fill
+  // very faint base fill — kept low so the heatmap colour band underneath
+  // still reads at the cone footprint.
   noStroke();
-  fill(255, 190, 70, 18);
+  fill(255, 190, 70, 14);
   beginShape();
   for (const c of corners) vertex(c.x, c.y, c.z);
   endShape(CLOSE);
 
-  // edge rays
-  stroke(220, 150, 40, 200);
+  // edge rays — softened to avoid fighting the heatmap.
+  stroke(220, 150, 40, 90);
   strokeWeight(1);
   noFill();
   for (const c of corners) {
@@ -413,8 +582,10 @@ function drawSpeakerCone(s) {
     endShape();
   }
 
-  // base outline
-  strokeWeight(1.5);
+  // base outline — slightly stronger than the rays since it carries the
+  // useful "where the cone lands" information.
+  stroke(220, 150, 40, 140);
+  strokeWeight(1.2);
   beginShape();
   for (const c of corners) vertex(c.x, c.y, c.z);
   endShape(CLOSE);
@@ -664,7 +835,10 @@ function buildSpeakerItem(s) {
   enabled.type = 'checkbox';
   enabled.checked = s.enabled;
   enabled.title = 'Enable / disable in calculations';
-  enabled.addEventListener('change', () => { s.enabled = enabled.checked; });
+  enabled.addEventListener('change', () => {
+    s.enabled = enabled.checked;
+    markCoverageDirty();
+  });
 
   const name = document.createElement('input');
   name.type = 'text';
@@ -691,6 +865,7 @@ function buildSpeakerItem(s) {
     syncSpeakerLabels();
     syncCoordLabels();
     renderSpeakersList();
+    markCoverageDirty();
   });
 
   header.append(enabled, name, expandBtn, deleteBtn);
@@ -720,6 +895,7 @@ function buildSpeakerItem(s) {
       const v = parseFloat(inp.value);
       if (isNaN(v)) return;
       s[f.key] = f.kind === 'len' ? lenStore(v) : v;
+      markCoverageDirty();
     });
 
     fieldLabel.append(span, inp);
@@ -742,6 +918,7 @@ function buildSpeakerItem(s) {
     const pitchInp = body.querySelector('input[data-field="pitch"]');
     if (yawInp)   yawInp.value   = aim.yaw;
     if (pitchInp) pitchInp.value = aim.pitch;
+    markCoverageDirty();
   });
   body.appendChild(aimBtn);
 
@@ -838,6 +1015,7 @@ window.addEventListener('DOMContentLoaded', () => {
       if (key === 'listeningHeight' && STATE.view.cameraPreset === 'listening') {
         applyCamera();
       }
+      markCoverageDirty();
     });
   });
 
@@ -864,6 +1042,7 @@ window.addEventListener('DOMContentLoaded', () => {
       syncSpeakerLabels();
       syncCoordLabels();
       renderSpeakersList();
+      markCoverageDirty();
     });
   }
 

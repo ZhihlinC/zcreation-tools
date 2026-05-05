@@ -290,7 +290,8 @@ phantom speaker 完全由使用者手動放置。
     Open it in a modern browser, or upload it back to the source URL to continue editing.
   -->
   ```
-- **完整可編輯**：包含所有編輯 UI、可加減音響、可重新下載
+- **可編輯瀏覽**：包含所有編輯 UI、可加減音響、可截 PNG、layer toggle 與相機切換照舊
+- **不含 Save HTML**：下載產物是 snapshot，再次下載 / round-trip 編輯走 live tool 的「Open from HTML」（§10.3）。boot 時偵測 `#coverage-script-inline` 自動 hide Save HTML 按鈕
 - **固定英文 UI**（不含 i18n 切換按鈕）
 - 開啟即顯示 layout 當前狀態（沿用儲存時的視角、layer toggle、單位設定）
 

@@ -49,6 +49,129 @@ let _phantomCounter = STATE.phantoms.length + 1;
 function nextPhantomId() { return 'p' + (_phantomCounter++); }
 
 // =============================================================================
+// State persistence — version, source URL, embedded-state boot loader (M4.B).
+// Downloaded HTML files carry a <script id="coverage-state" type="application/json">
+// node; on boot, if that node is present and parses cleanly with the right
+// schemaVersion, we replace the default STATE before setup() runs.
+// =============================================================================
+
+const SCHEMA_VERSION = 1;
+const TOOL_VERSION = '1.0.0';
+const SOURCE_URL = 'https://tools.zcreation.art/coverage';
+
+// Allowed layer keys — anything outside this whitelist is dropped on load,
+// keeping the loader tolerant of unknown fields (forward-compat for v1.1).
+const LAYER_KEYS = [
+  'floor', 'audience', 'listening-plane', 'listening-centre',
+  'speakers', 'cones', 'axes', 'coords',
+  'coverage-heat', 'triangulation', 'phantoms', 'health-panel',
+];
+const CAMERA_PRESETS = ['perspective', 'top', 'front', 'side', 'listening'];
+
+function applyLoadedState(parsed) {
+  if (!parsed || typeof parsed !== 'object') throw new Error('state is not an object');
+  if (parsed.schemaVersion !== SCHEMA_VERSION) {
+    throw new Error('schemaVersion mismatch: expected ' + SCHEMA_VERSION + ', got ' + parsed.schemaVersion);
+  }
+
+  // Metadata: only layoutName round-trips into the editing UI; the other
+  // fields are write-only on save, ignored on load (we'll regenerate them).
+  if (parsed.metadata && typeof parsed.metadata.layoutName === 'string') {
+    STATE.metadata.layoutName = parsed.metadata.layoutName;
+  } else {
+    STATE.metadata.layoutName = '';
+  }
+
+  // Audience.
+  if (parsed.audience && typeof parsed.audience === 'object') {
+    for (const k of ['length', 'width', 'listeningHeight']) {
+      const v = Number(parsed.audience[k]);
+      if (Number.isFinite(v) && v > 0) STATE.audience[k] = v;
+    }
+  }
+
+  // Speakers.
+  if (Array.isArray(parsed.speakers)) {
+    STATE.speakers = parsed.speakers
+      .filter(s => s && typeof s === 'object')
+      .map(s => ({
+        id: typeof s.id === 'string' ? s.id : nextSpeakerId(),
+        name: typeof s.name === 'string' ? s.name : 'Speaker',
+        enabled: s.enabled !== false,
+        x: Number(s.x) || 0,
+        y: Number(s.y) || 0,
+        z: Number(s.z) || 0,
+        yaw: Number(s.yaw) || 0,
+        pitch: Number(s.pitch) || 0,
+        angleH: Number.isFinite(Number(s.angleH)) ? Number(s.angleH) : 90,
+        angleV: Number.isFinite(Number(s.angleV)) ? Number(s.angleV) : 60,
+      }));
+  }
+
+  // Phantoms.
+  if (Array.isArray(parsed.phantoms)) {
+    STATE.phantoms = parsed.phantoms
+      .filter(p => p && typeof p === 'object')
+      .map(p => ({
+        id: typeof p.id === 'string' ? p.id : nextPhantomId(),
+        name: typeof p.name === 'string' ? p.name : 'Phantom',
+        x: Number(p.x) || 0,
+        y: Number(p.y) || 0,
+        z: Number(p.z) || 0,
+      }));
+  }
+
+  // View.
+  if (parsed.view && typeof parsed.view === 'object') {
+    if (parsed.view.unit === 'cm' || parsed.view.unit === 'm') {
+      STATE.view.unit = parsed.view.unit;
+    }
+    if (CAMERA_PRESETS.includes(parsed.view.cameraPreset)) {
+      STATE.view.cameraPreset = parsed.view.cameraPreset;
+    }
+    if (parsed.view.layers && typeof parsed.view.layers === 'object') {
+      for (const k of LAYER_KEYS) {
+        if (typeof parsed.view.layers[k] === 'boolean') {
+          STATE.view.layers[k] = parsed.view.layers[k];
+        }
+      }
+    }
+  }
+
+  rebuildIdCounters();
+}
+
+function rebuildIdCounters() {
+  let maxS = 0, maxP = 0;
+  for (const s of STATE.speakers) {
+    const m = /^s(\d+)$/.exec(s.id);
+    if (m) maxS = Math.max(maxS, parseInt(m[1], 10));
+  }
+  for (const p of STATE.phantoms) {
+    const m = /^p(\d+)$/.exec(p.id);
+    if (m) maxP = Math.max(maxP, parseInt(m[1], 10));
+  }
+  _speakerCounter = maxS + 1;
+  _phantomCounter = maxP + 1;
+}
+
+// Boot-time embedded-state loader. Runs synchronously at module top level so
+// STATE is already up-to-date by the time p5 calls setup() on DOMContentLoaded.
+// Failures are non-fatal and logged — UI still boots with the default layout.
+(function loadEmbeddedStateOnBoot() {
+  const el = typeof document !== 'undefined' && document.getElementById('coverage-state');
+  if (!el) return;
+  const text = el.textContent || '';
+  if (!text.trim()) return;
+  try {
+    const parsed = JSON.parse(text);
+    applyLoadedState(parsed);
+  } catch (e) {
+    console.warn('Embedded coverage-state failed to load; using defaults.', e);
+  }
+})();
+
+// =============================================================================
 // Unit conversion. Internal storage is always cm; display follows STATE.view.unit.
 // =============================================================================
 
@@ -3024,6 +3147,52 @@ function bulkReplacePhantoms(text) {
 }
 
 // =============================================================================
+// Full UI sync from STATE — runs on initial boot (always) and after the
+// upload path replaces STATE (M4.C). Idempotent: every render* / sync*
+// helper is safe to call repeatedly.
+// =============================================================================
+
+function syncUiFromState() {
+  // Text inputs and unit toggle.
+  renderLayoutName();
+  renderUnitToggle();
+  renderAudienceInputs();
+
+  // Speaker / phantom rows + their world-space labels.
+  renderSpeakersList();
+  renderPhantomsList();
+  syncSpeakerLabels();
+  syncPhantomLabels();
+  syncCoordLabels();
+
+  // View preset button active state — mirrors STATE.view.cameraPreset.
+  document.querySelectorAll('#view-controls button[data-view]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === STATE.view.cameraPreset);
+  });
+
+  // Layer checkboxes — mirror STATE.view.layers (default HTML attribute may
+  // be stale after a state load).
+  document.querySelectorAll('#layers-panel input[data-layer]').forEach(inp => {
+    const k = inp.dataset.layer;
+    if (k in STATE.view.layers) inp.checked = !!STATE.view.layers[k];
+  });
+
+  // Health-panel aside follows its own layer toggle.
+  const healthEl = document.getElementById('health-panel');
+  if (healthEl) healthEl.hidden = !STATE.view.layers['health-panel'];
+
+  // Camera. Only safe after setup() — pre-setup, p5 globals like width /
+  // height are 0 and camera() / perspective() throw. setup() runs its own
+  // applyCamera() when cam is first assigned, so the initial-boot pass
+  // intentionally skips this branch and the upload pass (M4.C) hits it.
+  if (cam) applyCamera();
+
+  updateAllSpeakerDerived();
+  markCoverageDirty();
+  markTriangulationDirty();
+}
+
+// =============================================================================
 // PNG export (M4.A) — composite WEBGL canvas + HTML overlay labels into a
 // 2× viewport PNG. The labels live in the DOM (because p5 WEBGL text() is
 // unreliable, see ROADMAP discussion item 7), so we re-render them via 2D
@@ -3138,6 +3307,212 @@ function triggerDownload(blob, filename) {
 }
 
 // =============================================================================
+// HTML export (M4.B) — produce a self-contained HTML that opens with the
+// current layout pre-loaded. Strategy:
+//   1. Use the current document as the template (so the live tool and a
+//      previously-downloaded copy share one code path; this also avoids a
+//      fetch() that'd fail on file://).
+//   2. Replace <link rel="stylesheet" href="coverage.css"> with an inline
+//      <style id="coverage-style-inline"> on the first save, or update the
+//      existing inline tag on subsequent saves.
+//   3. Same trick for <script src="coverage.js"> → <script id="coverage-script-inline">.
+//   4. Inject / update <script id="coverage-state" type="application/json">.
+//   5. Prepend an HTML comment with metadata (SPEC §10.2) and set <title>.
+// p5.js stays as an external CDN script — keeps the file small.
+// =============================================================================
+
+function serializeState() {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    metadata: {
+      layoutName: STATE.metadata.layoutName || '',
+      createdAt: new Date().toISOString(),
+      sourceUrl: SOURCE_URL,
+      toolVersion: TOOL_VERSION,
+    },
+    audience: { ...STATE.audience },
+    speakers: STATE.speakers.map(s => ({ ...s })),
+    phantoms: STATE.phantoms.map(p => ({ ...p })),
+    view: {
+      unit: STATE.view.unit,
+      cameraPreset: STATE.view.cameraPreset,
+      layers: { ...STATE.view.layers },
+    },
+  };
+}
+
+async function getCoverageCss() {
+  const inline = document.getElementById('coverage-style-inline');
+  if (inline) return inline.textContent;
+  const res = await fetch('coverage.css');
+  if (!res.ok) throw new Error('coverage.css fetch failed: ' + res.status);
+  return await res.text();
+}
+
+async function getCoverageJs() {
+  const inline = document.getElementById('coverage-script-inline');
+  if (inline) return inline.textContent;
+  const res = await fetch('coverage.js');
+  if (!res.ok) throw new Error('coverage.js fetch failed: ' + res.status);
+  return await res.text();
+}
+
+// Selectors for elements whose contents are populated at runtime from STATE.
+// Must be cleared in the cloned doc before serialization so the saved file
+// boots from a clean slate (the embedded state drives re-population).
+//
+// #canvas-host is critical: p5's createCanvas() inserts a <canvas> child at
+// runtime, and document.documentElement.outerHTML captures it. If we don't
+// strip it, the saved file boots with the dead canvas already in DOM, p5
+// adds a SECOND one, and the layout breaks (no scene renders).
+const HTML_EXPORT_DYNAMIC_SELECTORS = [
+  '#canvas-host',
+  '#speaker-labels',
+  '#phantom-labels',
+  '#coord-labels',
+  '#speakers-list',
+  '#phantoms-list',
+  '#health-panel-status',
+];
+
+async function buildSelfContainedHtml(state) {
+  // Parse a clone of the current document so live mutations stay untouched.
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    '<!doctype html>' + document.documentElement.outerHTML,
+    'text/html'
+  );
+
+  // Inline CSS — replace <link> on the first save, or update <style> on
+  // subsequent saves of an already-downloaded file.
+  const cssText = await getCoverageCss();
+  const linkEl = doc.querySelector('link[rel="stylesheet"][href*="coverage.css"]');
+  if (linkEl) {
+    const styleEl = doc.createElement('style');
+    styleEl.id = 'coverage-style-inline';
+    styleEl.textContent = cssText;
+    linkEl.replaceWith(styleEl);
+  } else {
+    const existing = doc.getElementById('coverage-style-inline');
+    if (existing) existing.textContent = cssText;
+  }
+
+  // Inline JS.
+  const jsText = await getCoverageJs();
+  const srcScript = doc.querySelector('script[src*="coverage.js"]');
+  if (srcScript) {
+    const inlineScript = doc.createElement('script');
+    inlineScript.id = 'coverage-script-inline';
+    // defer is meaningless on inline scripts; drop it.
+    inlineScript.textContent = jsText;
+    srcScript.replaceWith(inlineScript);
+  } else {
+    const existing = doc.getElementById('coverage-script-inline');
+    if (existing) existing.textContent = jsText;
+  }
+
+  // Embedded state script — escape '<' so the JSON can't accidentally close
+  // the surrounding <script> tag. Critical: the state script must come
+  // BEFORE the inline coverage.js script in document order, otherwise the
+  // boot loader (an IIFE at module top) runs while state is not yet parsed
+  // into the DOM and the saved layout won't apply.
+  const stateJson = JSON.stringify(state, null, 2).replace(/</g, '\\u003c');
+  let stateEl = doc.getElementById('coverage-state');
+  if (!stateEl) {
+    stateEl = doc.createElement('script');
+    stateEl.id = 'coverage-state';
+    stateEl.type = 'application/json';
+    const inlineCoverage = doc.getElementById('coverage-script-inline');
+    if (inlineCoverage && inlineCoverage.parentNode) {
+      inlineCoverage.parentNode.insertBefore(stateEl, inlineCoverage);
+    } else {
+      doc.head.appendChild(stateEl);
+    }
+  }
+  stateEl.textContent = stateJson;
+
+  // Title.
+  const layoutName = (state.metadata.layoutName || '').trim();
+  const title = doc.querySelector('title');
+  if (title) {
+    title.textContent = layoutName || 'Sound Coverage Sketch — Untitled';
+  }
+
+  // Strip dynamic content so the saved file boots clean.
+  for (const sel of HTML_EXPORT_DYNAMIC_SELECTORS) {
+    const el = doc.querySelector(sel);
+    if (el) el.innerHTML = '';
+  }
+  // Reset bulk-paste textareas — these carry editor scratch text, not state.
+  doc.querySelectorAll('textarea[data-bulk]').forEach(ta => { ta.value = ''; });
+  // Reset disclaimer to expanded so the saved file always shows the framing.
+  const disc = doc.getElementById('disclaimer');
+  if (disc) disc.classList.remove('collapsed');
+  const discToggle = doc.getElementById('disclaimer-toggle');
+  if (discToggle) {
+    discToggle.setAttribute('aria-expanded', 'true');
+    const caret = discToggle.querySelector('.caret');
+    if (caret) caret.textContent = '▴';
+  }
+
+  // Assemble final HTML with metadata comment header.
+  const metaComment = buildMetadataComment(state);
+  return '<!doctype html>\n'
+    + metaComment
+    + '\n'
+    + doc.documentElement.outerHTML
+    + '\n';
+}
+
+function buildMetadataComment(state) {
+  const safe = s => String(s == null ? '' : s).replace(/--/g, '- -');
+  const name = safe(state.metadata.layoutName) || '(untitled)';
+  return [
+    '<!--',
+    '  Generated by Sound Coverage Sketch',
+    '  Layout name: ' + name,
+    '  Generated at: ' + safe(state.metadata.createdAt),
+    '  Source: ' + safe(state.metadata.sourceUrl),
+    '  Tool version: ' + safe(state.metadata.toolVersion),
+    '',
+    '  This file is fully editable.',
+    '  Open it in a modern browser, or upload it back to the source URL to continue editing.',
+    '-->',
+  ].join('\n');
+}
+
+function htmlFilename() {
+  const raw = (STATE.metadata.layoutName || '').trim();
+  const safe = raw.replace(/[^\w\-]+/g, '-').replace(/^-+|-+$/g, '') || 'untitled';
+  return `${safe}-coverage-sketch.html`;
+}
+
+async function exportHtml() {
+  const state = serializeState();
+  const html = await buildSelfContainedHtml(state);
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  triggerDownload(blob, htmlFilename());
+}
+
+// Shared button-busy wrapper for the export buttons. Disables the button,
+// swaps its label to "Saving…", runs the async fn, restores on completion.
+async function runExport(btn, label, fn) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = 'Saving…';
+  try {
+    await fn();
+  } catch (err) {
+    console.error(label + ' failed:', err);
+    alert(label + ' failed: ' + (err && err.message ? err.message : err));
+  } finally {
+    btn.textContent = originalLabel;
+    btn.disabled = false;
+  }
+}
+
+// =============================================================================
 // UI wiring
 // =============================================================================
 
@@ -3206,21 +3581,20 @@ window.addEventListener('DOMContentLoaded', () => {
   // doesn't queue two downloads.
   const savePngBtn = document.getElementById('save-png-btn');
   if (savePngBtn) {
-    savePngBtn.addEventListener('click', async () => {
-      if (savePngBtn.disabled) return;
-      savePngBtn.disabled = true;
-      const originalLabel = savePngBtn.textContent;
-      savePngBtn.textContent = 'Saving…';
-      try {
-        await exportPng();
-      } catch (err) {
-        console.error('PNG export failed:', err);
-        alert('PNG export failed: ' + (err && err.message ? err.message : err));
-      } finally {
-        savePngBtn.textContent = originalLabel;
-        savePngBtn.disabled = false;
-      }
-    });
+    savePngBtn.addEventListener('click', () => runExport(savePngBtn, 'PNG export', exportPng));
+  }
+
+  // Save HTML (M4.B) — same disable-while-busy pattern. The button is
+  // only meaningful in the live tool: a downloaded HTML is a frozen
+  // snapshot, so we hide the button there. Round-trip editing goes
+  // through "Open from HTML" (M4.C) on the live tool instead.
+  const saveHtmlBtn = document.getElementById('save-html-btn');
+  if (saveHtmlBtn) {
+    if (document.getElementById('coverage-script-inline')) {
+      saveHtmlBtn.hidden = true;
+    } else {
+      saveHtmlBtn.addEventListener('click', () => runExport(saveHtmlBtn, 'HTML export', exportHtml));
+    }
   }
 
   // Audience editor
@@ -3303,16 +3677,10 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Initial renders
-  renderLayoutName();
-  renderUnitToggle();
-  renderAudienceInputs();
-  renderSpeakersList();
-  renderPhantomsList();
-  // Populate the triangulation status caption from the default LCR layout.
-  // markTriangulationDirty() schedules a setTimeout(0) recompute + DOM write,
-  // so by the time the user can see anything the caption is correct.
-  markTriangulationDirty();
+  // Initial renders. Calling syncUiFromState() also handles the post-load
+  // case (M4.B boot loader, M4.C upload) where STATE has been replaced and
+  // every input / checkbox / camera button needs to be re-derived.
+  syncUiFromState();
 
   // Disclaimer collapse toggle (header always visible, body folds away).
   const disclaimer = document.getElementById('disclaimer');

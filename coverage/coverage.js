@@ -3494,6 +3494,41 @@ async function exportHtml() {
   triggerDownload(blob, htmlFilename());
 }
 
+// =============================================================================
+// HTML import (M4.C) — accept a previously-saved file, parse out the embedded
+// state, validate, apply. Failures throw with a user-readable message; the
+// caller surfaces them via alert() and STATE is left untouched.
+// applyLoadedState() throws BEFORE mutating STATE on the schemaVersion guard,
+// so a bad-version file can never partially overwrite the current layout.
+// =============================================================================
+
+function extractEmbeddedState(htmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlText, 'text/html');
+  const stateEl = doc.getElementById('coverage-state');
+  if (!stateEl) {
+    throw new Error("Couldn't find an embedded layout in this file. Make sure it was saved by this tool.");
+  }
+  const text = (stateEl.textContent || '').trim();
+  if (!text) {
+    throw new Error('Embedded layout is empty.');
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error('Embedded layout is not valid JSON: ' + e.message);
+  }
+  return parsed;
+}
+
+async function importHtmlFile(file) {
+  const text = await file.text();
+  const parsed = extractEmbeddedState(text);
+  applyLoadedState(parsed);
+  syncUiFromState();
+}
+
 // Shared button-busy wrapper for the export buttons. Disables the button,
 // swaps its label to "Saving…", runs the async fn, restores on completion.
 async function runExport(btn, label, fn) {
@@ -3584,16 +3619,41 @@ window.addEventListener('DOMContentLoaded', () => {
     savePngBtn.addEventListener('click', () => runExport(savePngBtn, 'PNG export', exportPng));
   }
 
-  // Save HTML (M4.B) — same disable-while-busy pattern. The button is
-  // only meaningful in the live tool: a downloaded HTML is a frozen
-  // snapshot, so we hide the button there. Round-trip editing goes
-  // through "Open from HTML" (M4.C) on the live tool instead.
+  // Save HTML / Open HTML (M4.B / M4.C) — both are live-tool-only.
+  // A downloaded HTML is a frozen snapshot: it can be viewed and locally
+  // edited, but file I/O (re-saving, importing other layouts) belongs on
+  // the live tool. Detection: presence of #coverage-script-inline.
+  const isSnapshot = !!document.getElementById('coverage-script-inline');
+
   const saveHtmlBtn = document.getElementById('save-html-btn');
   if (saveHtmlBtn) {
-    if (document.getElementById('coverage-script-inline')) {
+    if (isSnapshot) {
       saveHtmlBtn.hidden = true;
     } else {
       saveHtmlBtn.addEventListener('click', () => runExport(saveHtmlBtn, 'HTML export', exportHtml));
+    }
+  }
+
+  const openHtmlBtn = document.getElementById('open-html-btn');
+  const openHtmlInput = document.getElementById('open-html-input');
+  if (openHtmlBtn && openHtmlInput) {
+    if (isSnapshot) {
+      openHtmlBtn.hidden = true;
+    } else {
+      openHtmlBtn.addEventListener('click', () => openHtmlInput.click());
+      openHtmlInput.addEventListener('change', async () => {
+        const file = openHtmlInput.files && openHtmlInput.files[0];
+        // Reset the input value first so picking the same file twice fires
+        // change again. Done before await so an early return still resets.
+        openHtmlInput.value = '';
+        if (!file) return;
+        try {
+          await importHtmlFile(file);
+        } catch (err) {
+          console.error('HTML import failed:', err);
+          alert('Open HTML failed:\n\n' + (err && err.message ? err.message : err));
+        }
+      });
     }
   }
 

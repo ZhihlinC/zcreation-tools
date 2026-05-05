@@ -231,6 +231,29 @@ canvas { display: block; }
   border-color: var(--fg);
 }
 
+/* File / actions */
+#actions-panel .action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+#actions-panel button {
+  flex: 1 1 calc(50% - 0.25rem);
+  padding: 0.3rem 0.5rem;
+  font-size: 0.75rem;
+  border: 1px solid var(--panel-border);
+  background: white;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--fg);
+}
+#actions-panel button:hover { background: #f8f8fa; }
+#actions-panel button:disabled {
+  opacity: 0.5;
+  cursor: progress;
+}
+
 /* Layers */
 #layers-panel ul {
   list-style: none;

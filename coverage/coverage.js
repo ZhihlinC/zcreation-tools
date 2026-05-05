@@ -2076,8 +2076,10 @@ function setup() {
   // setAttributes MUST be called before createCanvas — calling it after
   // recreates the WEBGL canvas (and detaches it from #canvas-host), which
   // breaks orbitControl drag because event listeners are bound to the
-  // now-orphaned old canvas.
-  setAttributes('antialias', true);
+  // now-orphaned old canvas. preserveDrawingBuffer is needed so the PNG
+  // export (M4.A) can drawImage() the WEBGL canvas without it having been
+  // cleared after compositing.
+  setAttributes({ antialias: true, preserveDrawingBuffer: true });
   const c = createCanvas(windowWidth, windowHeight, WEBGL);
   c.parent('canvas-host');
   // Grab default camera reference BEFORE applyCamera() so we can set yScale
@@ -3022,6 +3024,120 @@ function bulkReplacePhantoms(text) {
 }
 
 // =============================================================================
+// PNG export (M4.A) — composite WEBGL canvas + HTML overlay labels into a
+// 2× viewport PNG. The labels live in the DOM (because p5 WEBGL text() is
+// unreliable, see ROADMAP discussion item 7), so we re-render them via 2D
+// ctx.fillText using their computed font / colour. Panel UI and tooltips
+// are intentionally excluded — the PNG should read as "the scene".
+// =============================================================================
+
+const PNG_EXPORT_SCALE = 2;
+// Selectors for label elements that should appear in the PNG. Each spans
+// inside #overlay-labels carries .overlay-label; axis labels are direct
+// children with their own ids.
+const PNG_LABEL_SELECTORS = [
+  '#axis-label-x',
+  '#axis-label-y',
+  '#axis-label-z',
+  '#speaker-labels > .overlay-label',
+  '#phantom-labels > .overlay-label',
+  '#coord-labels > .overlay-label',
+].join(', ');
+
+async function exportPng() {
+  const scale = PNG_EXPORT_SCALE;
+  const outW = Math.round(windowWidth * scale);
+  const outH = Math.round(windowHeight * scale);
+
+  // Ensure the WEBGL canvas reflects the very latest scene state and that
+  // overlay labels are positioned for the same frame (updateLabels() runs
+  // inside draw()). Synchronous redraw() means the framebuffer holds this
+  // exact frame when we drawImage() below.
+  if (typeof redraw === 'function') redraw();
+
+  const scratch = document.createElement('canvas');
+  scratch.width = outW;
+  scratch.height = outH;
+  const ctx = scratch.getContext('2d');
+
+  // Match the WEBGL clear colour so labels with text-shadow halos blend.
+  ctx.fillStyle = '#f3f3f6';
+  ctx.fillRect(0, 0, outW, outH);
+
+  const srcCanvas = document.querySelector('#canvas-host canvas');
+  if (!srcCanvas) throw new Error('canvas not found');
+  ctx.drawImage(srcCanvas, 0, 0, outW, outH);
+
+  drawLabelsOntoExportCanvas(ctx, scale);
+
+  const blob = await new Promise(resolve => scratch.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('toBlob returned null');
+
+  const filename = pngFilename();
+  triggerDownload(blob, filename);
+}
+
+function drawLabelsOntoExportCanvas(ctx, scale) {
+  const labels = document.querySelectorAll(PNG_LABEL_SELECTORS);
+  for (const el of labels) {
+    const text = el.textContent;
+    if (!text) continue;
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+    // Parent host may be hidden when a layer is off (e.g. coords) — skip.
+    const parent = el.parentElement;
+    if (parent && getComputedStyle(parent).display === 'none') continue;
+
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) continue;
+
+    // .overlay-label uses transform: translate(-50%,-50%), so the rect's
+    // centre is the original anchor point. Draw text centred on that point.
+    const cx = (rect.left + rect.width / 2) * scale;
+    const cy = (rect.top + rect.height / 2) * scale;
+
+    const sizePx = parseFloat(cs.fontSize) * scale;
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${sizePx}px ${cs.fontFamily}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Approximate the multi-layer text-shadow halo (background-coloured)
+    // with a single shadowBlur — enough to keep labels readable over the
+    // heatmap without re-drawing the text six times.
+    ctx.save();
+    ctx.shadowColor = '#f3f3f6';
+    ctx.shadowBlur = 4 * scale;
+    ctx.fillStyle = '#f3f3f6';
+    // Stamp the halo a few times to thicken it (single shadowBlur pass is
+    // too subtle on busy heatmap pixels).
+    for (let i = 0; i < 3; i++) ctx.fillText(text, cx, cy);
+    ctx.restore();
+
+    ctx.fillStyle = cs.color;
+    ctx.fillText(text, cx, cy);
+  }
+}
+
+function pngFilename() {
+  const raw = (STATE.metadata.layoutName || '').trim();
+  const safe = raw.replace(/[^\w\-]+/g, '-').replace(/^-+|-+$/g, '') || 'Untitled';
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  return `${safe}-coverage-${ts}.png`;
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke after the click has been processed by the browser.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+// =============================================================================
 // UI wiring
 // =============================================================================
 
@@ -3085,6 +3201,27 @@ window.addEventListener('DOMContentLoaded', () => {
       refreshUnitInputs();
     });
   });
+
+  // Save PNG (M4.A) — disable button while exporting so a double-click
+  // doesn't queue two downloads.
+  const savePngBtn = document.getElementById('save-png-btn');
+  if (savePngBtn) {
+    savePngBtn.addEventListener('click', async () => {
+      if (savePngBtn.disabled) return;
+      savePngBtn.disabled = true;
+      const originalLabel = savePngBtn.textContent;
+      savePngBtn.textContent = 'Saving…';
+      try {
+        await exportPng();
+      } catch (err) {
+        console.error('PNG export failed:', err);
+        alert('PNG export failed: ' + (err && err.message ? err.message : err));
+      } finally {
+        savePngBtn.textContent = originalLabel;
+        savePngBtn.disabled = false;
+      }
+    });
+  }
 
   // Audience editor
   document.querySelectorAll('input[data-audience]').forEach(inp => {

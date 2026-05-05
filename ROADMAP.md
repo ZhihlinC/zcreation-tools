@@ -1,0 +1,314 @@
+# Sound Coverage Sketch — v1 實作路線圖
+
+> 檔名：`ROADMAP.md`。此文件追蹤 v1 開發階段、每階段「視覺檢核」方式、與尚未解決的討論事項。
+> **`SPEC.md` 是規格的單一真實來源，本文件是執行層計畫。**
+> 進度標記變動、階段範圍調整、或實作中做出的重要決策，請同步回填到此檔。
+
+---
+
+## 工作流程（重要）
+
+每個 milestone 都從本檔出發、回到本檔：
+
+1. **動工前**：先讀本檔對應 milestone 的「範圍 / 視覺檢核」與「討論事項」，確認沒有遺漏的決定。
+2. **過程中**：重要決策、踩到的坑、解決方案、新發現的遺留問題，全部回填到本檔（決策放對應 milestone 的「收尾備註」或「討論事項」；坑與限制放「收尾備註」）。
+3. **完成時**：勾選對應 checkbox、寫一行收尾備註、若有跨階段影響則同步更新「討論事項」。
+
+---
+
+## 進度概覽
+
+- [ ] **M1** — 場景骨架 + 資料模型 + 音響 / cone / camera / 圖層 toggle
+- [ ] **M2** — 聽覺平面 + 覆蓋熱區（grid sampling + gradient）
+- [ ] **M3** — Phantom speaker + 球面凸包三角剖分 + Layout Health
+- [ ] **M4** — HTML 下載 / 上傳（self-contained）+ PNG 截圖
+- [ ] **M5** — i18n + mobile banner + landing page 正式化 + meta / OG / sitemap
+
+---
+
+## 全域開發約定
+
+- **檔案分布**：開發期維持 `coverage/index.html` + `coverage.js` + `coverage.css` 三檔分離；只有 M4 的「下載產物」需要 inline 合併（透過一個 build 函式即時組裝，不是部署檔）。
+- **凸包**：自寫小型 spherical incremental convex hull，不引 npm。
+- **commit 訊息**：英文，conventional style（`feat:` / `fix:` / `chore:` / `docs:`）。
+- **每完成一個 milestone**：本檔對應 checkbox 打勾、寫一行收尾備註。
+
+---
+
+## M1 — 場景骨架與資料模型
+
+**範圍**
+
+- Repo 基礎檔：`index.html`（landing，先極簡一行字 + 連結，M5 再正式化）、`_headers`、`_redirects`、`robots.txt`、`sitemap.xml`
+- `coverage/index.html` + `coverage.js` + `coverage.css`
+- p5.js WEBGL 場景：地面格線、原點標記、X/Y/Z 軸（debug 用）、觀眾席矩形、聽覺平面（半透明）
+- Camera：滑鼠拖曳 orbit、滾輪 zoom（min/max 距離限制）、5 個預設視角按鈕（Perspective / Top / Front / Side / Listening）
+- 資料模型（§5）：`Speaker` / `PhantomSpeaker` / `Audience` / `ViewState`，內部統一以 `cm` 儲存
+- 右側浮動面板：Add / Edit / Delete speaker（彈出 modal 或 inline 表單）；Audience 尺寸 + listening height；單位 toggle（cm ↔ m）
+- 音響本體（盒型 + 文字 label）+ cone 繪製（向 yaw/pitch 方向、半透明，使用 `angleH`/`angleV` 各自獨立）
+- 圖層 toggle：`floor` / `audience` / `listening-plane` / `speakers` / `cones` / `axes`（其餘留 placeholder，後續 M2/M3 啟用）
+- §2「定位語句」**完整顯示在第一屏**（不省略）
+- 解決 p5.js WEBGL 座標 handedness（見下方討論事項 1）
+
+**動到的檔案（新增）**
+
+- `index.html`
+- `_headers` / `_redirects` / `robots.txt` / `sitemap.xml`
+- `coverage/index.html`
+- `coverage/coverage.js`
+- `coverage/coverage.css`
+
+**視覺檢核（你親自跑的清單）**
+
+1. 用 `python3 -m http.server` 或類似方式起本機，開 `localhost:PORT/coverage/`。
+2. 第一屏看得到 §2 定位語句完整三段，**沒有被截斷**。
+3. 拖曳滑鼠 → camera 繞 (0,0,0) 旋轉，**不是鏡像**（軸標 X/Y/Z 文字沒反過來、Top 按鈕按下後從上往下看符合直覺）。
+4. 滾輪 → 平滑縮放，不會穿過原點或飛太遠。
+5. 五個預設視角按鈕都正確：
+    - Perspective：斜上方
+    - Top：z 軸朝下俯視，看到觀眾席矩形是 X×Y
+    - Front：從 -Y 看 +Y
+    - Side：從 +X 看 -X
+    - Listening：從 (0, 0, listeningHeight) 朝 +Y
+6. 加 1 顆 speaker（預設座標例如 (200, 100, 200)，yaw=0、angleH=90），看到盒型 + 朝 +Y 的半透明錐體。
+7. 把 yaw 改 90° → 錐體轉向 +X；改 pitch 30° → 錐體仰起；改 angleH=120 → 錐體變寬。
+8. 加 3 顆 speaker、各自命名，列表正常顯示，刪除有確認對話框。
+9. 改觀眾席 length/width/listeningHeight → 矩形與聽覺平面即時更新。
+10. 切 cm ↔ m → 顯示數字即時轉換、內部資料不變（再切回去數字回到原樣）。
+11. 圖層 toggle：每個都能各自開關。
+12. Resize 視窗 < 1024px → 出現 mobile banner（M5 才完整實作，M1 先放一個 stub 也可以）。
+
+**收尾備註**
+
+（完成後記錄一行，例如：「M1 完成於 2026-05-XX；camera handedness 採 X 方案；已知 cone 在 pitch 接近 ±90° 時 label 重疊，留 M2 處理。」）
+
+---
+
+## M2 — 聽覺平面覆蓋熱區
+
+**範圍**
+
+- 在聽覺平面做 grid sampling（解析度先 50×50，效能不足再降）
+- 每個 grid point 對所有 enabled speaker 套 §7.2 角度判定（轉到 speaker 本地座標 → 比 `angleH/2`、`angleV/2`）
+- 著色 lookup：0=紅 / 1=黃 / 2=橙偏綠 / 3+=綠（半透明，不蓋掉地面格線）
+- 圖層 `coverage-heat` toggle 啟用
+- 性能：speaker 改動時 debounce 重算（例如 50ms），避免拖 slider 時卡頓
+
+**動到的檔案**
+
+- `coverage/coverage.js`（新增 coverage 計算模組）
+- `coverage/coverage.css`（legend / 顏色說明）
+
+**視覺檢核**
+
+1. 開啟 `coverage-heat` 圖層，加 1 顆 speaker 朝舞台前方（+Y）→ 觀眾席前方一段是黃 / 綠，其餘是紅。
+2. 故意把 speaker 朝 +X 偏太多 → 觀眾席中央出現大片紅「黑洞」。
+3. 加第二顆鏡像位置的 speaker → 中央區出現綠（兩顆覆蓋重疊）。
+4. 拖曳 angleH slider 從 60° → 120° → 看到熱區即時擴張，沒有卡頓 / 沒有閃爍。
+5. 切到 Listening 視角 → 熱區仍貼在聽覺平面，沒有 z-fighting。
+6. 改 listeningHeight → 熱區跟著平面上下移、且重新計算（高度變了，speaker 角度判定結果應改變）。
+7. 關 `coverage-heat` → 完全消失，地面格線無殘留。
+
+**收尾備註**
+
+（完成後填寫）
+
+---
+
+## M3 — Layout Health（Triangulation Diagnostic）
+
+**範圍**
+
+- Phantom speaker 資料模型 + Add/Edit/Delete UI（§5.2）
+- 球面凸包三角剖分（自寫，§17）：
+    - 把所有 enabled speaker + phantom 的方向向量投影到單位球
+    - Incremental convex hull on sphere → 三角形列表
+    - 邊界情況：少於 4 點時不三角化、所有點共面時警示
+- 每三角形計算：球面面積（L'Huilier theorem）、最大內角
+- L/R 對稱性偏差：鏡像 + 最近鄰配對平均距離（弧度）
+- 著色 §8.2：每三角形取「最差色」（綠 / 黃 / 紅）
+- Layout Health panel（§8.3 文字）：全綠 ✓ / 黃 ⚠ / 紅 ✗ + 對稱性獨立行
+- `[region]` 判定（§8.3 重心方向 → 區域標籤）
+- 圖層 `triangulation` / `phantoms` / `health-panel` 啟用
+- 三角形 hover：tooltip 顯示最大內角 + 球面面積 + 健康度
+
+**動到的檔案**
+
+- `coverage/coverage.js`（新增 hull / health 模組）
+- `coverage/coverage.css`（panel + tooltip）
+
+**視覺檢核**
+
+1. 4 顆音響圍成一個正方形 → 三角化應呈現正常（4 個三角形或合理切分）、health panel 全綠。
+2. 故意把一顆音響挪到很偏的位置 → 出現黃 / 紅三角形，panel 顯示對應 region。
+3. 在「黃 / 紅三角形」附近加一顆 phantom → 三角化即時 re-evaluate、警示降級或消失。
+4. 故意做不對稱 layout（左 3 顆、右 1 顆）→ 對稱性警示出現，數值合理（< 0.5 rad）。
+5. 鏡像對稱 layout → 對稱性警示消失。
+6. Hover 任一三角形 → tooltip 顯示三項數值，數值與顏色一致（例如 90° 以上應為紅）。
+7. 把所有音響高度設成同一個值（共面）→ panel 顯示「無法三角化」訊息，不 crash。
+
+**收尾備註**
+
+（完成後填寫）
+
+---
+
+## M4 — HTML 下載 / 上傳 + PNG 截圖
+
+**範圍**
+
+- 「Download as HTML」：
+    - 序列化完整 State（§5.5）成 JSON
+    - 組裝 self-contained HTML：p5.js 從 CDN 留外連、其他 JS / CSS inline、State 嵌入 `<script id="coverage-state" type="application/json">`
+    - 檔頭 metadata HTML 註解（§10.2）
+    - `<title>` = layoutName 或 `Sound Coverage Sketch — Untitled`
+    - 觸發 download，檔名 `{layoutName}-coverage-sketch.html`
+- 「Open from HTML」：FileReader → DOMParser → 找 `script#coverage-state` → 解析 → 驗證 `schemaVersion === 1` → load state；失敗顯示錯誤、不破壞當前 state
+- 下載出的 HTML：固定英文、含完整編輯 UI、可再次下載
+- 「Download as PNG」：擷取 canvas（顯示解析度 × 2）；檔名 `{layoutName}-coverage-{timestamp}.png`
+
+**動到的檔案**
+
+- `coverage/coverage.js`（新增 export / import 模組 + inline build 函式）
+- `coverage/index.html`（download / open / png 按鈕）
+
+**視覺檢核**
+
+1. 編一個 layout（3 顆 speaker + 1 phantom + 觀眾席尺寸客製）→ Download as HTML。
+2. 直接雙擊下載出的 HTML（離線、新瀏覽器分頁）→ 開啟後看到完全相同 layout、視角、圖層、單位。
+3. 在下載出的檔案內加一顆音響、再下載 → 第二份檔案載入後 layout 包含新音響。
+4. 把第二份 HTML 拖回工具的「Open from HTML」按鈕 → 工具進入該 layout。
+5. 故意上傳一個亂寫的 HTML（沒有 `script#coverage-state`）→ 顯示錯誤訊息，當前 state 不變。
+6. 故意改 schemaVersion = 999 上傳 → 顯示 schema 不符的訊息。
+7. 下載出的 HTML 檔頭註解區塊存在、metadata 完整。
+8. PNG 截圖打開後解析度是視窗的 2×、影像內容與當下 canvas 一致。
+
+**收尾備註**
+
+（完成後填寫）
+
+---
+
+## M5 — i18n / mobile banner / landing / meta
+
+**範圍**
+
+- i18n（§12）：`I18N` 物件 + `t('key')` helper、預設語言依 `navigator.language`、切換按鈕固定右上角、`localStorage` 持久化（key: `zcreation-tools-lang`，try/catch）
+- 下載出的 HTML：固定英文（去掉 lang switch 按鈕）
+- Mobile banner（§13）：< 1024px 顯示、可手動收起、reload 後再出現、不重排 layout
+- Landing page (`/index.html`) 正式化：簡潔 header、工具卡片（先只有 coverage）、ZCreation 主站 footer 連結
+- Meta（§15）：description 中英、OG preview（用工具預設視角截圖）、sitemap.xml 含 `/coverage`
+- robots.txt：允許全部、無 noindex
+
+**動到的檔案**
+
+- `coverage/coverage.js`（i18n module）
+- `coverage/index.html` + `coverage/coverage.css`
+- `index.html`（landing 改寫）
+- `sitemap.xml`、`robots.txt`、各 HTML 的 `<head>` meta tags
+
+**視覺檢核**
+
+1. 第一次造訪（清 localStorage）：瀏覽器中文設定 → 顯示中文 UI；英文設定 → 英文 UI。
+2. 切換語言按鈕 → 所有 UI 字串切換、§2 定位語句切換（中英兩版都完整）；reload 後仍是上次選擇。
+3. Resize < 1024px → banner 出現；點 ✕ 收起；reload 後再出現。
+4. Landing page 簡潔好讀，連到 `/coverage` 正常。
+5. View source → meta description / OG / canonical 正確。
+6. 用 Twitter / Facebook 的 OG debugger（或本機檢查 `<meta property="og:*">`）確認預覽圖正確。
+
+**收尾備註**
+
+（完成後填寫）
+
+---
+
+## 討論事項 / 已知問題
+
+### 1. p5.js WEBGL 座標 handedness（已解決 2026-05-04）
+
+**現象**：p5.js WEBGL 預設 +Y 朝下（沿用螢幕座標系），與 SPEC §4 的「+Y 前、+Z 上、右手座標系」不一致。若直接用，外積 `right = forward × up` 會反向 → 整個 scene 鏡像（文字反、camera orbit 方向反、cone 朝向反）。
+
+**候選解法（試過）**：
+
+- (a) `camera()` 的 up vector 把 z 分量取負（補償螢幕 Y-down 慣例）
+- (b) `draw()` 開頭 `scale(1, -1, 1)`：把整個 scene 翻 Y
+- (c) 在 `vertex()` / `translate()` 層做明確 mapping：world (x,y,z) → p5 (x,-z,y)
+
+**決議**：採用 **(a)**。Yves 實測判斷最直覺。modes b、c 已從 `coverage.js` 移除，相關 dev UI 已下架。實作位置：`applyCamera()` 中 `const up = [p.up[0], p.up[1], -p.up[2]]`。
+
+**Top view 右手系修法（2026-05-05）**：mode (a) 是針對 up.z 取負，但 top view 的 up = (0, 1, 0) 沒有 z 分量可翻，p5 螢幕 Y-down 直接洩漏 → +Y 跑到螢幕下方，違反右手定則。修法：在 `draw()` 偵測 `cameraPreset === 'top'` 時套 `scale(1, -1, 1)` 抵銷螢幕 Y-down，這樣 +Y 在螢幕上方、+X 維持在右、+Z 維持外凸，右手系守住。`projectToScreen()` 也對應加上 y → -y。**已知副作用**：top view 拖曳 orbit 後 scale 仍會套用（因 preset 還是 'top'），畫面方向感會跑掉；使用者點別的 preset 或再點 Top 重置即可。
+
+**踩到的坑（兩個）**：
+
+1. **`createCamera()` 會切換 camera 類型**：在 `setup()` 用 `createCamera()` 取得 camera 參考會把 camera 切成 "custom" 類型，導致 `orbitControl()` 的滑鼠拖曳被禁用（只有 default camera 路徑會處理 drag）。正確做法：用 `camera()` 全域函式設定參數（套用在 default camera 上），再以 `cam = _renderer._curCamera` 抓 reference 給後續 zoom / 投影使用。
+2. **`setAttributes()` 必須在 `createCanvas()` 之前**：`setAttributes()` 在 createCanvas 之後呼叫會**重建 WEBGL renderer 與 canvas DOM 元素**——前面 `c.parent('canvas-host')` 綁的是舊 canvas，新 canvas 變成 body 的直接子元素，舊 canvas 上的事件 listener 全部失效，`orbitControl` 拖曳直接無作用。正確順序：`setAttributes()` → `createCanvas()` → `c.parent()` → `applyCamera()` → 抓 cam reference。
+
+### 2. L/R 對稱性偏差門檻（§8.2）
+
+v1 開發中先用估算（黃 > 0.05 rad、紅 > 0.15 rad），M3 完成後拿幾組真實 layout 校準，**M5 上線前定案**。
+
+### 3. Phantom speaker 數量上限（§18）
+
+v1 暫不設限，M3 觀察使用情況再決定。
+
+### 4. 工具最終命名（§10、§18）
+
+`Sound Coverage Sketch` 為候選，**M5 上線前確認**。命名一變，§10 下載 HTML 的 `<title>` 與檔名也要連動改。
+
+### 5. 第一屏定位語句呈現方式（§2）
+
+spec 寫「完整、可見地呈現於工具首頁第一屏」。是要做成「永遠可見的固定區塊」還是「首次造訪 modal、之後折疊」？傾向**永遠可見、可折疊但預設展開**，避免使用者誤以為工具能做它做不到的事。M1 先永遠可見，M5 加折疊細節。
+
+### 6. Cone 在 pitch ±90° 附近的 label / geometry 退化
+
+極端 pitch 時 cone 邊界與 label 可能重疊或退化。M1 不處理，視 M2 / M3 用起來的觀感再決定。
+
+### 7. p5.js WEBGL `text()` 不可用（M1 已繞過）
+
+**現象**：p5.js WEBGL 模式下 `text()` 預設 bitmap font 不會渲染；需要 `loadFont()` 載入 TTF/OTF。M1 軸標籤完全消失。
+
+**M1 解法**：所有文字標籤改用 HTML overlay span，每幀以 `screenX/screenY` 投影到 canvas pixel coords、`position: fixed` 對齊。實作位置：`coverage.js` 的 `updateLabels()` / `positionLabel()`，HTML 端是 `#overlay-labels` 容器。
+
+**優點**：解析度永遠清晰、無 WEBGL renderer 限制、無外部字檔。
+**代價**：標籤是 2D，永遠面向螢幕、不會被 3D 物體遮擋（這對標籤通常是正確行為）。
+
+**M4 影響**：下載出的 self-contained HTML 沿用同一套 overlay 機制，無外部字檔依賴。
+
+### 8. Cone 視覺：矩形角錐 + 移除側面實心填色（M1 決定）
+
+**現象**：cone 4 個側面以 alpha 32 半透明填色仍會視覺上遮蔽 sphere（depth write + 多重透明面疊加）。
+
+**M1 解法**：
+
+- 拿掉側面填色、只保留 4 條邊射線 + 底端輪廓 + 底端極淡填色（alpha 18）。
+- Sphere 半徑加大到 26、永遠 on top（item 9）；邊射線不再需要從 apex 外推。
+- Cone length 從 600 → 400 cm，避免在密集 layout 中視覺壓制其他元素。
+
+**幾何修正（2026-05-05）**：原本的 `coneCornerDirs()` 用「yaw ± halfH、pitch ± halfV」的球面座標獨立偏移算 4 角，**當 pitch ≠ 0 時會產生梯形** ——上下緯度圈半徑不同（cos 因子），上邊比下邊寬。改為**矩形角錐**：
+
+- `speakerBasis(yaw, pitch)` 算出 forward / right / up（用 forward × world-up 求 right）
+- 4 角放在垂直於 forward 的平面上：`base + ±tan(halfH) × length × right + ±tan(halfV) × length × up`
+- 基底永遠是真矩形
+
+**對 SPEC §7.2 的影響**：SPEC 原本定義 coverage 為「水平 / 垂直軸向角度偏移分別 ≤ halfH / halfV」（球面判定，會產生梯形覆蓋區）。M2 實作 coverage 時應與這個視覺對齊，改為矩形角錐判定：
+
+- 計算 `P - speaker` 在 forward / right / up 上的投影分量
+- 條件：`|right_proj / forward_proj| ≤ tan(halfH)` 且 `|up_proj / forward_proj| ≤ tan(halfV)` 且 `forward_proj > 0`
+
+M2 動工時要把 SPEC §7.2 同步更新。
+
+**對 SPEC §6「半透明錐」的詮釋**：以邊界線 + 底端淡色傳達「半透明 envelope」，而非實心半透明面。
+
+### 9. Speaker bodies 為 always-on-top 位置標記（M1 決定）
+
+**問題**：在多聲道 layout 中，cone 重疊或從前方視角看時，3D 球體仍可能被遮擋，影響「指出音響在哪」這個工具核心目的。
+
+**M1 解法**：speaker bodies 在 `drawScene()` 拆出獨立 pass，畫前 `gl.disable(gl.DEPTH_TEST)` 畫後再 enable，所以無論深度都浮在最上層。等同於把 speaker 當成 3D 標記而非真正的 3D 物件——這和 HTML overlay labels 的「永遠可見」邏輯一致。
+
+**取捨**：失去「哪顆音響在哪顆前面」的深度線索，但工具不需要這個資訊；換來編輯時的可靠定位與視覺穩定性。
+
+**M3 影響**：phantom speaker 點按相同模式處理（disable depth test 的同一 pass）。
+
+---
+
+**最後更新**：2026-05-04（建立）

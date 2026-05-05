@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sound Coverage Sketch</title>
+  <meta name="description" content="Geometric aiming & coverage sketch for sound designers. Not an acoustic simulation.">
+  <link rel="canonical" href="https://tools.zcreation.art/coverage/">
+  <link rel="stylesheet" href="coverage.css">
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.11.0/lib/p5.min.js" defer></script>
+  <script src="coverage.js" defer></script>
+</head>
+<body>
+
+  <main id="canvas-host" aria-label="3D scene"></main>
+
+  <!-- HTML overlay labels (axis labels + speaker names); positioned per-frame
+       via manual view × projection matrix multiplication. Replaces p5 WEBGL
+       text() which is unreliable. -->
+  <div id="overlay-labels" aria-hidden="true">
+    <span id="axis-label-x" class="overlay-label axis-label-x">X</span>
+    <span id="axis-label-y" class="overlay-label axis-label-y">Y</span>
+    <span id="axis-label-z" class="overlay-label axis-label-z">Z</span>
+    <div id="speaker-labels"></div>
+    <div id="coord-labels"></div>
+  </div>
+
+  <!-- Disclaimer banner (SPEC §2): must be visible in first viewport, not abbreviated.
+       Header (title) is always shown; body collapses on click as a per-session
+       reminder rather than a full dismissal. -->
+  <aside id="disclaimer" class="panel" aria-label="Disclaimer">
+    <button id="disclaimer-toggle" type="button" aria-expanded="true" aria-controls="disclaimer-body">
+      <h1>Sound Coverage Sketch</h1>
+      <span class="caret" aria-hidden="true">▴</span>
+    </button>
+    <div id="disclaimer-body" class="disclaimer-body">
+      <p>This is a geometric aiming &amp; coverage sketch tool.</p>
+      <p>It uses your speaker dispersion angles as an approximation of high-frequency coverage,
+         and provides layout-health hints based on Pulkki-VBAP convex-hull triangulation.</p>
+      <p><strong>It does not replace acoustic simulation. It does not predict SPL,
+         frequency response, reflections, or phase. It does not model any renderer's behaviour.</strong></p>
+      <p>It only answers two questions:</p>
+      <ol>
+        <li>"Is my imagined listening centre actually covered by the speakers I've placed?"</li>
+        <li>"Geometrically, is my multichannel layout healthy for VBAP-family panners?"</li>
+      </ol>
+      <p>Auditory judgement still belongs to your renderer and your ears.</p>
+    </div>
+  </aside>
+
+  <!-- Top left: layout name + unit toggle. -->
+  <aside id="meta-panel" class="panel" aria-label="Layout meta">
+    <label class="meta-name">
+      <span class="panel-label">Layout</span>
+      <input type="text" id="layout-name" placeholder="Untitled" maxlength="80" autocomplete="off" spellcheck="false">
+    </label>
+    <div class="unit-toggle" role="radiogroup" aria-label="Unit">
+      <button data-unit="cm" class="active">cm</button>
+      <button data-unit="m">m</button>
+    </div>
+  </aside>
+
+  <!-- Right column: view, layers, speakers (stacked, speakers panel grows
+       and scrolls internally). -->
+  <aside id="right-column" aria-label="Editing panels">
+
+    <section id="view-controls" class="panel">
+      <h2>View</h2>
+      <div class="view-buttons">
+        <button data-view="perspective" class="active">Perspective</button>
+        <button data-view="top">Top</button>
+        <button data-view="front">Front</button>
+        <button data-view="side">Side</button>
+        <button data-view="listening">Listening</button>
+      </div>
+    </section>
+
+    <section id="layers-panel" class="panel">
+      <h2>Layers</h2>
+      <ul>
+        <li><label><input type="checkbox" data-layer="floor" checked> Floor grid</label></li>
+        <li><label><input type="checkbox" data-layer="audience" checked> Audience</label></li>
+        <li><label><input type="checkbox" data-layer="listening-plane" checked> Listening plane</label></li>
+        <li><label><input type="checkbox" data-layer="listening-centre" checked> Listening centre</label></li>
+        <li><label><input type="checkbox" data-layer="speakers" checked> Speakers</label></li>
+        <li><label><input type="checkbox" data-layer="cones" checked> Cones</label></li>
+        <li><label><input type="checkbox" data-layer="axes" checked> Axes</label></li>
+        <li><label><input type="checkbox" data-layer="coords"> Coordinates</label></li>
+        <li class="placeholder"><label><input type="checkbox" data-layer="coverage-heat" disabled> Coverage heatmap <em>(M2)</em></label></li>
+        <li class="placeholder"><label><input type="checkbox" data-layer="triangulation" disabled> Triangulation <em>(M3)</em></label></li>
+        <li class="placeholder"><label><input type="checkbox" data-layer="phantoms" disabled> Phantoms <em>(M3)</em></label></li>
+        <li class="placeholder"><label><input type="checkbox" data-layer="health-panel" disabled> Layout Health <em>(M3)</em></label></li>
+      </ul>
+    </section>
+
+    <section id="speakers-panel" class="panel">
+      <h2>Speakers</h2>
+      <ul id="speakers-list"></ul>
+      <button id="add-speaker-btn" class="primary-btn">+ Add Speaker</button>
+    </section>
+
+  </aside>
+
+  <!-- Bottom left: audience editor. -->
+  <aside id="audience-panel" class="panel" aria-label="Audience">
+    <h2>Audience</h2>
+    <div class="field-grid">
+      <label><span>Length</span><input type="number" data-audience="length" step="any"></label>
+      <label><span>Width</span><input type="number" data-audience="width" step="any"></label>
+      <label><span>Listen height</span><input type="number" data-audience="listeningHeight" step="any"></label>
+    </div>
+  </aside>
+
+  <!-- Mobile banner stub — M5 will style and persist. -->
+  <aside id="mobile-banner" hidden>
+    <span>This tool is designed for desktop. The editing experience is limited on smaller screens.</span>
+    <button id="mobile-banner-dismiss" aria-label="Dismiss">✕</button>
+  </aside>
+
+</body>
+</html>

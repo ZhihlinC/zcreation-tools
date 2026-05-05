@@ -21,7 +21,8 @@
 `zcreation-tools` 是 ZCreation 旗下「給聲音設計師的小工具集合」，部署在 `tools.zcreation.art`。
 每個工具是一個獨立 subpath（例如 `/coverage`、未來可能 `/spectrogram`、`/ir-viewer` 等）。
 
-第一個工具是 **Sound Coverage Sketch**（覆蓋草圖工具），規格詳見 `SPEC.md`。
+第一個工具是 **Sound Coverage Sketch**（覆蓋草圖工具），規格詳見 `SPEC.md`，
+v1 實作分階段計畫與每階段視覺檢核清單見 `ROADMAP.md`。
 其餘工具皆不在 v1 範圍。
 
 ---

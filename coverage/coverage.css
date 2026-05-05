@@ -284,6 +284,17 @@ canvas { display: block; }
   opacity: 0.85;
 }
 
+/* Triangulation status caption — sits under the triangulation toggle and
+   reflects analyseTriangulation()'s current classification regardless of
+   whether the layer itself is on. data-kind on the row is a hook for M3.E
+   to colour-code (red / yellow / green) once the health system lands. */
+#layers-panel .triangulation-status {
+  padding: 0.05rem 0 0.3rem 1.5rem;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
 /* Speakers */
 #speakers-panel #speakers-list {
   list-style: none;

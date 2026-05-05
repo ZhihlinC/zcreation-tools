@@ -322,6 +322,374 @@ function drawCoverageHeat() {
 }
 
 // =============================================================================
+// Triangulation diagnostic (SPEC §8, ROADMAP M3.B-α — detection + 2D fallback).
+//
+// Classifies the current layout (enabled speakers + all phantoms) by the
+// geometry of their direction vectors from the listening centre:
+//
+//   too-few         < 4 points after dropping any at the centre
+//   point-at-centre  a point sits on the listening centre (cannot normalize)
+//   collinear        all directions on a single line through origin
+//   planar           directions span a 2D plane through origin → 2D ring
+//   ok               directions span 3D → spherical hull (M3.B-β, pending)
+//
+// The classification is cached in TRIANGULATION.result and refreshed lazily
+// via markTriangulationDirty(). Status text under the layer toggle reflects
+// the current result regardless of whether the layer is on. Drawing happens
+// only when the layer is on; for B-α only the 'planar' branch draws (a closed
+// polygon connecting points in azimuth order), the 'ok' branch is a no-op
+// until the spherical hull arrives in B-β.
+//
+// Coplanarity test: pick the pair (i, j) with the largest |d_i × d_j| as a
+// numerically stable plane-normal candidate (any non-parallel pair gives the
+// same plane up to sign if the layout is genuinely coplanar; max magnitude
+// minimizes float error). Then check max |d_k · n̂| across all points; below
+// PLANAR_EPS rad → planar.
+// =============================================================================
+
+const TRIANGULATION = {
+  result: null,    // { kind, ... } from analyseTriangulation()
+  dirty: true,
+  scheduled: false,
+};
+
+function markTriangulationDirty() {
+  TRIANGULATION.dirty = true;
+  // Status text needs to refresh even if the layer is off, so we can't rely
+  // on draw to recompute. Schedule a microtask-ish update; coalesces multiple
+  // edits in the same tick.
+  if (TRIANGULATION.scheduled) return;
+  TRIANGULATION.scheduled = true;
+  setTimeout(() => {
+    TRIANGULATION.scheduled = false;
+    ensureTriangulationFresh();
+    updateTriangulationStatusDom();
+  }, 0);
+}
+
+function ensureTriangulationFresh() {
+  if (!TRIANGULATION.dirty) return;
+  TRIANGULATION.result = analyseTriangulation();
+  TRIANGULATION.dirty = false;
+}
+
+function analyseTriangulation() {
+  // Listening centre is the panning origin; all directions are measured from
+  // here, NOT from the world floor origin.
+  const ox = 0, oy = 0, oz = STATE.audience.listeningHeight;
+
+  // 1 cm: closer than this and the direction vector is numerically unusable.
+  // The user-visible message names the offending point so they can fix it.
+  const POINT_AT_CENTRE_EPS = 1.0;
+
+  // Threshold below which a candidate plane normal is considered too short
+  // to be meaningful (i.e. the two source directions are nearly parallel).
+  // |d_i × d_j| = sin(angle), so 1e-3 ≈ 0.057° between the pair.
+  const COLLINEAR_EPS = 1e-3;
+
+  // Below this a point is considered to lie on the candidate plane. The
+  // value is sin(angle to plane); 1e-3 rad ≈ 0.057° tolerance, tight enough
+  // that a 3D dome won't be misread as planar but loose enough to absorb
+  // typical speaker-coordinate rounding.
+  const PLANAR_EPS = 1e-3;
+
+  const points = [];
+  // Collect every point sitting on the listening centre, not just the first —
+  // listing them all lets the user fix the layout in one pass instead of
+  // playing whack-a-mole. The names array is what the status text consumes.
+  const atCentre = [];
+
+  function consume(item, kind) {
+    const dx = item.x - ox;
+    const dy = item.y - oy;
+    const dz = item.z - oz;
+    const mag = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    if (mag < POINT_AT_CENTRE_EPS) {
+      atCentre.push(item.name || '(unnamed)');
+      return;
+    }
+    points.push({
+      kind,
+      name: item.name || '(unnamed)',
+      pos: { x: item.x, y: item.y, z: item.z },
+      dir: { x: dx / mag, y: dy / mag, z: dz / mag },
+    });
+  }
+
+  for (const s of STATE.speakers) {
+    if (!s.enabled) continue;
+    consume(s, 'speaker');
+  }
+  for (const p of STATE.phantoms) {
+    consume(p, 'phantom');
+  }
+
+  if (atCentre.length > 0) {
+    return { kind: 'point-at-centre', names: atCentre };
+  }
+
+  if (points.length < 4) {
+    return { kind: 'too-few', count: points.length };
+  }
+
+  // Find the most numerically stable plane-normal candidate.
+  let nx = 0, ny = 0, nz = 0, bestMag = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i].dir;
+    for (let j = i + 1; j < points.length; j++) {
+      const b = points[j].dir;
+      const cx = a.y * b.z - a.z * b.y;
+      const cy = a.z * b.x - a.x * b.z;
+      const cz = a.x * b.y - a.y * b.x;
+      const m2 = cx*cx + cy*cy + cz*cz;
+      if (m2 > bestMag * bestMag) {
+        bestMag = Math.sqrt(m2);
+        nx = cx / bestMag;
+        ny = cy / bestMag;
+        nz = cz / bestMag;
+      }
+    }
+  }
+
+  if (bestMag < COLLINEAR_EPS) {
+    return { kind: 'collinear', count: points.length };
+  }
+
+  let maxDeviation = 0;
+  for (const p of points) {
+    const d = Math.abs(p.dir.x * nx + p.dir.y * ny + p.dir.z * nz);
+    if (d > maxDeviation) maxDeviation = d;
+  }
+
+  if (maxDeviation < PLANAR_EPS) {
+    // Build an in-plane basis {u, v}. u = first direction (it lies in the
+    // plane by construction since dot(u, n̂) ≈ 0). v = n̂ × u, also in plane.
+    // Each point's azimuth in the plane = atan2(dot(d, v), dot(d, u)).
+    const u = points[0].dir;
+    const vx = ny * u.z - nz * u.y;
+    const vy = nz * u.x - nx * u.z;
+    const vz = nx * u.y - ny * u.x;
+    const azimuth = (d) => Math.atan2(
+      d.x * vx + d.y * vy + d.z * vz,
+      d.x * u.x + d.y * u.y + d.z * u.z,
+    );
+    const sorted = points.slice().sort((p, q) => azimuth(p.dir) - azimuth(q.dir));
+    return {
+      kind: 'planar',
+      points: sorted,
+      normal: { x: nx, y: ny, z: nz },
+    };
+  }
+
+  return { kind: 'ok', points };
+}
+
+function triangulationStatusText(r) {
+  if (!r) return '';
+  switch (r.kind) {
+    case 'too-few':
+      return `Add ≥ 4 enabled speakers or phantoms to enable triangulation. Currently: ${r.count}.`;
+    case 'point-at-centre': {
+      // 1 → "X sits", 2 → "X and Y sit", 3-4 → "X, Y, and Z sit",
+      // 5+ → first three names + "...and N more sit". Cap is to keep the
+      // caption readable; if the user really has 5+ points at the centre
+      // they have bigger problems anyway.
+      const quoted = r.names.map(n => `“${n}”`);
+      const verb = quoted.length === 1 ? 'sits' : 'sit';
+      let head;
+      if (quoted.length === 1) {
+        head = quoted[0];
+      } else if (quoted.length === 2) {
+        head = `${quoted[0]} and ${quoted[1]}`;
+      } else if (quoted.length <= 4) {
+        head = `${quoted.slice(0, -1).join(', ')}, and ${quoted[quoted.length - 1]}`;
+      } else {
+        head = `${quoted.slice(0, 3).join(', ')}, and ${quoted.length - 3} more`;
+      }
+      return `${head} ${verb} on the listening centre — cannot triangulate.`;
+    }
+    case 'collinear':
+      return `Speakers are collinear from the listening centre — layout needs spatial spread.`;
+    case 'planar':
+      return `Planar layout — 2D ring shown in place of triangulation (${r.points.length} points).`;
+    case 'ok':
+      return `3D layout — ${r.points.length} points. (Hull rendering pending — M3.B next phase.)`;
+    default:
+      return '';
+  }
+}
+
+function updateTriangulationStatusDom() {
+  const el = document.getElementById('triangulation-status');
+  if (!el) return;
+  const text = triangulationStatusText(TRIANGULATION.result);
+  el.textContent = text;
+  // Tag the row by kind so CSS can colour-code (red / yellow / green) in M3.E.
+  const row = el.closest('.triangulation-status');
+  if (row) row.dataset.kind = TRIANGULATION.result ? TRIANGULATION.result.kind : '';
+}
+
+function drawTriangulation() {
+  const r = TRIANGULATION.result;
+  if (!r || r.kind !== 'planar') return;
+  // Caller (drawScene) already disabled DEPTH_TEST for this pass.
+  push();
+  noFill();
+  // Muted purple — harmonises with the phantom violet but darker, so it
+  // reads as "structural overlay" rather than "another speaker marker".
+  stroke(95, 70, 145, 220);
+  strokeWeight(1.5);
+  beginShape();
+  for (const p of r.points) vertex(p.pos.x, p.pos.y, p.pos.z);
+  endShape(CLOSE);
+  pop();
+}
+
+// Dev test harness — run from devtools console: __triangulationDevTests().
+// Pure-function checks against analyseTriangulation. Stashes & restores STATE
+// so the running app isn't disturbed. Not auto-run.
+function __triangulationDevTests() {
+  const results = [];
+  function check(name, cond, detail) {
+    const ok = !!cond;
+    results.push({ name, ok });
+    (ok ? console.log : console.error)((ok ? 'OK  ' : 'FAIL') + ': ' + name, detail || '');
+  }
+
+  const stash = {
+    speakers: STATE.speakers,
+    phantoms: STATE.phantoms,
+    listeningHeight: STATE.audience.listeningHeight,
+  };
+
+  function setLayout(speakers, phantoms = [], listeningHeight = 120) {
+    STATE.audience.listeningHeight = listeningHeight;
+    STATE.speakers = speakers.map((s, i) => ({
+      id: 't' + i, name: s.name || ('S' + i),
+      enabled: s.enabled !== false,
+      x: s.x, y: s.y, z: s.z,
+      yaw: 0, pitch: 0, angleH: 90, angleV: 60,
+    }));
+    STATE.phantoms = phantoms.map((p, i) => ({
+      id: 'tp' + i, name: p.name || ('P' + i),
+      x: p.x, y: p.y, z: p.z,
+    }));
+  }
+
+  // 1. Too-few enabled points.
+  setLayout([{ x: 100, y: 0, z: 120 }, { x: 0, y: 100, z: 120 }, { x: -100, y: 0, z: 120 }]);
+  let r = analyseTriangulation();
+  check('too-few(3)', r.kind === 'too-few' && r.count === 3, r);
+
+  // 2. Point exactly at the listening centre — single name.
+  setLayout([
+    { name: 'X', x: 0, y: 0, z: 120 },
+    { x: 200, y: 0, z: 120 }, { x: 0, y: 200, z: 120 }, { x: -200, y: 0, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('point-at-centre-single',
+    r.kind === 'point-at-centre' && r.names.length === 1 && r.names[0] === 'X',
+    r);
+  check('point-at-centre-grammar-1',
+    triangulationStatusText(r) === '“X” sits on the listening centre — cannot triangulate.',
+    triangulationStatusText(r));
+
+  // 2b. Multiple points at the listening centre — names should be collected,
+  // status grammar should use plural verb and join correctly.
+  setLayout([
+    { name: 'L', x: 0, y: 0, z: 120 },
+    { name: 'R', x: 0, y: 0, z: 120 },
+    { x: 200, y: 0, z: 120 }, { x: 0, y: 200, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('point-at-centre-multi',
+    r.kind === 'point-at-centre' && r.names.length === 2,
+    r);
+  check('point-at-centre-grammar-2',
+    triangulationStatusText(r) === '“L” and “R” sit on the listening centre — cannot triangulate.',
+    triangulationStatusText(r));
+
+  // 2c. Five points at centre → status caption truncates to first 3 + "and N more".
+  setLayout([
+    { name: 'A', x: 0, y: 0, z: 120 },
+    { name: 'B', x: 0, y: 0, z: 120 },
+    { name: 'C', x: 0, y: 0, z: 120 },
+    { name: 'D', x: 0, y: 0, z: 120 },
+    { name: 'E', x: 0, y: 0, z: 120 },
+    { x: 200, y: 0, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('point-at-centre-grammar-many',
+    triangulationStatusText(r) === '“A”, “B”, “C”, and 2 more sit on the listening centre — cannot triangulate.',
+    triangulationStatusText(r));
+
+  // 3. Coplanar — 4 speakers all at ear height (canonical theatre LCR/sub case).
+  setLayout([
+    { x: -300, y: 200, z: 120 }, { x: 300, y: 200, z: 120 },
+    { x: 0, y: -300, z: 120 }, { x: 0, y: 300, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('planar-4pts-ear-height', r.kind === 'planar' && r.points.length === 4, r);
+
+  // 4. Tetrahedron — genuinely 3D, should be 'ok'.
+  setLayout([
+    { x: 200, y: 200, z: 240 }, { x: -200, y: 200, z: 240 },
+    { x: 0, y: -200, z: 240 }, { x: 0, y: 0, z: 60 },
+  ]);
+  r = analyseTriangulation();
+  check('ok-tetrahedron', r.kind === 'ok' && r.points.length === 4, r);
+
+  // 5. Mixed speakers + phantoms — both contribute.
+  setLayout(
+    [{ x: -300, y: 200, z: 240 }, { x: 300, y: 200, z: 240 }],
+    [{ x: 0, y: -300, z: 240 }, { x: 0, y: 0, z: 350 }],
+  );
+  r = analyseTriangulation();
+  check('mixed-speaker-phantom-counts', r.kind === 'ok' && r.points.length === 4, r);
+
+  // 6. Disabled speaker is excluded from the count.
+  setLayout([
+    { x: 200, y: 0, z: 240 }, { x: -200, y: 0, z: 240 },
+    { x: 0, y: 200, z: 240 },
+    { x: 0, y: -200, z: 240, enabled: false },
+  ]);
+  r = analyseTriangulation();
+  check('disabled-excluded', r.kind === 'too-few' && r.count === 3, r);
+
+  // 7. Collinear directions (all on the +X / −X line from listening centre).
+  setLayout([
+    { x: 100, y: 0, z: 120 }, { x: 200, y: 0, z: 120 },
+    { x: 300, y: 0, z: 120 }, { x: -100, y: 0, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('collinear-on-x-axis', r.kind === 'collinear', r);
+
+  // 8. Azimuth ordering on a planar layout — points should sort around the centre.
+  setLayout([
+    { name: 'E', x: 300, y: 0, z: 120 },
+    { name: 'N', x: 0, y: 300, z: 120 },
+    { name: 'W', x: -300, y: 0, z: 120 },
+    { name: 'S', x: 0, y: -300, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  const order = r.kind === 'planar' ? r.points.map(p => p.name).join('') : '';
+  // Acceptable cyclic orderings: ENWS or its rotations / reverses (depending
+  // on which pair won the cross product and the resulting normal sign).
+  const validCycles = ['ENWS', 'NWSE', 'WSEN', 'SENW', 'SWNE', 'WNES', 'NESW', 'ESWN'];
+  check('planar-azimuth-sorted', validCycles.includes(order), 'order=' + order);
+
+  STATE.speakers = stash.speakers;
+  STATE.phantoms = stash.phantoms;
+  STATE.audience.listeningHeight = stash.listeningHeight;
+  TRIANGULATION.dirty = true;  // force fresh next access; we mutated state above
+
+  const passed = results.filter(x => x.ok).length;
+  console.log(`Triangulation tests: ${passed}/${results.length} passed.`);
+  return { passed, total: results.length, results };
+}
+if (typeof window !== 'undefined') window.__triangulationDevTests = __triangulationDevTests;
+
+// =============================================================================
 // p5 lifecycle
 // =============================================================================
 
@@ -412,12 +780,18 @@ function drawScene() {
   // is the conceptual anchor of the entire layout and must always be visible.
   // Phantoms also belong here: they're sketches of "panning slots", same
   // semantic role as a speaker body marker.
-  const wantSpeakers = L.speakers;
-  const wantCentre   = L['listening-centre'];
-  const wantPhantoms = L.phantoms;
-  if (wantSpeakers || wantCentre || wantPhantoms) {
+  const wantSpeakers      = L.speakers;
+  const wantCentre        = L['listening-centre'];
+  const wantPhantoms      = L.phantoms;
+  const wantTriangulation = L.triangulation;
+  if (wantTriangulation) ensureTriangulationFresh();
+  if (wantSpeakers || wantCentre || wantPhantoms || wantTriangulation) {
     const gl = drawingContext;
     gl.disable(gl.DEPTH_TEST);
+    // Triangulation drawn first in the pass so speaker / centre / phantom
+    // markers paint on top of its lines — markers are the foreground anchors,
+    // the geometric overlay is the background structure.
+    if (wantTriangulation) drawTriangulation();
     if (wantSpeakers) {
       for (const s of STATE.speakers) {
         if (s.enabled) drawSpeakerBody(s);
@@ -922,6 +1296,7 @@ function buildSpeakerItem(s) {
   enabled.addEventListener('change', () => {
     s.enabled = enabled.checked;
     markCoverageDirty();
+    markTriangulationDirty();
   });
 
   const name = document.createElement('input');
@@ -950,6 +1325,7 @@ function buildSpeakerItem(s) {
     syncCoordLabels();
     renderSpeakersList();
     markCoverageDirty();
+    markTriangulationDirty();
   });
 
   header.append(enabled, name, expandBtn, deleteBtn);
@@ -980,6 +1356,7 @@ function buildSpeakerItem(s) {
       if (isNaN(v)) return;
       s[f.key] = f.kind === 'len' ? lenStore(v) : v;
       markCoverageDirty();
+      markTriangulationDirty();
     });
 
     fieldLabel.append(span, inp);
@@ -1003,6 +1380,7 @@ function buildSpeakerItem(s) {
     if (yawInp)   yawInp.value   = aim.yaw;
     if (pitchInp) pitchInp.value = aim.pitch;
     markCoverageDirty();
+    markTriangulationDirty();
   });
   body.appendChild(aimBtn);
 
@@ -1074,6 +1452,7 @@ function buildPhantomItem(p) {
     syncPhantomLabels();
     syncCoordLabels();
     renderPhantomsList();
+    markTriangulationDirty();
   });
 
   header.append(name, expandBtn, deleteBtn);
@@ -1100,6 +1479,7 @@ function buildPhantomItem(p) {
       const v = parseFloat(inp.value);
       if (isNaN(v)) return;
       p[f.key] = lenStore(v);
+      markTriangulationDirty();
     });
 
     fieldLabel.append(span, inp);
@@ -1208,6 +1588,7 @@ window.addEventListener('DOMContentLoaded', () => {
         applyCamera();
       }
       markCoverageDirty();
+      markTriangulationDirty();
     });
   });
 
@@ -1235,6 +1616,7 @@ window.addEventListener('DOMContentLoaded', () => {
       syncCoordLabels();
       renderSpeakersList();
       markCoverageDirty();
+      markTriangulationDirty();
     });
   }
 
@@ -1256,6 +1638,7 @@ window.addEventListener('DOMContentLoaded', () => {
       syncPhantomLabels();
       syncCoordLabels();
       renderPhantomsList();
+      markTriangulationDirty();
     });
   }
 
@@ -1265,6 +1648,10 @@ window.addEventListener('DOMContentLoaded', () => {
   renderAudienceInputs();
   renderSpeakersList();
   renderPhantomsList();
+  // Populate the triangulation status caption from the default LCR layout.
+  // markTriangulationDirty() schedules a setTimeout(0) recompute + DOM write,
+  // so by the time the user can see anything the caption is correct.
+  markTriangulationDirty();
 
   // Disclaimer collapse toggle (header always visible, body folds away).
   const disclaimer = document.getElementById('disclaimer');

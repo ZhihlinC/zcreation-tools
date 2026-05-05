@@ -373,6 +373,265 @@ function ensureTriangulationFresh() {
   TRIANGULATION.dirty = false;
 }
 
+// ---------------------------------------------------------------------------
+// Sliver pre-merge & spherical convex hull (M3.B-β).
+//
+// Pre-merge: speakers with directions within SLIVER_MERGE_EPS of each other
+// are considered the same panning slot for triangulation purposes — keeping
+// them separate would force the hull to generate near-degenerate sliver
+// triangles that M3.C would falsely flag as red. The threshold is set above
+// the human auditory just-noticeable difference (~1°–3°) so the merge only
+// kicks in when speakers are functionally redundant directionally. See
+// ROADMAP M3.B discussion item 3.
+//
+// Hull: incremental construction. Seed tetrahedron from 4 extreme points
+// (farthest sequential search); for each remaining point P, find faces
+// "visible from P" (P on the outer side of the face plane), collect horizon
+// edges (edges that border exactly one visible face), delete visible faces,
+// and create one new face per horizon edge with apex P. Face orientation is
+// preserved automatically via the horizon-edge directed-pair rule: if a
+// visible face had directed edge (u, v), the new face replacing it is
+// (P, u, v) so that the same edge is now in (u, v) direction in a face
+// containing P, while its non-visible neighbor still has (v, u). Manifold
+// invariant: every undirected edge is shared by exactly 2 faces; total face
+// count = 2V − 4 (Euler V − E + F = 2 for sphere triangulation).
+// ---------------------------------------------------------------------------
+
+const SLIVER_MERGE_EPS = 0.05;          // rad ≈ 2.9°, above auditory JND
+const HULL_DET_EPS     = 1e-7;          // signed-determinant threshold
+const HULL_VISIBILITY_EPS = 1e-9;       // dot threshold for face-visibility
+
+// Group input points by union-find on pairwise direction angle. Returns the
+// merged-point array (length ≤ input length). Each merged point carries
+// its own dir/pos plus a names array and a sourceCount.
+function premergeSlivers(points) {
+  const N = points.length;
+  if (N < 2) {
+    return points.map(p => ({ ...p, names: [p.name], sourceCount: 1 }));
+  }
+
+  const parent = new Array(N);
+  for (let i = 0; i < N; i++) parent[i] = i;
+  const find = (i) => {
+    while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+    return i;
+  };
+  const union = (i, j) => {
+    const ri = find(i), rj = find(j);
+    if (ri !== rj) parent[ri] = rj;
+  };
+
+  const cosT = Math.cos(SLIVER_MERGE_EPS);
+  for (let i = 0; i < N; i++) {
+    for (let j = i + 1; j < N; j++) {
+      const a = points[i].dir, b = points[j].dir;
+      const dot = a.x*b.x + a.y*b.y + a.z*b.z;
+      if (dot >= cosT) union(i, j);
+    }
+  }
+
+  const groups = new Map();
+  for (let i = 0; i < N; i++) {
+    const r = find(i);
+    let bucket = groups.get(r);
+    if (!bucket) { bucket = []; groups.set(r, bucket); }
+    bucket.push(points[i]);
+  }
+
+  const merged = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      merged.push({ ...group[0], names: [group[0].name], sourceCount: 1 });
+      continue;
+    }
+    let dx = 0, dy = 0, dz = 0, px = 0, py = 0, pz = 0;
+    const names = [];
+    for (const p of group) {
+      dx += p.dir.x; dy += p.dir.y; dz += p.dir.z;
+      px += p.pos.x; py += p.pos.y; pz += p.pos.z;
+      names.push(p.name);
+    }
+    const dmag = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    const k = group.length;
+    merged.push({
+      kind: 'merged',
+      name: names.join(' + '),
+      names,
+      sourceCount: k,
+      dir: { x: dx / dmag, y: dy / dmag, z: dz / dmag },
+      pos: { x: px / k, y: py / k, z: pz / k },
+    });
+  }
+  return merged;
+}
+
+// Make a face with the given vertex order, computing the unit outward normal
+// from the cross product. Returns null if the triangle is degenerate.
+// Caller is responsible for orientation (the normal direction follows from
+// the order of vertices, so the caller chooses the order to get outward).
+function makeFaceWithOrder(points, ia, ib, ic) {
+  const va = points[ia].dir, vb = points[ib].dir, vc = points[ic].dir;
+  const ex = vb.x - va.x, ey = vb.y - va.y, ez = vb.z - va.z;
+  const fx = vc.x - va.x, fy = vc.y - va.y, fz = vc.z - va.z;
+  let nx = ey * fz - ez * fy;
+  let ny = ez * fx - ex * fz;
+  let nz = ex * fy - ey * fx;
+  const m = Math.sqrt(nx*nx + ny*ny + nz*nz);
+  if (m < HULL_DET_EPS) return null;
+  return { a: ia, b: ib, c: ic, nx: nx / m, ny: ny / m, nz: nz / m };
+}
+
+// 4-stage extreme-point search to find a non-degenerate seed tetrahedron.
+// Returns { faces, indices } or null if no spanning tetrahedron exists
+// (which means the prior collinear/planar check missed an edge case).
+function seedTetrahedron(points) {
+  const N = points.length;
+  if (N < 4) return null;
+
+  // Stage 1: pick i0 arbitrarily.
+  const i0 = 0;
+  const v0 = points[i0].dir;
+
+  // Stage 2: i1 = farthest from i0 by angle (= smallest dot).
+  let i1 = -1, smallestDot = Infinity;
+  for (let i = 0; i < N; i++) {
+    if (i === i0) continue;
+    const v = points[i].dir;
+    const d = v0.x*v.x + v0.y*v.y + v0.z*v.z;
+    if (d < smallestDot) { smallestDot = d; i1 = i; }
+  }
+  if (i1 < 0) return null;
+  const v1 = points[i1].dir;
+
+  // Stage 3: i2 maximizes |(v1−v0) × (v_i−v0)| (distance from line v0v1).
+  const ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
+  let i2 = -1, biggestCrossSq = 0;
+  for (let i = 0; i < N; i++) {
+    if (i === i0 || i === i1) continue;
+    const v = points[i].dir;
+    const bx = v.x - v0.x, by = v.y - v0.y, bz = v.z - v0.z;
+    const cx = ay*bz - az*by, cy = az*bx - ax*bz, cz = ax*by - ay*bx;
+    const m2 = cx*cx + cy*cy + cz*cz;
+    if (m2 > biggestCrossSq) { biggestCrossSq = m2; i2 = i; }
+  }
+  if (i2 < 0 || biggestCrossSq < HULL_DET_EPS * HULL_DET_EPS) return null;
+  const v2 = points[i2].dir;
+
+  // Stage 4: i3 maximizes |det| of [v1−v0, v2−v0, v−v0] (distance from plane).
+  const planeNx = ay * (v2.z - v0.z) - az * (v2.y - v0.y);
+  const planeNy = az * (v2.x - v0.x) - ax * (v2.z - v0.z);
+  const planeNz = ax * (v2.y - v0.y) - ay * (v2.x - v0.x);
+  let i3 = -1, biggestDet = 0;
+  for (let i = 0; i < N; i++) {
+    if (i === i0 || i === i1 || i === i2) continue;
+    const v = points[i].dir;
+    const det = planeNx * (v.x - v0.x) + planeNy * (v.y - v0.y) + planeNz * (v.z - v0.z);
+    if (Math.abs(det) > Math.abs(biggestDet)) { biggestDet = det; i3 = i; }
+  }
+  if (i3 < 0 || Math.abs(biggestDet) < HULL_DET_EPS) return null;
+
+  // Build 4 outward-oriented faces. For each face, the opposite vertex is
+  // "inside" (the tetrahedron contains it on its interior side); flip vertex
+  // order if the computed normal points toward (instead of away from) it.
+  const indices = [i0, i1, i2, i3];
+  const triples = [[1, 2, 3, 0], [0, 3, 2, 1], [0, 1, 3, 2], [0, 2, 1, 3]];
+  const faces = [];
+  for (const [a, b, c, opp] of triples) {
+    const ia = indices[a], ib = indices[b], ic = indices[c], iOpp = indices[opp];
+    let f = makeFaceWithOrder(points, ia, ib, ic);
+    if (!f) return null;
+    const va = points[ia].dir, vo = points[iOpp].dir;
+    const facingOpposite = f.nx * (vo.x - va.x) + f.ny * (vo.y - va.y) + f.nz * (vo.z - va.z);
+    if (facingOpposite > 0) {
+      // Normal points toward the opposite vertex → flip so it points away.
+      f = makeFaceWithOrder(points, ia, ic, ib);
+      if (!f) return null;
+    }
+    faces.push(f);
+  }
+  return { faces, indices };
+}
+
+// Insert one point into the existing hull. Returns the updated face array
+// (or the same reference if the point is inside / on the hull, hence
+// non-extending).
+function insertPointIntoHull(points, faces, pointIdx) {
+  const P = points[pointIdx].dir;
+
+  const visible = [];
+  const kept = [];
+  for (const f of faces) {
+    const va = points[f.a].dir;
+    const dot = f.nx * (P.x - va.x) + f.ny * (P.y - va.y) + f.nz * (P.z - va.z);
+    if (dot > HULL_VISIBILITY_EPS) visible.push(f);
+    else kept.push(f);
+  }
+  if (visible.length === 0) return faces;  // P is inside / on the hull
+
+  // Collect directed edges from visible faces; an edge is on the horizon iff
+  // its REVERSE does not also appear in a visible face (i.e., it borders a
+  // non-visible face on the other side).
+  const visibleEdges = new Map();  // 'u_v' → [u, v]
+  for (const f of visible) {
+    for (const [u, v] of [[f.a, f.b], [f.b, f.c], [f.c, f.a]]) {
+      visibleEdges.set(u + '_' + v, [u, v]);
+    }
+  }
+  const horizon = [];
+  for (const [k, [u, v]] of visibleEdges) {
+    if (!visibleEdges.has(v + '_' + u)) horizon.push([u, v]);
+  }
+
+  // Build new faces: for each horizon edge (u, v) (in the visible face's CCW
+  // direction), the new face is (P, u, v) — preserves orientation against
+  // the still-present non-visible neighbor that has (v, u).
+  for (const [u, v] of horizon) {
+    const f = makeFaceWithOrder(points, pointIdx, u, v);
+    if (f) kept.push(f);
+  }
+  return kept;
+}
+
+// Orchestrator: seed + iteratively insert. Returns { faces, indices } or
+// null on failure (which the caller treats as a numerical fallback).
+function buildSphericalHull(points) {
+  const seed = seedTetrahedron(points);
+  if (!seed) return null;
+  let faces = seed.faces;
+  const used = new Set(seed.indices);
+  for (let i = 0; i < points.length; i++) {
+    if (used.has(i)) continue;
+    faces = insertPointIntoHull(points, faces, i);
+  }
+  return { faces };
+}
+
+// Diagnostic-only manifold check used by the dev tests. Throws on violation.
+// Conditions: every directed edge appears exactly once; its reverse exists
+// (= each undirected edge shared by exactly 2 faces); Euler V − E + F = 2.
+function assertManifoldOrThrow(faces) {
+  const edgeCount = new Map();
+  for (const f of faces) {
+    for (const [u, v] of [[f.a, f.b], [f.b, f.c], [f.c, f.a]]) {
+      const k = u + '_' + v;
+      edgeCount.set(k, (edgeCount.get(k) || 0) + 1);
+    }
+  }
+  for (const [k, count] of edgeCount) {
+    if (count !== 1) throw new Error(`directed edge ${k} appears ${count}× (expected 1)`);
+  }
+  for (const k of edgeCount.keys()) {
+    const [u, v] = k.split('_');
+    if (!edgeCount.has(v + '_' + u)) throw new Error(`directed edge ${k} has no reverse — not a manifold`);
+  }
+  const verts = new Set();
+  for (const f of faces) { verts.add(f.a); verts.add(f.b); verts.add(f.c); }
+  const V = verts.size;
+  const E = edgeCount.size / 2;
+  const F = faces.length;
+  if (V - E + F !== 2) throw new Error(`Euler check failed: V=${V}, E=${E}, F=${F}, χ=${V-E+F}`);
+}
+
 function analyseTriangulation() {
   // Listening centre is the panning origin; all directions are measured from
   // here, NOT from the world floor origin.
@@ -428,16 +687,27 @@ function analyseTriangulation() {
     return { kind: 'point-at-centre', names: atCentre };
   }
 
-  if (points.length < 4) {
-    return { kind: 'too-few', count: points.length };
+  // Sliver pre-merge — collapse direction-near-duplicate inputs so the hull
+  // doesn't generate sliver triangles that M3.C would falsely flag as red.
+  // The merged-points array is what every downstream branch operates on.
+  const inputCount = points.length;
+  const merged = premergeSlivers(points);
+  const mergeReduction = inputCount - merged.length;
+
+  if (merged.length < 4) {
+    return {
+      kind: 'too-few',
+      count: merged.length,
+      inputCount, mergeReduction,
+    };
   }
 
   // Find the most numerically stable plane-normal candidate.
   let nx = 0, ny = 0, nz = 0, bestMag = 0;
-  for (let i = 0; i < points.length; i++) {
-    const a = points[i].dir;
-    for (let j = i + 1; j < points.length; j++) {
-      const b = points[j].dir;
+  for (let i = 0; i < merged.length; i++) {
+    const a = merged[i].dir;
+    for (let j = i + 1; j < merged.length; j++) {
+      const b = merged[j].dir;
       const cx = a.y * b.z - a.z * b.y;
       const cy = a.z * b.x - a.x * b.z;
       const cz = a.x * b.y - a.y * b.x;
@@ -452,20 +722,21 @@ function analyseTriangulation() {
   }
 
   if (bestMag < COLLINEAR_EPS) {
-    return { kind: 'collinear', count: points.length };
+    return {
+      kind: 'collinear',
+      count: merged.length,
+      inputCount, mergeReduction,
+    };
   }
 
   let maxDeviation = 0;
-  for (const p of points) {
+  for (const p of merged) {
     const d = Math.abs(p.dir.x * nx + p.dir.y * ny + p.dir.z * nz);
     if (d > maxDeviation) maxDeviation = d;
   }
 
   if (maxDeviation < PLANAR_EPS) {
-    // Build an in-plane basis {u, v}. u = first direction (it lies in the
-    // plane by construction since dot(u, n̂) ≈ 0). v = n̂ × u, also in plane.
-    // Each point's azimuth in the plane = atan2(dot(d, v), dot(d, u)).
-    const u = points[0].dir;
+    const u = merged[0].dir;
     const vx = ny * u.z - nz * u.y;
     const vy = nz * u.x - nx * u.z;
     const vz = nx * u.y - ny * u.x;
@@ -473,22 +744,46 @@ function analyseTriangulation() {
       d.x * vx + d.y * vy + d.z * vz,
       d.x * u.x + d.y * u.y + d.z * u.z,
     );
-    const sorted = points.slice().sort((p, q) => azimuth(p.dir) - azimuth(q.dir));
+    const sorted = merged.slice().sort((p, q) => azimuth(p.dir) - azimuth(q.dir));
     return {
       kind: 'planar',
       points: sorted,
       normal: { x: nx, y: ny, z: nz },
+      inputCount, mergeReduction,
     };
   }
 
-  return { kind: 'ok', points };
+  // 3D — build the spherical convex hull.
+  const hull = buildSphericalHull(merged);
+  if (!hull) {
+    // Numerical fallback: shouldn't happen given the prior checks, but if
+    // the seed-tetrahedron search bails (extreme float edge case), report
+    // collinear rather than crash.
+    return {
+      kind: 'collinear',
+      count: merged.length,
+      inputCount, mergeReduction,
+    };
+  }
+  return {
+    kind: 'ok',
+    points: merged,
+    faces: hull.faces,
+    inputCount, mergeReduction,
+  };
+}
+
+// Suffix appended to status text when the sliver pre-merge collapsed inputs.
+// Empty string when no merge happened, otherwise " (N sliver-merged)".
+function mergeNote(r) {
+  return r.mergeReduction > 0 ? ` (${r.mergeReduction} sliver-merged)` : '';
 }
 
 function triangulationStatusText(r) {
   if (!r) return '';
   switch (r.kind) {
     case 'too-few':
-      return `Add ≥ 4 enabled speakers or phantoms to enable triangulation. Currently: ${r.count}.`;
+      return `Add ≥ 4 enabled speakers or phantoms to enable triangulation. Currently: ${r.count}${mergeNote(r)}.`;
     case 'point-at-centre': {
       // 1 → "X sits", 2 → "X and Y sit", 3-4 → "X, Y, and Z sit",
       // 5+ → first three names + "...and N more sit". Cap is to keep the
@@ -509,11 +804,11 @@ function triangulationStatusText(r) {
       return `${head} ${verb} on the listening centre — cannot triangulate.`;
     }
     case 'collinear':
-      return `Speakers are collinear from the listening centre — layout needs spatial spread.`;
+      return `Speakers are collinear from the listening centre — layout needs spatial spread${mergeNote(r)}.`;
     case 'planar':
-      return `Planar layout — 2D ring shown in place of triangulation (${r.points.length} points).`;
+      return `Planar layout — 2D ring shown in place of triangulation (${r.points.length} points${mergeNote(r)}).`;
     case 'ok':
-      return `3D layout — ${r.points.length} points. (Hull rendering pending — M3.B next phase.)`;
+      return `3D layout — ${r.points.length} points → ${r.faces.length} triangles${mergeNote(r)}.`;
     default:
       return '';
   }
@@ -531,17 +826,36 @@ function updateTriangulationStatusDom() {
 
 function drawTriangulation() {
   const r = TRIANGULATION.result;
-  if (!r || r.kind !== 'planar') return;
+  if (!r) return;
   // Caller (drawScene) already disabled DEPTH_TEST for this pass.
   push();
   noFill();
   // Muted purple — harmonises with the phantom violet but darker, so it
   // reads as "structural overlay" rather than "another speaker marker".
   stroke(95, 70, 145, 220);
-  strokeWeight(1.5);
-  beginShape();
-  for (const p of r.points) vertex(p.pos.x, p.pos.y, p.pos.z);
-  endShape(CLOSE);
+  strokeWeight(1.3);
+
+  if (r.kind === 'planar') {
+    strokeWeight(1.5);
+    beginShape();
+    for (const p of r.points) vertex(p.pos.x, p.pos.y, p.pos.z);
+    endShape(CLOSE);
+  } else if (r.kind === 'ok') {
+    // Draw triangle edges. Note: each undirected edge is shared by exactly
+    // two faces, so drawing per-face we paint each edge twice — at this
+    // stroke alpha and weight the doubling is invisible, and avoiding it
+    // would require a per-edge dedup pass with no visual gain.
+    for (const f of r.faces) {
+      const a = r.points[f.a].pos;
+      const b = r.points[f.b].pos;
+      const c = r.points[f.c].pos;
+      beginShape();
+      vertex(a.x, a.y, a.z);
+      vertex(b.x, b.y, b.z);
+      vertex(c.x, c.y, c.z);
+      endShape(CLOSE);
+    }
+  }
   pop();
 }
 
@@ -631,13 +945,25 @@ function __triangulationDevTests() {
   r = analyseTriangulation();
   check('planar-4pts-ear-height', r.kind === 'planar' && r.points.length === 4, r);
 
-  // 4. Tetrahedron — genuinely 3D, should be 'ok'.
+  // 4. Tetrahedron — genuinely 3D, should be 'ok' with 4 faces. Manifold
+  // invariant should hold (each undirected edge shared by exactly 2 faces;
+  // V − E + F = 2). Status text reflects the new "→ K triangles" format.
   setLayout([
     { x: 200, y: 200, z: 240 }, { x: -200, y: 200, z: 240 },
     { x: 0, y: -200, z: 240 }, { x: 0, y: 0, z: 60 },
   ]);
   r = analyseTriangulation();
-  check('ok-tetrahedron', r.kind === 'ok' && r.points.length === 4, r);
+  check('ok-tetrahedron-points', r.kind === 'ok' && r.points.length === 4, r);
+  check('ok-tetrahedron-faces', r.kind === 'ok' && r.faces.length === 4, r);
+  try {
+    assertManifoldOrThrow(r.faces);
+    check('ok-tetrahedron-manifold', true);
+  } catch (e) {
+    check('ok-tetrahedron-manifold', false, e.message);
+  }
+  check('ok-status-text-format',
+    triangulationStatusText(r) === '3D layout — 4 points → 4 triangles.',
+    triangulationStatusText(r));
 
   // 5. Mixed speakers + phantoms — both contribute.
   setLayout(
@@ -656,13 +982,20 @@ function __triangulationDevTests() {
   r = analyseTriangulation();
   check('disabled-excluded', r.kind === 'too-few' && r.count === 3, r);
 
-  // 7. Collinear directions (all on the +X / −X line from listening centre).
+  // 7. Collinear input → falls through to 'too-few' after sliver merge.
+  // Geometric note: a line through origin has at most 2 distinct directions
+  // (forward/back), so any "collinear" input merges to ≤2 points and the
+  // too-few check fires first. The 'collinear' branch in analyseTriangulation
+  // remains as defensive code for numerical edge cases but is essentially
+  // unreachable through the normal user flow.
   setLayout([
     { x: 100, y: 0, z: 120 }, { x: 200, y: 0, z: 120 },
     { x: 300, y: 0, z: 120 }, { x: -100, y: 0, z: 120 },
   ]);
   r = analyseTriangulation();
-  check('collinear-on-x-axis', r.kind === 'collinear', r);
+  check('collinear-merges-to-too-few',
+    r.kind === 'too-few' && r.count === 2 && r.mergeReduction === 2,
+    r);
 
   // 8. Azimuth ordering on a planar layout — points should sort around the centre.
   setLayout([
@@ -677,6 +1010,107 @@ function __triangulationDevTests() {
   // on which pair won the cross product and the resulting normal sign).
   const validCycles = ['ENWS', 'NWSE', 'WSEN', 'SENW', 'SWNE', 'WNES', 'NESW', 'ESWN'];
   check('planar-azimuth-sorted', validCycles.includes(order), 'order=' + order);
+
+  // 9. Octahedron — 6 points along ±X / ±Y / ±Z directions from listening
+  // centre. Hull = 8 equilateral spherical triangles. Strong stress test:
+  // the seed picks 4 of these 6 vertices and the remaining 2 must be
+  // inserted via horizon walk on opposite sides of the hull.
+  setLayout([
+    { name: '+X', x: 1000, y: 0, z: 120 },
+    { name: '-X', x: -1000, y: 0, z: 120 },
+    { name: '+Y', x: 0, y: 1000, z: 120 },
+    { name: '-Y', x: 0, y: -1000, z: 120 },
+    { name: '+Z', x: 0, y: 0, z: 1120 },  // listeningHeight + 1000
+    { name: '-Z', x: 0, y: 0, z: -880 },  // listeningHeight - 1000
+  ]);
+  r = analyseTriangulation();
+  check('octahedron-faces', r.kind === 'ok' && r.faces.length === 8, r);
+  try {
+    assertManifoldOrThrow(r.faces);
+    check('octahedron-manifold', true);
+  } catch (e) {
+    check('octahedron-manifold', false, e.message);
+  }
+
+  // 10. Cube vertices on the sphere — 8 points, hull is the cube triangulated
+  // = 12 faces. Tests handling of larger horizon walks (each insertion past
+  // the seed deletes 2-3 visible faces).
+  {
+    const c = 600;
+    const z0 = 120;  // listeningHeight; Δz from centre = ±c
+    setLayout([
+      { x: c, y: c, z: z0 + c }, { x: -c, y: c, z: z0 + c },
+      { x: c, y: -c, z: z0 + c }, { x: -c, y: -c, z: z0 + c },
+      { x: c, y: c, z: z0 - c }, { x: -c, y: c, z: z0 - c },
+      { x: c, y: -c, z: z0 - c }, { x: -c, y: -c, z: z0 - c },
+    ]);
+  }
+  r = analyseTriangulation();
+  check('cube-faces', r.kind === 'ok' && r.faces.length === 12, r);
+  try {
+    assertManifoldOrThrow(r.faces);
+    check('cube-manifold', true);
+  } catch (e) {
+    check('cube-manifold', false, e.message);
+  }
+
+  // 11. Sliver pre-merge — two near-identical directions collapse into one.
+  // Setup: 4 well-spread points + 1 sliver-twin of the first → 5 inputs,
+  // 4 merged points, 1 sliver-merged. Result still 'ok' with 4 faces.
+  setLayout([
+    { name: 'A',  x: 300, y: 300, z: 240 },
+    { name: "A'", x: 301, y: 301, z: 240 },  // ~0.001 rad from A — well below 0.05
+    { name: 'B',  x: -300, y: 300, z: 240 },
+    { name: 'C',  x: 0, y: -300, z: 240 },
+    { name: 'D',  x: 0, y: 0, z: 30 },
+  ]);
+  r = analyseTriangulation();
+  check('sliver-merge-count',
+    r.kind === 'ok' && r.points.length === 4 && r.inputCount === 5 && r.mergeReduction === 1,
+    r);
+  check('sliver-merge-status',
+    triangulationStatusText(r) === '3D layout — 4 points → 4 triangles (1 sliver-merged).',
+    triangulationStatusText(r));
+
+  // 12. Sliver merge can reduce below 4 → 'too-few'. 4 inputs in 2 sliver pairs.
+  setLayout([
+    { name: 'A1', x: 300, y: 300, z: 240 },
+    { name: 'A2', x: 301, y: 301, z: 240 },
+    { name: 'B1', x: -300, y: -300, z: 240 },
+    { name: 'B2', x: -301, y: -301, z: 240 },
+  ]);
+  r = analyseTriangulation();
+  check('sliver-merge-to-too-few',
+    r.kind === 'too-few' && r.count === 2 && r.inputCount === 4 && r.mergeReduction === 2,
+    r);
+
+  // 13. 50 random 3D points on the sphere → manifold-valid hull.
+  // Deterministic seed via simple LCG so the test is reproducible across runs.
+  let seed = 1;
+  const lcg = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const random50 = [];
+  for (let i = 0; i < 50; i++) {
+    // Uniform sphere sampling: u ∈ [-1, 1], θ ∈ [0, 2π); (sqrt(1−u²)cosθ, sqrt(1−u²)sinθ, u).
+    const u = 2 * lcg() - 1;
+    const theta = 2 * Math.PI * lcg();
+    const r2 = Math.sqrt(1 - u * u);
+    const dx = r2 * Math.cos(theta);
+    const dy = r2 * Math.sin(theta);
+    const dz = u;
+    // Place 1000cm out from the listening centre along (dx, dy, dz).
+    random50.push({ x: dx * 1000, y: dy * 1000, z: 120 + dz * 1000 });
+  }
+  setLayout(random50);
+  r = analyseTriangulation();
+  // For a 3D point cloud with no degeneracies, expect 'ok' and Euler-valid hull.
+  // Vertex count V ≤ 50 (some may be inside hull); F = 2V − 4 by Euler.
+  check('random50-ok', r.kind === 'ok', r.kind);
+  try {
+    assertManifoldOrThrow(r.faces);
+    check('random50-manifold', true);
+  } catch (e) {
+    check('random50-manifold', false, e.message);
+  }
 
   STATE.speakers = stash.speakers;
   STATE.phantoms = stash.phantoms;

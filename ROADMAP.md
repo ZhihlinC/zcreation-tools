@@ -18,7 +18,7 @@
 
 ## 進度概覽
 
-- [ ] **M1** — 場景骨架 + 資料模型 + 音響 / cone / camera / 圖層 toggle
+- [x] **M1** — 場景骨架 + 資料模型 + 音響 / cone / camera / 圖層 toggle（完成 2026-05-05，commit `4855bb4`）
 - [ ] **M2** — 聽覺平面 + 覆蓋熱區（grid sampling + gradient）
 - [ ] **M3** — Phantom speaker + 球面凸包三角剖分 + Layout Health
 - [ ] **M4** — HTML 下載 / 上傳（self-contained）+ PNG 截圖
@@ -46,7 +46,7 @@
 - 資料模型（§5）：`Speaker` / `PhantomSpeaker` / `Audience` / `ViewState`，內部統一以 `cm` 儲存
 - 右側浮動面板：Add / Edit / Delete speaker（彈出 modal 或 inline 表單）；Audience 尺寸 + listening height；單位 toggle（cm ↔ m）
 - 音響本體（盒型 + 文字 label）+ cone 繪製（向 yaw/pitch 方向、半透明，使用 `angleH`/`angleV` 各自獨立）
-- 圖層 toggle：`floor` / `audience` / `listening-plane` / `speakers` / `cones` / `axes`（其餘留 placeholder，後續 M2/M3 啟用）
+- 圖層 toggle：`floor` / `audience` / `listening-plane` / `listening-centre` / `speakers` / `cones` / `axes` / `coords`（其餘留 placeholder，後續 M2/M3 啟用）
 - §2「定位語句」**完整顯示在第一屏**（不省略）
 - 解決 p5.js WEBGL 座標 handedness（見下方討論事項 1）
 
@@ -80,7 +80,22 @@
 
 **收尾備註**
 
-（完成後記錄一行，例如：「M1 完成於 2026-05-XX；camera handedness 採 X 方案；已知 cone 在 pitch 接近 ±90° 時 label 重疊，留 M2 處理。」）
+M1 完成於 **2026-05-05**（commit `4855bb4`，已推上 `tools.zcreation.art/coverage/`）。落地內容除原訂範圍外的延伸：
+
+- **座標 handedness 重做**：原本用「`up.z` 取負 + top view `scale(1,-1,1)`」的雙重 hack，改為單一機制 `cam.yScale = -1`（在 `applyCamera()` 中、`perspective()` 之前設定）。p5 v1.11 的 `perspective()` 在投影矩陣 Y row 寫死 `-f * yScale`——把 yScale 設成 -1 即抵銷該 Y-flip，五個視角全部用「自然」up vector，右手定則在每個視角都成立。詳見討論事項 1。
+- **Aim at centre 修正**：`aimAtCentre()` 原本對著 `(0, 0, 0)`，這是「地板原點」而非「假想耳朵位置」，所以每顆音響都被往下偏。改為對著 `(0, 0, listeningHeight)`。預設 L/R/C 三顆的 pitch 也對應重算。
+- **Listening centre layer**（預設 ON）：`(0, 0, listeningHeight)` 一顆 teal 球 + 從地板原點往上的細虛線，把「Z 從哪裡量、耳朵在哪裡」的關係視覺化。深度測試 OFF（同 speaker bodies），永遠可見。
+- **Coordinates layer**（預設 OFF）：勾選後在每顆音響、原點、聽覺中心旁顯示 `(x, y, z 單位)`，跟著 cm/m toggle 即時更新。出圖給其他設計用。
+- **Panel-vs-canvas 事件隔離**：滑鼠在 function panel 上時，拖曳和滾輪不影響 3D。實作方式：在 `document` 的 bubbling phase 對 panel target 上的 `mousedown` / `wheel` 做 `stopPropagation()`，p5 的事件 listener 掛在 `window`（更外層）所以攔在 document 就夠。`mouseup` 故意不攔，避免從 canvas 起拖、在 panel 放開時 `mouseIsPressed` 卡住。
+- **柔和場景光**：`ambientLight(120) + directionalLight(180, 180, 170, -0.3, 0.4, -0.85)`，在 `drawScene()` 開頭設一次。stroke 不受影響所以軸 / 格線 / cone 邊都還是清晰線條；speaker 與 listening centre 的球體有了立體感。配色因此調亮（speaker `(30,35,55)` → `(110,122,150)`、原點 `40` → `110`），讓 shading 落在可見範圍。
+- **Axes 升格**：拿掉「(debug)」標註，正式列為設計師可用的 layer。
+
+**已知未處理（留給後續 milestone）**：
+
+- 拖曳 top view orbit 後再切回別視角，相機可能停在奇怪角度（mode (a) 改完 yScale 後此前的 top-view scale 副作用已消失，但 orbit 殘餘狀態仍會留在相機；按任一預設視角按鈕即可重置）。
+- Cone 在 pitch 接近 ±90° 時邊界仍可能退化，視 M2 / M3 用起來再決定要不要處理。
+- M1 沒有 Mobile banner 的完整體驗（只有最基本的 stub），M5 補。
+- `_redirects` 是空檔（只有註解），M4 / M5 視需要再加 redirect 規則。
 
 ---
 
@@ -224,24 +239,25 @@
 
 ## 討論事項 / 已知問題
 
-### 1. p5.js WEBGL 座標 handedness（已解決 2026-05-04）
+### 1. p5.js WEBGL 座標 handedness（**M1 結束時已用單一機制重做，2026-05-05**）
 
-**現象**：p5.js WEBGL 預設 +Y 朝下（沿用螢幕座標系），與 SPEC §4 的「+Y 前、+Z 上、右手座標系」不一致。若直接用，外積 `right = forward × up` 會反向 → 整個 scene 鏡像（文字反、camera orbit 方向反、cone 朝向反）。
+**最終解法**：在 `applyCamera()` 中、呼叫 `perspective()` 之前設一次 `cam.yScale = -1`。
 
-**候選解法（試過）**：
+**為什麼這就夠**：閱讀 p5 v1.11 原始碼後確認，`p5.Camera.prototype._getLocalAxes()` 是**標準右手系**（`x = up × z`、`y = z × x`）；handedness 問題的單一來源是 `perspective()` 在投影矩陣 Y row 寫死 `-f * yScale`（投影層的 Y-flip）。把 yScale 設成 -1 就抵銷掉這個 flip，整個 pipeline 就是標準右手座標系，所有視角的 up vector 都用自然值（perspective / front / side / listening 用 +Z，top 用 +Y），不再需要任何 per-view 補償。
 
-- (a) `camera()` 的 up vector 把 z 分量取負（補償螢幕 Y-down 慣例）
-- (b) `draw()` 開頭 `scale(1, -1, 1)`：把整個 scene 翻 Y
-- (c) 在 `vertex()` / `translate()` 層做明確 mapping：world (x,y,z) → p5 (x,-z,y)
+**早期試過、已捨棄的雙重 hack**（保留為紀錄）：
 
-**決議**：採用 **(a)**。Yves 實測判斷最直覺。modes b、c 已從 `coverage.js` 移除，相關 dev UI 已下架。實作位置：`applyCamera()` 中 `const up = [p.up[0], p.up[1], -p.up[2]]`。
+- 早期 M1：`up.z` 取負（mode (a)）+ top view `scale(1, -1, 1)`（mode (b) 縮小版）。
+- 問題：兩個機制針對不同視角各自運作，邏輯不一致；top view 拖曳 orbit 後 scale flip 仍會套用，畫面方向感會跑掉。
+- 改用 yScale 後上述問題全部消失。
 
-**Top view 右手系修法（2026-05-05）**：mode (a) 是針對 up.z 取負，但 top view 的 up = (0, 1, 0) 沒有 z 分量可翻，p5 螢幕 Y-down 直接洩漏 → +Y 跑到螢幕下方，違反右手定則。修法：在 `draw()` 偵測 `cameraPreset === 'top'` 時套 `scale(1, -1, 1)` 抵銷螢幕 Y-down，這樣 +Y 在螢幕上方、+X 維持在右、+Z 維持外凸，右手系守住。`projectToScreen()` 也對應加上 y → -y。**已知副作用**：top view 拖曳 orbit 後 scale 仍會套用（因 preset 還是 'top'），畫面方向感會跑掉；使用者點別的 preset 或再點 Top 重置即可。
+**`projectToScreen()` 對應變更**：`projMatrix.mat4` 自動反映新的 yScale，所以原本 `(1 - cy/cw) * height / 2` 的公式繼續有效；移除 top-view 專屬的 `y → -y` 修正（不需要了）。
 
-**踩到的坑（兩個）**：
+**踩到的坑（M1 過程紀錄，仍適用）**：
 
 1. **`createCamera()` 會切換 camera 類型**：在 `setup()` 用 `createCamera()` 取得 camera 參考會把 camera 切成 "custom" 類型，導致 `orbitControl()` 的滑鼠拖曳被禁用（只有 default camera 路徑會處理 drag）。正確做法：用 `camera()` 全域函式設定參數（套用在 default camera 上），再以 `cam = _renderer._curCamera` 抓 reference 給後續 zoom / 投影使用。
-2. **`setAttributes()` 必須在 `createCanvas()` 之前**：`setAttributes()` 在 createCanvas 之後呼叫會**重建 WEBGL renderer 與 canvas DOM 元素**——前面 `c.parent('canvas-host')` 綁的是舊 canvas，新 canvas 變成 body 的直接子元素，舊 canvas 上的事件 listener 全部失效，`orbitControl` 拖曳直接無作用。正確順序：`setAttributes()` → `createCanvas()` → `c.parent()` → `applyCamera()` → 抓 cam reference。
+2. **`setAttributes()` 必須在 `createCanvas()` 之前**：`setAttributes()` 在 createCanvas 之後呼叫會**重建 WEBGL renderer 與 canvas DOM 元素**——前面 `c.parent('canvas-host')` 綁的是舊 canvas，新 canvas 變成 body 的直接子元素，舊 canvas 上的事件 listener 全部失效，`orbitControl` 拖曳直接無作用。正確順序：`setAttributes()` → `createCanvas()` → `c.parent()` → 抓 cam reference → 設定 `cam.yScale = -1` → `applyCamera()`（內部呼叫 `perspective()` 才會吃到新的 yScale）。
+3. **lighting 的 fill 不能太暗**：`fill(30, 35, 55)` 加上 ambient/directional 後，最亮也只到 `~(60, 70, 95)`，視覺上是黑的——shading 有發生但落在「都是黑」的範圍。實務上 fill 至少要在 `(80, 80, 80)` 以上 shading 才看得到。M1 把 speaker fill 提到 `(110, 122, 150)`，原點地標從 `40` 提到 `110`。
 
 ### 2. L/R 對稱性偏差門檻（§8.2）
 
@@ -309,6 +325,29 @@ M2 動工時要把 SPEC §7.2 同步更新。
 
 **M3 影響**：phantom speaker 點按相同模式處理（disable depth test 的同一 pass）。
 
+### 10. Listening centre 視覺化（M1 決定）
+
+**問題**：SPEC §4 寫「原點 (0, 0, 0) = 假想聽覺中心」，但實作中世界原點落在地板（speaker Z 從這裡量），「假想聽覺中心」其實在 `(0, 0, listeningHeight)`。SPEC 文字不夠精準，但程式 / 資料模型若把 listening centre 也放在原點會與既有 `listeningHeight` 欄位互斥，反而不直覺。
+
+**M1 解法**：把 `(0, 0, 0)` 詮釋為「聽覺中心在地板的投影」，把 `(0, 0, listeningHeight)` 詮釋為「假想耳朵位置」，兩個都畫出來——
+
+- 原點：地面格線中心一顆 fill(110) 小球（半徑 7）。
+- 聽覺中心：teal `(40, 150, 150)` 小球（半徑 11，深度測試 OFF），加上一條從原點往上的 dashed teal 細線。
+
+兩者皆有獨立的 layer toggle，coords layer 開啟時兩者都會帶座標標籤。
+
+**對 SPEC §4.1 的影響**：SPEC 措辭應改為「原點 (0, 0, 0) = 假想聽覺中心**在地板的投影**」以對齊實作（已在 SPEC.md 同步更新）。
+
+### 11. Panel-vs-canvas 事件隔離（M1 決定）
+
+**問題**：浮動 function panel（右側 view / layers / speakers、左下 audience、左上 meta、頂部 disclaimer）和 canvas 重疊。p5 把 mouse / wheel listener 掛在 `window`，所以即使滑鼠在 panel 上滾動或拖曳，p5 仍會收到 → 3D 視圖被誤動。
+
+**M1 解法**：在 `document` 的 bubbling phase 攔截 `mousedown` / `wheel`，若 `event.target.closest('.panel, #disclaimer, #mobile-banner, #overlay-labels')` 命中就 `stopPropagation()`。bubble path 是 target → ... → document → window，攔在 document 等於擋在 p5 收事件之前，但 panel 自己的 default scroll / click 不受影響。
+
+**`mouseup` 故意不攔**：避免「從 canvas 起拖、在 panel 放開」時 p5 的 `mouseIsPressed` 卡住。
+
+**`draw()` 中的 orbit 守門**：`allowCanvasInteraction()` 判斷拖曳起點是否在 panel 上、目前 hover 是否在 panel 上，決定是否呼叫 `orbitControl()`。被攔下的 frame 同時把 `_renderer.zoomVelocity` 歸零，避免 wheel 慣性飄到 canvas 上才釋放。
+
 ---
 
-**最後更新**：2026-05-04（建立）
+**最後更新**：2026-05-05（M1 收尾）

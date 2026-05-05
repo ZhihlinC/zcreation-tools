@@ -49,7 +49,9 @@
 - `x` = 左 / 右（朝右為正）
 - `y` = 前 / 後（朝舞台 / 觀眾正前方為正）
 - `z` = 上 / 下（朝上為正）
-- 原點 `(0, 0, 0)` = **假想聽覺中心**（始終，不可移動）
+- 右手座標系：`+X × +Y = +Z`（從觀眾席往舞台看，右手 = +X、上舞台 = +Y、頭頂 = +Z）
+- 原點 `(0, 0, 0)` = **假想聽覺中心在地板的投影**（始終，不可移動）
+- 假想聽覺中心本身位於 `(0, 0, listeningHeight)`（耳朵高度），是 `aimAtCentre` 的瞄準目標
 
 ### 4.2 單位
 - `cm` 與 `m` 切換（UI 提供 toggle）
@@ -130,16 +132,18 @@
 
 | Layer key | 內容 | 預設 |
 |---|---|---|
-| `floor` | 地面格線 + X/Y 軸 + 原點標記 | ON |
+| `floor` | 地面格線 + 原點小球標記 | ON |
 | `audience` | 觀眾席矩形（半透明） | ON |
 | `listening-plane` | 聽覺平面（半透明懸浮層） | ON |
+| `listening-centre` | 聽覺中心 teal 球（在 `(0, 0, listeningHeight)`）+ 從原點往上的細虛線 | ON |
 | `coverage-heat` | 聽覺平面上的覆蓋熱區（gradient color） | ON |
-| `speakers` | 音響本體（盒型 + label） | ON |
-| `cones` | 音響張角錐（半透明，向前延伸） | ON |
+| `speakers` | 音響本體（球體 + label） | ON |
+| `cones` | 音響張角錐（4 條邊射線 + 底端輪廓 + 極淡底色） | ON |
+| `coords` | 各 speaker / 原點 / 聽覺中心的 `(x, y, z)` 文字標籤 | OFF |
 | `triangulation` | 凸包三角剖分（每個三角形依健康度著色） | OFF |
 | `phantoms` | phantom speaker 點（虛線、半透明） | ON（若有） |
 | `health-panel` | Layout Health 文字摘要（floating panel） | ON |
-| `axes` | 座標軸（debug 用） | OFF |
+| `axes` | X/Y/Z 三色座標軸（紅綠藍） | ON |
 
 ---
 
@@ -149,12 +153,21 @@
 - 計算於**聽覺平面**：`(x, y) ∈ [-length/2, length/2] × [-width/2, width/2]`，`z = listeningHeight`
 - Grid sampling：建議 grid 解析度 = 兩軸各 50–100 點（視效能調整）
 
-### 7.2 「被涵蓋」的判定
+### 7.2 「被涵蓋」的判定（矩形角錐版，與 cone 視覺一致）
+
 對每個 grid point `P`，對每顆 enabled speaker `S`：
-1. 計算 `P - S` 的方向向量
-2. 將該向量轉換到 speaker 的本地座標系（套用 `yaw`、`pitch` 反向旋轉）
-3. 計算該方向在水平 / 垂直軸上的角度偏移 `θ_h`、`θ_v`
-4. 若 `|θ_h| ≤ angleH/2` 且 `|θ_v| ≤ angleV/2`，則 `P` 被 `S` 涵蓋
+
+1. 取 speaker 本地基底 `(forward, right, up)` = `speakerBasis(yaw, pitch)`（M1 已實作；`right = forward × world-up`、`up = right × forward`）。
+2. 計算 `d = P - S`，並投影到三個基底軸：
+   - `f_proj = d · forward`
+   - `r_proj = d · right`
+   - `u_proj = d · up`
+3. 條件全部成立才算被涵蓋：
+   - `f_proj > 0`（在 speaker 前方）
+   - `|r_proj / f_proj| ≤ tan(angleH / 2)`
+   - `|u_proj / f_proj| ≤ tan(angleV / 2)`
+
+> **備註**：早期版本用「球面角度偏移」判定（`atan2` 算 θ_h / θ_v 與 halfH / halfV 比較），但這會在 `pitch ≠ 0` 時產生**梯形覆蓋區**（cos 因子讓上下緯度圈半徑不同）。M1 把 cone 視覺改成矩形角錐後，coverage 判定也對齊到矩形版本，兩者完全一致。詳見 ROADMAP 討論事項 8。
 
 ### 7.3 熱區著色（gradient）
 | 涵蓋顆數 | 顏色 |

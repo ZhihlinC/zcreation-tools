@@ -19,7 +19,7 @@
 ## 進度概覽
 
 - [x] **M1** — 場景骨架 + 資料模型 + 音響 / cone / camera / 圖層 toggle（完成 2026-05-05，commit `4855bb4`）
-- [ ] **M2** — 聽覺平面 + 覆蓋熱區（grid sampling + gradient）
+- [x] **M2** — 聽覺平面 + 覆蓋熱區（grid sampling + gradient）（完成 2026-05-05，commit `5fa8124`）
 - [ ] **M3** — Phantom speaker + 球面凸包三角剖分 + Layout Health
 - [ ] **M4** — HTML 下載 / 上傳（self-contained）+ PNG 截圖
 - [ ] **M5** — i18n + mobile banner + landing page 正式化 + meta / OG / sitemap
@@ -126,7 +126,23 @@ M1 完成於 **2026-05-05**（commit `4855bb4`，已推上 `tools.zcreation.art/
 
 **收尾備註**
 
-（完成後填寫）
+M2 完成於 **2026-05-05**（commit `5fa8124`）。實作中做出的決定與踩到的坑：
+
+- **Render path：textured plane → grouped QUADS**：原本想把 80×80 counts 寫進 `p5.Image` 用 `texture()` 貼一張圖，但 p5 v1.11 的 WEBGL renderer 在 `loadPixels()/updatePixels()` 之後 GPU 上傳會無聲失敗——quad 會 fallback 到當下 fill 色，畫面看起來整片同色。改成 compute 階段把 cell 依 count 桶進 `groupVerts[0..3]`，每 frame 4 個 `beginShape(QUADS)` 一次畫完。意外好處：sharp cell 邊界正好對齊 SPEC §3.3「誠實優先」——看得到 grid 解析度，使用者不會誤以為精度比實際高。
+- **`noLights()` for heatmap pass**：`drawScene()` 開頭設的 ambient + directional light 會 modulate textured/filled surface 的 RGB，把暗色紅 / 黃往灰白 / 綠拉。heatmap 4 條 colour band 必須讀得到「pure RGB」，所以這個 pass 用 `noLights()` 隔離。
+- **Listening plane fill suppression when heatmap on**：兩層都畫的話，半透明藍 fill (alpha 45) 在 heatmap (alpha 175) 下會把 colour band 整體拉灰。改為「coverage-heat layer 開啟時，listening-plane 只畫外框、不畫 fill」；toggle 關掉後 fill 自動回來。
+- **Throttle，不是 debounce**：拖 angleH 時要看到 heatmap 即時擴張（檢核 #4），所以不能等使用者放手才算。改 leading-edge 50 ms throttle：第一次 dirty 立即排 50 ms 後 compute，期間任何 dirty 全部 batch 進去。實測 ~20 fps live update，無卡頓。
+- **Cone 邊線弱化**：heatmap 開啟後，cone 4 條邊射線在觀眾席平面的投影會跟 colour band 互打。stroke alpha 從 200 降到 90（rays）/ 140（base outline）、base outline weight 1.5 → 1.2。Cone 仍可讀，但不再搶走 heatmap 主訊息。
+- **預設 `coverage-heat` 改為 ON**：對齊 SPEC §6 layer 表（之前 M1 留 `false`）。
+- **§7.2 rectangular pyramid 判定**直接用 M1 拆出來的 `speakerBasis(yaw, pitch)`——M1 為了 cone 視覺而做的「forward × world-up」基底，coverage 計算原樣套用，兩者像素級對齊。
+- **Legend swatches**：layers panel 的 coverage-heat 列下方一行 chip + `0 / 1 / 2 / 3+ speakers covering`，CSS-only。
+
+**已知未處理**（留給後續 milestone / 上線前）：
+
+- **預設 LCR layout 是否要重排到 audience 外面**：v1 上線前依 onboarding 觀感決定，見討論事項 12。
+- **Coverage 範圍止於 audience matrix 邊界**：SPEC §7.1 沒要求外擴；v1 不動。M3 三角剖分是「全 enabled speaker / phantom 都丟到單位球」，不受此限。
+- **80×80 grid res 寫死**：之後若要支援極大或極小場館，可考慮以「目標 cm/cell」推算解析度。M3/M4 真正用起來再決定。
+- **80×80 cell 在預設 audience 800 cm 寬下 = 10 cm/cell**，與耳朵間距同量級。畫面像素化邊緣是 feature 不是 bug，視覺上對齊「rough sketch」氣質。
 
 ---
 
@@ -348,6 +364,18 @@ M2 動工時要把 SPEC §7.2 同步更新。
 
 **`draw()` 中的 orbit 守門**：`allowCanvasInteraction()` 判斷拖曳起點是否在 panel 上、目前 hover 是否在 panel 上，決定是否呼叫 `orbitControl()`。被攔下的 frame 同時把 `_renderer.zoomVelocity` 歸零，避免 wheel 慣性飄到 canvas 上才釋放。
 
+### 12. 預設 LCR layout 是否要重排（v1 上線前決定）
+
+**狀況**：M2 完成後 owner 觀察到自己很少用 LCR，但 LCR 仍是劇場聲音設計最廣的公約數，學生與多數工作者都熟。預設 layout 的職責是「首屏 5 秒把工具教完」而不是「貼近 owner 個人偏好」，目前 LCR + sweet-spot diamond + 前緣紅 dead-zone 視覺強烈，§2 Q1（聽覺中心是否被覆蓋）幾乎一秒讀懂；前緣紅又會誘發 first edit。
+
+**選項**：
+
+1. **保留現狀 LCR**（傾向）。
+2. **微調 LCR**：把 L/R 從 `y=150`（在 audience 內、朝後瞄）移到 `y > +400`（audience 上邊界外、stage 側朝後瞄）。對齊一般 FOH「speaker 在 stage 側」的直覺，sweet-spot diamond 仍保留。教學損失最小。
+3. **換成更 spectacular 的環繞 layout**（5.1 / 7.1）。能秀工具能力但首屏訊息變雜，offset onboarding 教學效果。
+
+**M5 上線前定案**。屆時會用幾組真實 layout 跑過、看 onboarding 觀感再決定。
+
 ---
 
-**最後更新**：2026-05-05（M1 收尾）
+**最後更新**：2026-05-05（M2 收尾）

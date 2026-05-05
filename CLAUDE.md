@@ -101,7 +101,7 @@ zcreation-tools/
 |---|---|---|
 | Spec 定稿 | `SPEC.md` 完成 | ✅ 2026-05-04 |
 | **M1 — 場景骨架** | 3D 場景、camera、speaker / cone / 圖層、HTML overlay labels、handedness | ✅ 2026-05-05（commit `4855bb4`） |
-| M2 — 覆蓋熱區 | 聽覺平面 grid sampling + gradient 著色 | 預計 1–1.5 週 |
+| **M2 — 覆蓋熱區** | 聽覺平面 grid sampling + gradient 著色 | ✅ 2026-05-05（commit `5fa8124`） |
 | M3 — Layout Health | Phantom speaker、球面三角化、健康度警示 | 預計 2 週 |
 | M4 — 下載 / 上傳 / PNG | self-contained HTML + 截圖 | 預計 1 週 |
 | M5 — i18n / landing / 發布 | 中英切換、mobile banner、landing page、meta / OG | 預計 1 週 |
@@ -121,4 +121,4 @@ zcreation-tools/
 
 ---
 
-**最後更新**：2026-05-05（M1 收尾、推上 production）
+**最後更新**：2026-05-05（M2 收尾，待推上 production）

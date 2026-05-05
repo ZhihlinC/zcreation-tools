@@ -100,14 +100,24 @@ canvas { display: block; }
 #disclaimer strong { font-weight: 600; }
 
 /* =============================================================================
-   Meta panel — top left (layout name + unit toggle).
+   Left top column — Meta (layout name + unit) + View (camera presets).
+   Both are global-scope controls; sharing a column keeps Layers / editing
+   surfaces uncluttered on the right.
    ============================================================================= */
-#meta-panel {
+#left-column-top {
   position: fixed;
   top: 1rem;
   left: 1rem;
   width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
   z-index: 10;
+  pointer-events: none;  /* let canvas receive events outside child panels */
+}
+#left-column-top > .panel {
+  pointer-events: auto;
+  flex: 0 0 auto;
 }
 #meta-panel .meta-name {
   display: flex;
@@ -180,8 +190,18 @@ canvas { display: block; }
   flex: 0 0 auto;
 }
 #right-column > #speakers-panel {
-  flex: 1 1 auto;
+  /* Speakers panel takes a 2:1 share of the remaining vertical space relative
+     to the Phantoms panel (set via the flex grow values), so the primary
+     editing surface stays bigger when both have similar content amounts. */
+  flex: 2 1 auto;
   min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#right-column > #phantoms-panel {
+  flex: 1 1 auto;
+  min-height: 110px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -386,6 +406,89 @@ canvas { display: block; }
   background: #f8f8fa;
 }
 
+/* Phantoms list mirrors speaker-item structure but with subtler styling so
+   it visually reads as the secondary list (speakers are primary). */
+#phantoms-panel #phantoms-list {
+  list-style: none;
+  margin: 0 0 0.6rem;
+  padding: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+}
+.phantom-item {
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  margin-bottom: 0.35rem;
+  background: white;
+}
+.phantom-item header {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.35rem;
+}
+.phantom-item header input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font: inherit;
+  font-style: italic;
+  font-size: 0.82rem;
+  background: transparent;
+  color: rgb(135, 105, 170);
+}
+.phantom-item header input[type="text"]:hover {
+  border-color: var(--panel-border);
+}
+.phantom-item header input[type="text"]:focus {
+  outline: none;
+  border-color: rgba(200, 180, 220, 0.7);
+  background: white;
+}
+.phantom-item button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0.1rem 0.3rem;
+  color: var(--muted);
+  font-family: inherit;
+  line-height: 1;
+}
+.phantom-item button:hover { color: var(--fg); }
+.phantom-item .delete-btn:hover { color: #c83232; }
+.phantom-editor {
+  display: none;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.2rem 0.4rem;
+  border-top: 1px dashed var(--panel-border);
+  padding: 0.4rem 0.35rem;
+}
+.phantom-item.expanded .phantom-editor { display: grid; }
+.phantom-editor .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+  cursor: help;
+}
+.phantom-editor .field span { white-space: nowrap; line-height: 1.1; }
+.phantom-editor .field input {
+  width: 100%;
+  padding: 0.18rem 0.35rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 0.78rem;
+  background: white;
+  color: var(--fg);
+  text-align: right;
+}
+
 /* =============================================================================
    Audience panel — bottom left.
    ============================================================================= */
@@ -456,6 +559,15 @@ canvas { display: block; }
   font-weight: 500;
   color: var(--fg);
 }
+/* Phantom name label: italic + soft violet so the marker reads as
+   "imagined / sketched" rather than a real cabinet, matching the
+   phantom body's translucent violet sphere. */
+.phantom-label {
+  font-size: 0.74rem;
+  font-weight: 500;
+  font-style: italic;
+  color: rgb(135, 105, 170);
+}
 .coord-label {
   font-size: 0.7rem;
   font-weight: 400;
@@ -469,6 +581,10 @@ canvas { display: block; }
 .coord-label-centre {
   color: rgb(40, 150, 150);
   font-weight: 500;
+}
+.coord-label-phantom {
+  color: rgb(135, 105, 170);
+  font-style: italic;
 }
 
 /* =============================================================================

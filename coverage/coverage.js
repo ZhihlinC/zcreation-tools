@@ -37,13 +37,16 @@ const STATE = {
       'listening-centre': true,
       speakers: true, cones: true, axes: true, coords: false,
       'coverage-heat': true, triangulation: false,
-      phantoms: false, 'health-panel': false,
+      phantoms: true, 'health-panel': false,
     },
   },
 };
 
 let _speakerCounter = STATE.speakers.length + 1;
 function nextSpeakerId() { return 's' + (_speakerCounter++); }
+
+let _phantomCounter = STATE.phantoms.length + 1;
+function nextPhantomId() { return 'p' + (_phantomCounter++); }
 
 // =============================================================================
 // Unit conversion. Internal storage is always cm; display follows STATE.view.unit.
@@ -336,6 +339,7 @@ function setup() {
   cam = _renderer._curCamera;
   applyCamera();
   syncSpeakerLabels();
+  syncPhantomLabels();
   syncCoordLabels();
   installPanelEventGuards();
   computeCoverage();
@@ -406,9 +410,12 @@ function drawScene() {
   // they're never occluded. Treat them as 2D-feeling anchors, like the HTML
   // labels. Listening-centre marker shares this pass for the same reason: it
   // is the conceptual anchor of the entire layout and must always be visible.
+  // Phantoms also belong here: they're sketches of "panning slots", same
+  // semantic role as a speaker body marker.
   const wantSpeakers = L.speakers;
   const wantCentre   = L['listening-centre'];
-  if (wantSpeakers || wantCentre) {
+  const wantPhantoms = L.phantoms;
+  if (wantSpeakers || wantCentre || wantPhantoms) {
     const gl = drawingContext;
     gl.disable(gl.DEPTH_TEST);
     if (wantSpeakers) {
@@ -417,6 +424,9 @@ function drawScene() {
       }
     }
     if (wantCentre) drawListeningCentreMarker();
+    if (wantPhantoms) {
+      for (const p of STATE.phantoms) drawPhantomBody(p);
+    }
     gl.enable(gl.DEPTH_TEST);
   }
 }
@@ -511,6 +521,27 @@ function drawSpeakerBody(s) {
   fill(110, 122, 150);
   translate(s.x, s.y, s.z);
   sphere(26);
+  pop();
+}
+
+// Phantom marker — soft violet, smaller than speaker bodies and slightly
+// translucent so it reads as "imagined / sketched" rather than "real cabinet".
+// Drawn in the same depth-test-off pass as speaker bodies (callers handle
+// the GL state). Distinct hue from speaker navy / listening-centre teal /
+// cone orange — phantoms are a 4th category and earn their own colour slot.
+// SPEC §8.4 frames phantoms as "reserve a panning slot", which the visual
+// translates as "marker that takes the same anchor role as a speaker body
+// but reads as virtual".
+function drawPhantomBody(p) {
+  push();
+  noStroke();
+  // Pale lavender (option A from M3.A colour discussion). Light enough to
+  // read as "imagined / ghostly" against the listening plane while still
+  // distinguishable from the speaker navy / listening-centre teal /
+  // cone orange palette.
+  fill(200, 180, 220, 220);
+  translate(p.x, p.y, p.z);
+  sphere(16);
   pop();
 }
 
@@ -616,6 +647,26 @@ function syncSpeakerLabels() {
   }
 }
 
+function syncPhantomLabels() {
+  const host = document.getElementById('phantom-labels');
+  if (!host) return;
+  const wantedIds = new Set(STATE.phantoms.map(p => 'phantom-label-' + p.id));
+  Array.from(host.children).forEach(el => {
+    if (!wantedIds.has(el.id)) el.remove();
+  });
+  for (const p of STATE.phantoms) {
+    const id = 'phantom-label-' + p.id;
+    let el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('span');
+      el.id = id;
+      el.className = 'overlay-label phantom-label';
+      host.appendChild(el);
+    }
+    el.textContent = p.name;
+  }
+}
+
 // =============================================================================
 // Coord overlay labels — one span per speaker plus an origin span. Visibility
 // follows STATE.view.layers.coords; they're created up-front and toggled.
@@ -625,6 +676,7 @@ function syncCoordLabels() {
   const host = document.getElementById('coord-labels');
   if (!host) return;
   const wantedIds = new Set(STATE.speakers.map(s => 'coord-label-' + s.id));
+  for (const p of STATE.phantoms) wantedIds.add('coord-label-' + p.id);
   wantedIds.add('coord-label-origin');
   wantedIds.add('coord-label-centre');
   Array.from(host.children).forEach(el => {
@@ -634,6 +686,11 @@ function syncCoordLabels() {
   ensureLabel('coord-label-centre', 'coord-label-centre');
   for (const s of STATE.speakers) {
     ensureLabel('coord-label-' + s.id, '');
+  }
+  for (const p of STATE.phantoms) {
+    // Phantom coord labels share the soft-violet styling with the name label
+    // so the user can see at a glance which value belongs to which marker.
+    ensureLabel('coord-label-' + p.id, 'coord-label-phantom');
   }
 
   function ensureLabel(id, extraClass) {
@@ -658,6 +715,11 @@ function updateCoordLabelTexts() {
     const el = document.getElementById('coord-label-' + s.id);
     if (!el) continue;
     el.textContent = `${s.name} (${fmtCoord(s.x)}, ${fmtCoord(s.y)}, ${fmtCoord(s.z)} ${u})`;
+  }
+  for (const p of STATE.phantoms) {
+    const el = document.getElementById('coord-label-' + p.id);
+    if (!el) continue;
+    el.textContent = `${p.name} (${fmtCoord(p.x)}, ${fmtCoord(p.y)}, ${fmtCoord(p.z)} ${u})`;
   }
   const origin = document.getElementById('coord-label-origin');
   if (origin) origin.textContent = `Origin (0, 0, 0 ${u})`;
@@ -705,6 +767,20 @@ function updateLabels() {
     positionLabel(document.getElementById('speaker-label-' + s.id), s.x, s.y, s.z + 40);
   }
 
+  // Phantom name labels — only when the phantoms layer is on; otherwise hide
+  // (the label host stays in the DOM so re-enabling the layer resumes
+  // immediately without resyncing).
+  const showPhantoms = STATE.view.layers.phantoms;
+  const phantomHost = document.getElementById('phantom-labels');
+  if (phantomHost) phantomHost.style.display = showPhantoms ? '' : 'none';
+  if (showPhantoms) {
+    for (const p of STATE.phantoms) {
+      // Smaller offset than speakers: phantom marker is r=16 vs speaker r=26,
+      // so the label sits closer.
+      positionLabel(document.getElementById('phantom-label-' + p.id), p.x, p.y, p.z + 28);
+    }
+  }
+
   const showCoords = STATE.view.layers.coords;
   const coordHost = document.getElementById('coord-labels');
   if (coordHost) coordHost.style.display = showCoords ? '' : 'none';
@@ -716,6 +792,14 @@ function updateLabels() {
       if (!s.enabled) { el.style.visibility = 'hidden'; continue; }
       // Place coord label below the speaker name (which sits at z+40).
       positionLabel(el, s.x, s.y, s.z - 30);
+    }
+    for (const p of STATE.phantoms) {
+      const el = document.getElementById('coord-label-' + p.id);
+      if (!el) continue;
+      // Hide phantom coord labels when the phantom layer is off — the marker
+      // they describe wouldn't be visible.
+      if (!showPhantoms) { el.style.visibility = 'hidden'; continue; }
+      positionLabel(el, p.x, p.y, p.z - 22);
     }
     positionLabel(document.getElementById('coord-label-origin'), 0, 0, 0);
     // Listening-centre coord label: only shown if its layer is on too —
@@ -933,6 +1017,106 @@ function buildSpeakerItem(s) {
   return li;
 }
 
+// =============================================================================
+// Phantom list. Phantoms only carry x/y/z/name (SPEC §5.2) — no yaw/pitch/
+// angle, no enabled flag (every phantom listed is "in" the triangulation).
+// Item shape mirrors speaker items so the visual / interaction language is
+// the same; the editor body just has 3 fields instead of 7.
+// =============================================================================
+
+const PHANTOM_FIELDS = [
+  { key: 'x', label: 'X', kind: 'len',
+    title: 'Right (+) / left (-) of listening centre' },
+  { key: 'y', label: 'Y', kind: 'len',
+    title: 'Forward (+) / back (-) of listening centre. +Y is toward the stage' },
+  { key: 'z', label: 'Z', kind: 'len',
+    title: 'Height above the audience floor (z = 0)' },
+];
+
+function renderPhantomsList() {
+  const list = document.getElementById('phantoms-list');
+  if (!list) return;
+  list.innerHTML = '';
+  for (const p of STATE.phantoms) {
+    list.appendChild(buildPhantomItem(p));
+  }
+}
+
+function buildPhantomItem(p) {
+  const li = document.createElement('li');
+  li.className = 'phantom-item';
+  li.dataset.id = p.id;
+
+  const header = document.createElement('header');
+
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.value = p.name;
+  name.title = 'Phantom name';
+  name.addEventListener('input', () => {
+    p.name = name.value;
+    const lab = document.getElementById('phantom-label-' + p.id);
+    if (lab) lab.textContent = p.name;
+  });
+
+  const expandBtn = document.createElement('button');
+  expandBtn.className = 'expand-btn';
+  expandBtn.textContent = '▾';
+  expandBtn.title = 'Expand / collapse fields';
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'delete-btn';
+  deleteBtn.textContent = '✕';
+  deleteBtn.title = 'Delete phantom';
+  deleteBtn.addEventListener('click', () => {
+    if (!confirm(`Delete phantom "${p.name || '(unnamed)'}"?`)) return;
+    STATE.phantoms = STATE.phantoms.filter(x => x.id !== p.id);
+    syncPhantomLabels();
+    syncCoordLabels();
+    renderPhantomsList();
+  });
+
+  header.append(name, expandBtn, deleteBtn);
+  li.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'phantom-editor';
+
+  for (const f of PHANTOM_FIELDS) {
+    const fieldLabel = document.createElement('label');
+    fieldLabel.className = 'field';
+    if (f.title) fieldLabel.title = f.title;
+
+    const span = document.createElement('span');
+    span.textContent = f.label;
+
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = 'any';
+    inp.dataset.field = f.key;
+    inp.dataset.kind = f.kind;
+    inp.value = lenDisplay(p[f.key]);
+    inp.addEventListener('input', () => {
+      const v = parseFloat(inp.value);
+      if (isNaN(v)) return;
+      p[f.key] = lenStore(v);
+    });
+
+    fieldLabel.append(span, inp);
+    body.appendChild(fieldLabel);
+  }
+
+  li.appendChild(body);
+
+  expandBtn.addEventListener('click', () => {
+    const expanded = li.classList.toggle('expanded');
+    expandBtn.textContent = expanded ? '▴' : '▾';
+    expandBtn.setAttribute('aria-expanded', String(expanded));
+  });
+
+  return li;
+}
+
 function renderAudienceInputs() {
   for (const key of ['length', 'width', 'listeningHeight']) {
     const inp = document.querySelector(`input[data-audience="${key}"]`);
@@ -961,6 +1145,14 @@ function refreshUnitInputs() {
     if (!s) continue;
     item.querySelectorAll('input[data-kind="len"]').forEach(inp => {
       inp.value = lenDisplay(s[inp.dataset.field]);
+    });
+  }
+  for (const item of document.querySelectorAll('.phantom-item')) {
+    const id = item.dataset.id;
+    const p = STATE.phantoms.find(x => x.id === id);
+    if (!p) continue;
+    item.querySelectorAll('input[data-kind="len"]').forEach(inp => {
+      inp.value = lenDisplay(p[inp.dataset.field]);
     });
   }
 }
@@ -1046,11 +1238,33 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Add Phantom — defaults to (0, 0, 250cm) i.e. straight up from the
+  // listening centre. This is the canonical Spat / Panoramix "phantom at
+  // zenith" placement, which is the most common reason a sound designer
+  // adds a phantom in the first place. User can edit afterwards.
+  const addPhantomBtn = document.getElementById('add-phantom-btn');
+  if (addPhantomBtn) {
+    addPhantomBtn.addEventListener('click', () => {
+      const newPhantom = {
+        id: nextPhantomId(),
+        name: 'Phantom ' + (STATE.phantoms.length + 1),
+        x: 0,
+        y: 0,
+        z: 250,
+      };
+      STATE.phantoms.push(newPhantom);
+      syncPhantomLabels();
+      syncCoordLabels();
+      renderPhantomsList();
+    });
+  }
+
   // Initial renders
   renderLayoutName();
   renderUnitToggle();
   renderAudienceInputs();
   renderSpeakersList();
+  renderPhantomsList();
 
   // Disclaimer collapse toggle (header always visible, body folds away).
   const disclaimer = document.getElementById('disclaimer');

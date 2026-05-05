@@ -22,6 +22,7 @@
     <span id="axis-label-y" class="overlay-label axis-label-y">Y</span>
     <span id="axis-label-z" class="overlay-label axis-label-z">Z</span>
     <div id="speaker-labels"></div>
+    <div id="phantom-labels"></div>
     <div id="coord-labels"></div>
   </div>
 
@@ -48,21 +49,21 @@
     </div>
   </aside>
 
-  <!-- Top left: layout name + unit toggle. -->
-  <aside id="meta-panel" class="panel" aria-label="Layout meta">
-    <label class="meta-name">
-      <span class="panel-label">Layout</span>
-      <input type="text" id="layout-name" placeholder="Untitled" maxlength="80" autocomplete="off" spellcheck="false">
-    </label>
-    <div class="unit-toggle" role="radiogroup" aria-label="Unit">
-      <button data-unit="cm" class="active">cm</button>
-      <button data-unit="m">m</button>
-    </div>
-  </aside>
+  <!-- Top left column: meta (layout name + unit) + view (camera presets).
+       Both are global-scope controls — layout identity + scene navigation —
+       so they share a column. Layers / editing surfaces stay on the right. -->
+  <aside id="left-column-top" aria-label="Layout meta + view">
 
-  <!-- Right column: view, layers, speakers (stacked, speakers panel grows
-       and scrolls internally). -->
-  <aside id="right-column" aria-label="Editing panels">
+    <section id="meta-panel" class="panel" aria-label="Layout meta">
+      <label class="meta-name">
+        <span class="panel-label">Layout</span>
+        <input type="text" id="layout-name" placeholder="Untitled" maxlength="80" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="unit-toggle" role="radiogroup" aria-label="Unit">
+        <button data-unit="cm" class="active">cm</button>
+        <button data-unit="m">m</button>
+      </div>
+    </section>
 
     <section id="view-controls" class="panel">
       <h2>View</h2>
@@ -74,6 +75,12 @@
         <button data-view="listening">Listening</button>
       </div>
     </section>
+
+  </aside>
+
+  <!-- Right column: layers + speakers + phantoms (stacked, the two list
+       panels grow and scroll internally). -->
+  <aside id="right-column" aria-label="Editing panels">
 
     <section id="layers-panel" class="panel">
       <h2>Layers</h2>
@@ -95,7 +102,7 @@
           <span class="legend-suffix">speakers covering</span>
         </li>
         <li class="placeholder"><label><input type="checkbox" data-layer="triangulation" disabled> Triangulation <em>(M3)</em></label></li>
-        <li class="placeholder"><label><input type="checkbox" data-layer="phantoms" disabled> Phantoms <em>(M3)</em></label></li>
+        <li><label><input type="checkbox" data-layer="phantoms" checked> Phantoms</label></li>
         <li class="placeholder"><label><input type="checkbox" data-layer="health-panel" disabled> Layout Health <em>(M3)</em></label></li>
       </ul>
     </section>
@@ -104,6 +111,12 @@
       <h2>Speakers</h2>
       <ul id="speakers-list"></ul>
       <button id="add-speaker-btn" class="primary-btn">+ Add Speaker</button>
+    </section>
+
+    <section id="phantoms-panel" class="panel">
+      <h2>Phantoms</h2>
+      <ul id="phantoms-list"></ul>
+      <button id="add-phantom-btn" class="primary-btn">+ Add Phantom</button>
     </section>
 
   </aside>

@@ -491,24 +491,31 @@ QA：8 項 visual checks 全過，包含 round-trip / 錯誤分支 / 空 layoutN
 3. 點 ✕ → banner 收起；resize 跨越 1024px → banner 不再被喚回 ✅
 4. Reload 仍 < 1024px → banner 再出現 ✅
 
-### M5.C — Landing page
+### M5.C — Landing page ✅ 2026-05-07（commit `c130eb5`）
 
 **範圍**
 
 - `/index.html` 從現狀升級為簡潔 landing：header（site title + tagline）、工具卡片（先只有 coverage，含一句說明 + 連到 `/coverage/`）、footer（連 zcreation.art）。
 - 全英文（不需 bilingual，因為非 disclaimer）。
-- 風格與 coverage 工具一致（中性、可讀性高）；不強制對齊主站視覺。
+- 風格與 coverage 工具一致：共用 CSS 變數（`--panel-bg` / `--shadow` / `--radius` 等）、card 與 coverage 的 panel 同視覺語言。
+- Card 全塊可點、hover 抬升 + shadow 加深、`:focus-visible` outline 支援鍵盤操作。
+- 「(work in progress)」標籤移除（landing 屬於 v1.0）。
 
 **動到的檔案**
 
-- `index.html`
-- 可能新增 `landing.css`（或 inline）
+- `index.html`（CSS inline，無另開 landing.css）
 
 **視覺檢核**
 
-1. 桌機 / 手機都好讀。
-2. 卡片點得開、進入 `/coverage/` 正常。
-3. Footer 主站連結點得開。
+1. 桌機 / 手機都好讀（max-width 640，responsive padding）✅
+2. 卡片點得開、進入 `/coverage/` 正常 ✅
+3. Footer 主站連結點得開 ✅
+4. Hover / focus 反饋與 coverage 工具同家族 ✅
+
+**Deferred 至 M5.D / M5.E**
+
+- 預覽縮圖：與 M5.D OG image 共用同一張截圖。
+- GitHub icon / link：M5.E launch day repo public 之前。
 
 ### M5.D — Meta / OG / sitemap / robots
 

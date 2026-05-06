@@ -742,6 +742,31 @@ M2 動工時要把 SPEC §7.2 同步更新。
 
 **對其他工具的影響**：未來新增的 spectrogram / ir-viewer 等預設沿用同模式（英文 UI + bilingual disclaimer），除非另有討論。
 
+### 14. 瀏覽器引擎差異（Safari vs Chromium）— 2026-05-07 觀察、追蹤中
+
+M5.D OG 圖 dogfood 過程，使用者注意到同樣的 32-channel dome layout 在 Safari 與 Edge / Chrome 上：
+
+- **三角化色帶分布不同**：Safari 顯示的 green 三角形比 Edge 多。最可能原因：JavaScriptCore (Safari) vs V8 (Chromium) 的 floating-point 精度差異，在 75° threshold 邊界附近（73° ~ 77° 之間）讓同一三角形被分到不同色帶。我們的 health threshold 是硬切點、無 hysteresis。
+- **Rename → tooltip 即時更新行為**：commit `67a1aff` 在 ensureTriangulationFresh 加了 visible-tooltip refresh 之後仍有差異，Safari 上 rename 看起來「更即時」。可能因 macOS Safari 對 `mousemove` 事件觸發比 Chromium 更積極（focus / blur 帶 synthetic events），讓 visible-tooltip refresh 路徑更早觸發。
+
+**目前處置**：v1 不擋，但記下追蹤。可能與既有「朋友 Chrome 開檔顯示異常」（M4.C 收尾備註）同源，等朋友 console 輸出回來再合併診斷。
+
+**v1.1 候選動作**：
+- threshold 加 hysteresis（如 yellow > 75° 變 green、green ≤ 73° 才退回），避免邊界閃爍。
+- 三 browser engine 各跑一遍 stress test，看色帶分布偏差量級是否需要工具層補償。
+
+### 15. Phantoms 操作區在 speakers 數量大時被擠壓 — 2026-05-07，v1.1 候選
+
+當 Speakers panel 有 30+ 項時，Right column 的 flex 分配（Speakers `2 1 auto`、Phantoms `1 1 auto`）讓 Phantoms panel 可用高度被嚴重壓縮，新增 / 編輯 phantom 都很擠。
+
+**v1.1 候選方向**：
+
+- 給 Phantoms panel 設一個 min-height 較大的下限。
+- 或考慮 Speakers / Phantoms 之間放一條可拖拉的 splitter，讓使用者按需要分配空間。
+- 或當 Phantoms 列表為空時，讓 Speakers 完全 expand；有 phantom 時才 reserve phantoms 一定高度。
+
+留 v1.1 backlog（不擋 v1，因為 v1 工具的核心是 speakers + coverage，phantoms 是進階功能）。
+
 ---
 
-**最後更新**：2026-05-07（M5 計畫修訂：i18n 取消，改 A–E 五子階段；討論事項 2 / 4 / 12 resolved；新增討論事項 13）
+**最後更新**：2026-05-07（M5 進度：A / B / C done；M5.D OG image 完成、其餘 meta tags / sitemap / robots 待續；新增討論事項 14 / 15、partial-resolved 討論事項 2 角度部分）

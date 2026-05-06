@@ -73,19 +73,19 @@
         <input type="text" id="layout-name" placeholder="Untitled" maxlength="80" autocomplete="off" spellcheck="false">
       </label>
       <div class="unit-toggle" role="radiogroup" aria-label="Unit">
-        <button data-unit="cm" class="active">cm</button>
-        <button data-unit="m">m</button>
+        <button type="button" data-unit="cm" class="active">cm</button>
+        <button type="button" data-unit="m">m</button>
       </div>
     </section>
 
     <section id="view-controls" class="panel">
       <h2>View</h2>
       <div class="view-buttons">
-        <button data-view="perspective" class="active">Perspective</button>
-        <button data-view="top">Top</button>
-        <button data-view="front">Front</button>
-        <button data-view="side">Side</button>
-        <button data-view="listening">Listening</button>
+        <button type="button" data-view="perspective" class="active">Perspective</button>
+        <button type="button" data-view="top">Top</button>
+        <button type="button" data-view="front">Front</button>
+        <button type="button" data-view="side">Side</button>
+        <button type="button" data-view="listening">Listening</button>
       </div>
     </section>
 
@@ -137,9 +137,9 @@
       <details class="bulk-paste">
         <summary>Bulk paste <em>(dev)</em></summary>
         <textarea rows="3" data-bulk="speakers" placeholder="x y z x y z … — separators ignored"></textarea>
-        <button data-bulk-go="speakers">Replace speakers</button>
+        <button type="button" data-bulk-go="speakers">Replace speakers</button>
       </details>
-      <button id="add-speaker-btn" class="primary-btn">+ Add Speaker</button>
+      <button type="button" id="add-speaker-btn" class="primary-btn">+ Add Speaker</button>
     </section>
 
     <section id="phantoms-panel" class="panel">
@@ -148,9 +148,9 @@
       <details class="bulk-paste">
         <summary>Bulk paste <em>(dev)</em></summary>
         <textarea rows="3" data-bulk="phantoms" placeholder="x y z x y z … — separators ignored"></textarea>
-        <button data-bulk-go="phantoms">Replace phantoms</button>
+        <button type="button" data-bulk-go="phantoms">Replace phantoms</button>
       </details>
-      <button id="add-phantom-btn" class="primary-btn">+ Add Phantom</button>
+      <button type="button" id="add-phantom-btn" class="primary-btn">+ Add Phantom</button>
     </section>
 
   </aside>
@@ -202,7 +202,7 @@
   <!-- Mobile banner stub — M5 will style and persist. -->
   <aside id="mobile-banner" hidden>
     <span>This tool is designed for desktop. The editing experience is limited on smaller screens.</span>
-    <button id="mobile-banner-dismiss" aria-label="Dismiss">✕</button>
+    <button type="button" id="mobile-banner-dismiss" aria-label="Dismiss">✕</button>
   </aside>
 
 </body>

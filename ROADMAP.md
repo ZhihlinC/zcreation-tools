@@ -468,25 +468,28 @@ QA：8 項 visual checks 全過，包含 round-trip / 錯誤分支 / 空 layoutN
 3. Reload → 預設又是展開狀態（折疊不持久化）。
 4. 下載 HTML 開啟 → §2 樣態與線上版一致。
 
-### M5.B — Mobile banner
+### M5.B — Mobile banner + auto-hide editing panels ✅ 2026-05-07（commit `1ec5196`）
 
 **範圍**
 
-- < 1024px 時顯示橫條 banner（不重排 layout、絕對定位於頂部或底部）。
-- 內容：「This tool is designed for desktop. Mobile view is for preview only.」中英雙呈現。
-- ✕ 收起按鈕 —— **不** 持久化（reload 後再出現），符合 SPEC §13 既有規格。
+- < 1024px 時顯示橫條 banner（不重排 layout、絕對定位於底部）。
+- Banner 內容中英雙呈現（zh-TW 上、en 下；英文用偏暖棕灰當輔色）。
+- ✕ 收起按鈕：session-scoped flag、**不** 持久化、resize 不會把已 dismiss 的 banner 喚回；reload 後再出現（符合 SPEC §13）。
+- Resize listener：使用者跨越 1024px 門檻時 banner 自動顯示 / 隱藏，仍尊重 dismissed flag。
+- **Auto-hide editing panels**（執行中加入）：< 1024px 時 `#left-column-top` / `#right-column` / `#audience-panel` / `#health-panel` 全部 `display: none`，只剩 disclaimer + 3D canvas + banner —— 兌現 banner 的「preview only」承諾。
 
 **動到的檔案**
 
-- `coverage/index.html` + `coverage/coverage.css`（banner DOM + responsive 樣式）
-- `coverage/coverage.js`（dismiss 邏輯）
+- `coverage/index.html`（banner DOM 改 bilingual、補正 stub 註解）
+- `coverage/coverage.css`（banner 樣式 + `@media (max-width: 1023px)` panel hiding）
+- `coverage/coverage.js`（dismiss flag + resize listener）
 
 **視覺檢核**
 
-1. Resize < 1024px → banner 出現，layout 不變。
-2. 點 ✕ → banner 收起、不再佔空間。
-3. Reload → banner 再出現。
-4. ≥ 1024px → banner 從不出現。
+1. ≥ 1024px → banner 從不出現、所有 panel 在原位 ✅
+2. < 1024px → banner 出現（雙語）；左右 / 上下 4 個 panel 全部隱藏；canvas + disclaimer + banner 留下 ✅
+3. 點 ✕ → banner 收起；resize 跨越 1024px → banner 不再被喚回 ✅
+4. Reload 仍 < 1024px → banner 再出現 ✅
 
 ### M5.C — Landing page
 

@@ -497,6 +497,17 @@ function ensureTriangulationFresh() {
   // Hover cache references the previous result's face indices — invalidate
   // so the next mousemove re-reads metrics from the new result.
   if (typeof HOVER !== 'undefined') HOVER.lastTriIdx = -1;
+  // If a tooltip is currently visible (e.g. user renamed via keyboard
+  // without moving the mouse off the triangle), re-pick at the last
+  // known cursor position so the new names appear immediately.
+  if (typeof HOVER !== 'undefined' && HOVER.mx >= 0) {
+    const triEl = document.getElementById('triangle-tooltip');
+    const spkEl = document.getElementById('speaker-tooltip');
+    if (triEl && spkEl && (!triEl.hidden || !spkEl.hidden)) {
+      updateHoverTooltips(HOVER.mx, HOVER.my,
+        typeof _pointerCurrentlyOverPanel !== 'undefined' && _pointerCurrentlyOverPanel);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1489,7 +1500,7 @@ function pickSpeaker(mx, my) {
   return best;
 }
 
-const HOVER = { speakerId: null, lastTriIdx: -1 };
+const HOVER = { speakerId: null, lastTriIdx: -1, mx: -1, my: -1 };
 
 function positionTooltip(el, mx, my) {
   const rect = el.getBoundingClientRect();
@@ -1593,6 +1604,8 @@ function installTooltipHandlers() {
   // (set by the panel-guard mousemove listener in capture phase) — we reuse
   // that signal.
   document.addEventListener('mousemove', (e) => {
+    HOVER.mx = e.clientX;
+    HOVER.my = e.clientY;
     updateHoverTooltips(e.clientX, e.clientY, _pointerCurrentlyOverPanel);
   });
 }

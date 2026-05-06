@@ -70,10 +70,16 @@ canvas { display: block; }
   background: none;
   border: none;
   cursor: pointer;
-  padding: 0;
+  padding: 0.3rem 0.45rem;
+  margin: -0.3rem -0.45rem;
+  border-radius: 5px;
   font-family: inherit;
   color: var(--fg);
   text-align: left;
+  transition: background-color 0.15s ease;
+}
+#disclaimer-toggle:hover {
+  background-color: rgba(0, 0, 0, 0.045);
 }
 #disclaimer-toggle:hover .caret { color: var(--fg); }
 #disclaimer h1 {
@@ -83,13 +89,16 @@ canvas { display: block; }
   letter-spacing: 0.02em;
   color: var(--fg);
   text-transform: none;
+  white-space: nowrap;
 }
 #disclaimer .caret {
-  font-size: 0.85rem;
+  font-size: 1.05rem;
+  line-height: 1;
   color: var(--muted);
   flex: 0 0 auto;
   -webkit-user-select: none;
   user-select: none;
+  transition: color 0.15s ease;
 }
 #disclaimer .disclaimer-body {
   margin-top: 0.6rem;
@@ -99,6 +108,12 @@ canvas { display: block; }
 #disclaimer p { margin: 0.4rem 0; }
 #disclaimer ol { margin: 0.4rem 0 0.4rem 1.2rem; padding: 0; }
 #disclaimer strong { font-weight: 600; }
+#disclaimer .disclaimer-lang + .disclaimer-lang {
+  margin-top: 0.7rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+#disclaimer .disclaimer-zh { letter-spacing: 0.01em; }
 
 /* =============================================================================
    Left top column — Meta (layout name + unit) + View (camera presets).

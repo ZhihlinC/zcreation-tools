@@ -442,43 +442,110 @@ QA：8 項 visual checks 全過，包含 round-trip / 錯誤分支 / 空 layoutN
 
 ---
 
-## M5 — i18n / mobile banner / landing / meta / 公開化
+## M5 — bilingual disclaimer / mobile banner / landing / meta / 公開化
+
+> **2026-05-07 範圍調整**：原本的 M5.A i18n 取消（見討論事項 13）。改為英文 UI、§2 定位語句中英雙呈現。其餘子階段順延。
+
+### M5.A — §2 定位語句：可折疊 + 中英雙呈現
 
 **範圍**
 
-- i18n（§12）：`I18N` 物件 + `t('key')` helper、預設語言依 `navigator.language`、切換按鈕固定右上角、`localStorage` 持久化（key: `zcreation-tools-lang`，try/catch）
-- 下載出的 HTML：固定英文（去掉 lang switch 按鈕）
-- Mobile banner（§13）：< 1024px 顯示、可手動收起、reload 後再出現、不重排 layout
-- Landing page (`/index.html`) 正式化：簡潔 header、工具卡片（先只有 coverage）、ZCreation 主站 footer 連結
-- Meta（§15）：description 中英、OG preview（用工具預設視角截圖）、sitemap.xml 含 `/coverage`
-- robots.txt：允許全部、無 noindex
-- **M5.E — 公開化收尾**（launch day 當天最後做）：
-    - `LICENSE`（MIT，三行）
-    - `README.md` 改寫：對外說明 + 截圖 + 連結（live tool / GitHub / ZCreation 主站）；保留現有的開發 notes 但分到「Development」段落
-    - landing page 加 GitHub link（footer 或工具卡片旁的 icon）
-    - GitHub repo visibility：private → public
-    - Git tag：`v1.0.0`
-    - 注意：`SPEC.md` / `CLAUDE.md` / `ROADMAP.md` 都**留著**，作為「AI-assisted 開發過程透明化」的一部分
+- §2 disclaimer 區塊改為可折疊 panel，預設展開；折疊後仍保留一行 summary（避免使用者忘記它存在）。
+- 內容中英雙呈現：同一塊內中文在上、英文在下，視覺上分區（淡分隔線或字級差異）但都完整可見、不需切換。
+- 折疊狀態 **不** 寫入 localStorage —— 每次造訪預設展開（討論事項 5 的精神）。
+- 下載 HTML 沿用同一塊（無特殊處理）。
 
 **動到的檔案**
 
-- `coverage/coverage.js`（i18n module）
-- `coverage/index.html` + `coverage/coverage.css`
-- `index.html`（landing 改寫）
-- `sitemap.xml`、`robots.txt`、各 HTML 的 `<head>` meta tags
-- `LICENSE`、`README.md`（M5.E）
+- `coverage/index.html`（§2 區塊結構）
+- `coverage/coverage.css`（折疊樣式、雙語分區）
+- `coverage/coverage.js`（折疊 toggle，純 UI 互動）
 
 **視覺檢核**
 
-1. 第一次造訪（清 localStorage）：瀏覽器中文設定 → 顯示中文 UI；英文設定 → 英文 UI。
-2. 切換語言按鈕 → 所有 UI 字串切換、§2 定位語句切換（中英兩版都完整）；reload 後仍是上次選擇。
-3. Resize < 1024px → banner 出現；點 ✕ 收起；reload 後再出現。
-4. Landing page 簡潔好讀，連到 `/coverage` 正常、GitHub link 點得開。
-5. View source → meta description / OG / canonical 正確。
-6. 用 Twitter / Facebook 的 OG debugger（或本機檢查 `<meta property="og:*">`）確認預覽圖正確。
-7. M5.E 後：repo 在無痕視窗能存取（已 public）、`v1.0.0` tag 出現在 GitHub releases 頁。
+1. 首次造訪：§2 完整展開、中英兩段都可見、§2 完整內容無遮蔽。
+2. 點折疊按鈕 → 收起為一行 summary；再點 → 展開回原狀。
+3. Reload → 預設又是展開狀態（折疊不持久化）。
+4. 下載 HTML 開啟 → §2 樣態與線上版一致。
 
-**收尾備註**
+### M5.B — Mobile banner
+
+**範圍**
+
+- < 1024px 時顯示橫條 banner（不重排 layout、絕對定位於頂部或底部）。
+- 內容：「This tool is designed for desktop. Mobile view is for preview only.」中英雙呈現。
+- ✕ 收起按鈕 —— **不** 持久化（reload 後再出現），符合 SPEC §13 既有規格。
+
+**動到的檔案**
+
+- `coverage/index.html` + `coverage/coverage.css`（banner DOM + responsive 樣式）
+- `coverage/coverage.js`（dismiss 邏輯）
+
+**視覺檢核**
+
+1. Resize < 1024px → banner 出現，layout 不變。
+2. 點 ✕ → banner 收起、不再佔空間。
+3. Reload → banner 再出現。
+4. ≥ 1024px → banner 從不出現。
+
+### M5.C — Landing page
+
+**範圍**
+
+- `/index.html` 從現狀升級為簡潔 landing：header（site title + tagline）、工具卡片（先只有 coverage，含一句說明 + 連到 `/coverage/`）、footer（連 zcreation.art）。
+- 全英文（不需 bilingual，因為非 disclaimer）。
+- 風格與 coverage 工具一致（中性、可讀性高）；不強制對齊主站視覺。
+
+**動到的檔案**
+
+- `index.html`
+- 可能新增 `landing.css`（或 inline）
+
+**視覺檢核**
+
+1. 桌機 / 手機都好讀。
+2. 卡片點得開、進入 `/coverage/` 正常。
+3. Footer 主站連結點得開。
+
+### M5.D — Meta / OG / sitemap / robots
+
+**範圍**
+
+- `<head>` meta：description（英文，提及 "speaker layout planning" 等 SEO 詞）、canonical、OG image（用 coverage 工具預設視角截圖）、Twitter card。
+- `sitemap.xml`：含 `/` 與 `/coverage/`。
+- `robots.txt`：allow all、無 noindex。
+
+**動到的檔案**
+
+- `index.html` + `coverage/index.html`（`<head>`）
+- `sitemap.xml`、`robots.txt`
+- `og-image.png`（新增，coverage 預設視角截圖；尺寸 1200×630）
+
+**視覺檢核**
+
+1. View source → meta description / OG / canonical 正確。
+2. 本機檢查 `<meta property="og:*">` 完整；OG image 路徑能載入。
+3. `sitemap.xml` 與 `robots.txt` 直接訪問可達。
+
+### M5.E — 公開化收尾（launch day 當天最後做）
+
+**範圍**
+
+- `LICENSE`（MIT，三行）。
+- `README.md` 改寫：對外說明 + 截圖 + 連結（live tool / GitHub / ZCreation 主站）；現有開發 notes 移至「Development」段落。
+- Landing page 加 GitHub link（footer 或工具卡片旁的 icon）。
+- GitHub repo visibility：private → public。
+- Git tag：`v1.0.0`。
+- 注意：`SPEC.md` / `CLAUDE.md` / `ROADMAP.md` 都**留著**，作為「AI-assisted 開發過程透明化」的一部分。
+- **唯一 launch-blocking 決議**：§4 工具命名 —— 已定 `Sound Coverage Sketch`（討論事項 4 已 resolved）。
+
+**視覺檢核**
+
+1. 無痕視窗能存取 GitHub repo（已 public）。
+2. `v1.0.0` tag 出現在 GitHub releases 頁。
+3. README 在 GitHub 上排版正確、所有連結能點。
+
+### 收尾備註
 
 （完成後填寫）
 
@@ -516,17 +583,41 @@ beta 期間或 launch 後若有人提出再評估，不擋 v1。
 2. **`setAttributes()` 必須在 `createCanvas()` 之前**：`setAttributes()` 在 createCanvas 之後呼叫會**重建 WEBGL renderer 與 canvas DOM 元素**——前面 `c.parent('canvas-host')` 綁的是舊 canvas，新 canvas 變成 body 的直接子元素，舊 canvas 上的事件 listener 全部失效，`orbitControl` 拖曳直接無作用。正確順序：`setAttributes()` → `createCanvas()` → `c.parent()` → 抓 cam reference → 設定 `cam.yScale = -1` → `applyCamera()`（內部呼叫 `perspective()` 才會吃到新的 yScale）。
 3. **lighting 的 fill 不能太暗**：`fill(30, 35, 55)` 加上 ambient/directional 後，最亮也只到 `~(60, 70, 95)`，視覺上是黑的——shading 有發生但落在「都是黑」的範圍。實務上 fill 至少要在 `(80, 80, 80)` 以上 shading 才看得到。M1 把 speaker fill 提到 `(110, 122, 150)`，原點地標從 `40` 提到 `110`。
 
-### 2. L/R 對稱性偏差門檻（§8.2）
+### 2. L/R 對稱性偏差門檻 + 校準 backlog（§8.2）— **2026-05-07 resolved**
 
-v1 開發中先用估算（黃 > 0.05 rad、紅 > 0.15 rad），M3 完成後拿幾組真實 layout 校準，**M5 上線前定案**。
+v1 開發中以估算定下五組門檻：
+
+- Triangle max angle: yellow > 70°, red > 90°
+- Triangle area ratio vs layout median: yellow > 1.5×, red > 2.5×
+- L/R symmetry delta: yellow > 0.05 rad, red > 0.15 rad
+- Region detection: axis-dominant cutoff 0.7, centerline / surround-ring cutoff 0.3
+
+**Resolution**：v1 出貨保留現值，**校準延後到 beta + 7 月 workshop 之後**做。從 launch-blocking list 移除。
+
+**理由**：
+
+- 五組門檻全是「主觀感受」門檻。一個人的直覺校準容易過擬合；beta + workshop 會收到 10× 真實 layout 訊號，再校準的訊噪比好得多。
+- 目前現值偏向 false positive（多警告）勝於 false negative（漏報）—— sketch 工具上這是可接受的失敗模式。多警告，使用者會學到工具在意什麼；漏報，使用者誤以為自己 layout OK。
+- 隨機 50 點 stress test（3 green / 30 yellow / 61 red of 94 faces）顯示偏嚴格但不離譜，暫時可接受。
+
+**v1.1 動作**：第一次發 patch 時根據 beta + workshop 收到的 layout 校準，並開 `CHANGELOG.md` 紀錄此次校準 session。
 
 ### 3. Phantom speaker 數量上限（§18）
 
 v1 暫不設限，M3 觀察使用情況再決定。
 
-### 4. 工具最終命名（§10、§18）
+### 4. 工具最終命名（§10、§18）— **2026-05-07 resolved**
 
-`Sound Coverage Sketch` 為候選，**M5 上線前確認**。命名一變，§10 下載 HTML 的 `<title>` 與檔名也要連動改。
+定案：**`Sound Coverage Sketch`**。
+
+**理由**：
+
+- "Speaker Layout" 與 EASE / Soundvision / d&b ArrayCalc 等 CAD / rigging 工具同質性高，沒有差異化空間。
+- 真正的差異化在「聽覺平面 coverage heatmap + Layout Health 三角化」—— "Sound Coverage" 直接對到。
+- "Sketch" 後綴定錨「思考用、不取代精算工具」的定位，呼應 §2 disclaimer，對誤用率有保護作用。
+- SEO 損失（搜尋 "speaker layout" 找不到）由 meta description / README 補關鍵字補回。
+
+**連動**：M5.E 之前的 §10 下載 HTML `<title>` 與檔名（`coverage-sketch-YYYYMMDD-HHMM.html` 等）已使用此名，無需再改。
 
 ### 5. 第一屏定位語句呈現方式（§2）
 
@@ -617,6 +708,26 @@ M2 動工時要把 SPEC §7.2 同步更新。
 
 **M5 上線前定案**。屆時會用幾組真實 layout 跑過、看 onboarding 觀感再決定。
 
+**Resolution（2026-05-07）**：選項 1 —— **保留現狀 LCR 為預設 demo**。它教學損失最小、§2 Q1 一秒讀懂、前緣紅 dead-zone 誘發 first edit，這些都是 onboarding 想要的特性。日後若 beta / workshop 顯示新使用者卡關再重新評估。
+
+### 13. i18n 取消、§2 改中英雙呈現（2026-05-07 決議）
+
+**狀況**：原 M5.A 規劃完整 i18n（`I18N` 物件、`t('key')` helper、語言切換按鈕、localStorage 持久化、下載 HTML 強制英文）。重新評估後決定取消。
+
+**決議**：
+
+- 工具 UI 全部維持英文（術語如 phantom speaker / cone / yaw / pitch / dB / SPL 在 sound design 領域以英文為公約數，硬翻反而要使用者反查）。
+- §2 定位語句改為**中英雙呈現**（同一塊 panel 內中文在上、英文在下，都完整可見），因為 §2 是錯誤成本最高的地方 —— 7 月 workshop 教學現場依賴它。
+- 下載 HTML 沿用同一塊（無特殊處理）。
+
+**取捨**：
+
+- 省下的工時：i18n module + key 抽取 + 切換 UI + 持久化 + 「下載 HTML 強制英文」邏輯，全部不需要。
+- 代價：之後若要加第二語言（如日文）會稍麻煩，但 v1 不付前期成本。
+- 這個決定是 v1 簡化，不是永久立場 —— 若 beta / workshop 顯示英文 UI 是 TW 新使用者障礙，v1.1 再評估補 i18n。
+
+**對其他工具的影響**：未來新增的 spectrogram / ir-viewer 等預設沿用同模式（英文 UI + bilingual disclaimer），除非另有討論。
+
 ---
 
-**最後更新**：2026-05-05（M3 全部完成：A → G 七階段；71 headless tests；M4 待續）
+**最後更新**：2026-05-07（M5 計畫修訂：i18n 取消，改 A–E 五子階段；討論事項 2 / 4 / 12 resolved；新增討論事項 13）

@@ -593,24 +593,28 @@ beta 期間或 launch 後若有人提出再評估，不擋 v1。
 2. **`setAttributes()` 必須在 `createCanvas()` 之前**：`setAttributes()` 在 createCanvas 之後呼叫會**重建 WEBGL renderer 與 canvas DOM 元素**——前面 `c.parent('canvas-host')` 綁的是舊 canvas，新 canvas 變成 body 的直接子元素，舊 canvas 上的事件 listener 全部失效，`orbitControl` 拖曳直接無作用。正確順序：`setAttributes()` → `createCanvas()` → `c.parent()` → 抓 cam reference → 設定 `cam.yScale = -1` → `applyCamera()`（內部呼叫 `perspective()` 才會吃到新的 yScale）。
 3. **lighting 的 fill 不能太暗**：`fill(30, 35, 55)` 加上 ambient/directional 後，最亮也只到 `~(60, 70, 95)`，視覺上是黑的——shading 有發生但落在「都是黑」的範圍。實務上 fill 至少要在 `(80, 80, 80)` 以上 shading 才看得到。M1 把 speaker fill 提到 `(110, 122, 150)`，原點地標從 `40` 提到 `110`。
 
-### 2. L/R 對稱性偏差門檻 + 校準 backlog（§8.2）— **2026-05-07 resolved**
+### 2. L/R 對稱性偏差門檻 + 校準 backlog（§8.2）— **partial resolution 2026-05-07**
 
-v1 開發中以估算定下五組門檻：
+v1 開發中以估算定下五組門檻。**2026-05-07 拆成兩組**：math-anchored 立刻校準、subjective defer 到 beta。
 
-- Triangle max angle: yellow > 70°, red > 90°
-- Triangle area ratio vs layout median: yellow > 1.5×, red > 2.5×
-- L/R symmetry delta: yellow > 0.05 rad, red > 0.15 rad
-- Region detection: axis-dominant cutoff 0.7, centerline / surround-ring cutoff 0.3
+**已校準（math-anchored，commit `<see history>`）**
 
-**Resolution**：v1 出貨保留現值，**校準延後到 beta + 7 月 workshop 之後**做。從 launch-blocking list 移除。
+| 常數 | 舊值 | 新值 | 數學依據 |
+| --- | --- | --- | --- |
+| `HEALTH_ANGLE_YELLOW` | 70° | **75°** | icosahedron face 角 = 72°；threshold 必須 > 72° 才能讓 12 點 VBAP 最對稱 layout 進入 green |
+| `HEALTH_ANGLE_RED` | 90° | **105°** | octahedron face 角 = 90°（6-channel surround borderline OK）；threshold 設 octahedron + 15° 緩衝避免邊界閃爍；tetrahedron 的 120° 仍紅 |
 
-**理由**：
+**發現脈絡**：M5 generating OG image 過程，使用者注意到 layouts 幾乎不會 green。檢查發現原 70° threshold 在 icosahedron（72°）以下，**邏輯上錯誤**而非主觀偏好；改成 math-anchored 是修 bug 而非調 taste，可立刻 ship、無需 beta 訊號。
 
-- 五組門檻全是「主觀感受」門檻。一個人的直覺校準容易過擬合；beta + workshop 會收到 10× 真實 layout 訊號，再校準的訊噪比好得多。
-- 目前現值偏向 false positive（多警告）勝於 false negative（漏報）—— sketch 工具上這是可接受的失敗模式。多警告，使用者會學到工具在意什麼；漏報，使用者誤以為自己 layout OK。
-- 隨機 50 點 stress test（3 green / 30 yellow / 61 red of 94 faces）顯示偏嚴格但不離譜，暫時可接受。
+**仍 deferred 到 beta + 7 月 workshop**
 
-**v1.1 動作**：第一次發 patch 時根據 beta + workshop 收到的 layout 校準，並開 `CHANGELOG.md` 紀錄此次校準 session。
+- Triangle area ratio: yellow > 1.5×, red > 2.5×（主觀「均勻度」感受）
+- L/R symmetry delta: yellow > 0.05 rad, red > 0.15 rad（主觀「可聽到的不對稱」感受）
+- Region detection: axis-dominant cutoff 0.7, centerline / surround-ring cutoff 0.3（主觀區域命名）
+
+**為什麼這三組仍 defer**：都是「使用者覺得對不對」的感受，沒有 math 錨點。一個人直覺校容易過擬合；beta + workshop 真實 layout 訊號量級高很多。
+
+**v1.1 動作**：第一次發 patch 時根據 beta + workshop 收到的 layout 校準上述三組，並開 `CHANGELOG.md` 紀錄此次校準 session。
 
 ### 3. Phantom speaker 數量上限（§18）
 

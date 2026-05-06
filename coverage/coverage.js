@@ -792,8 +792,17 @@ function median(values) {
 }
 
 // SPEC §8.2 classification thresholds. Hardcoded for v1.
-const HEALTH_ANGLE_YELLOW = 70 * Math.PI / 180;  //  > 70° → yellow
-const HEALTH_ANGLE_RED    = 90 * Math.PI / 180;  //  > 90° → red
+// Angle thresholds anchored to regular polyhedra on the unit sphere:
+// icosahedron face vertex angle = 72° (12 points; the most equilateral
+// VBAP-friendly low-point sphere), octahedron = 90° (6 points; borderline
+// usable as 6-channel surround), tetrahedron = 120° (4 points; clearly
+// degenerate). YELLOW set above icosahedron so a perfectly icosahedral
+// layout reads green; RED set past octahedron with implementation cushion
+// so 90.0/89.9 borderline doesn't flip on every edit.
+const HEALTH_ANGLE_YELLOW = 75 * Math.PI / 180;  //  > 75° → yellow
+const HEALTH_ANGLE_RED    = 105 * Math.PI / 180; //  > 105° → red
+// Area ratio thresholds remain subjective ("uneven layout") and stay in
+// the M5 calibration backlog for beta + workshop tuning.
 const HEALTH_RATIO_YELLOW = 1.5;                 //  > 1.5× median → yellow
 const HEALTH_RATIO_RED    = 2.5;                 //  > 2.5× median → red
 

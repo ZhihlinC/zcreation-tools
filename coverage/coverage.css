@@ -88,6 +88,7 @@ canvas { display: block; }
   font-size: 0.85rem;
   color: var(--muted);
   flex: 0 0 auto;
+  -webkit-user-select: none;
   user-select: none;
 }
 #disclaimer .disclaimer-body {
@@ -264,6 +265,7 @@ canvas { display: block; }
 #layers-panel label {
   font-size: 0.82rem;
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   display: inline-flex;
   align-items: center;
@@ -327,6 +329,7 @@ canvas { display: block; }
 }
 .bulk-paste summary {
   cursor: pointer;
+  -webkit-user-select: none;
   user-select: none;
   color: var(--muted);
   padding: 0.2rem 0;

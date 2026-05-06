@@ -2851,6 +2851,10 @@ function buildSpeakerItem(s) {
     s.name = name.value;
     const lab = document.getElementById('speaker-label-' + s.id);
     if (lab) lab.textContent = s.name;
+    // Triangulation caches point names at compute time; without this the
+    // triangle hover tooltip would keep showing the pre-rename name until
+    // some other edit invalidates the cache.
+    markTriangulationDirty();
   });
 
   const expandBtn = document.createElement('button');
@@ -2988,6 +2992,8 @@ function buildPhantomItem(p) {
     p.name = name.value;
     const lab = document.getElementById('phantom-label-' + p.id);
     if (lab) lab.textContent = p.name;
+    // Same cache-invalidation reason as speaker rename above.
+    markTriangulationDirty();
   });
 
   const expandBtn = document.createElement('button');

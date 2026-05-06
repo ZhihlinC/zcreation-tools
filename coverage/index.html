@@ -199,9 +199,14 @@
     <div class="tt-line"><span class="tt-label">Distance</span><span class="tt-value" data-tt="distance"></span></div>
   </div>
 
-  <!-- Mobile banner stub — M5 will style and persist. -->
+  <!-- Mobile banner (SPEC §13). Shown when viewport < 1024px; manual
+       dismiss is session-scoped (not persisted) so reload always re-shows it.
+       Bilingual so both audiences read it without language switching. -->
   <aside id="mobile-banner" hidden>
-    <span>This tool is designed for desktop. The editing experience is limited on smaller screens.</span>
+    <div class="banner-text">
+      <span lang="zh-TW">此工具為桌面瀏覽器設計，行動裝置僅供預覽。</span>
+      <span lang="en">This tool is designed for desktop. Mobile view is for preview only.</span>
+    </div>
     <button type="button" id="mobile-banner-dismiss" aria-label="Dismiss">✕</button>
   </aside>
 

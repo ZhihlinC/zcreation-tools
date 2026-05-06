@@ -3753,11 +3753,20 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Mobile banner
-  if (window.innerWidth < 1024) {
-    const banner = document.getElementById('mobile-banner');
-    banner.hidden = false;
+  // Mobile banner (SPEC §13). Session-scoped dismiss: once the user
+  // hits ✕ the banner stays away until reload, even if they resize
+  // back and forth across the 1024px threshold. Reload re-evaluates
+  // afresh — there is no localStorage involvement on purpose.
+  const banner = document.getElementById('mobile-banner');
+  if (banner) {
+    let dismissed = false;
+    const updateBanner = () => {
+      banner.hidden = dismissed || window.innerWidth >= 1024;
+    };
+    updateBanner();
+    window.addEventListener('resize', updateBanner);
     document.getElementById('mobile-banner-dismiss').addEventListener('click', () => {
+      dismissed = true;
       banner.hidden = true;
     });
   }

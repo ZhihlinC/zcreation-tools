@@ -835,10 +835,19 @@ canvas { display: block; }
   background: #fff8d8;
   border: 1px solid #e0c560;
   border-radius: var(--radius);
-  padding: 0.75rem 2.5rem 0.75rem 1rem;
-  font-size: 0.85rem;
+  padding: 0.7rem 2.5rem 0.7rem 1rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
   z-index: 20;
+  box-shadow: var(--shadow);
 }
+#mobile-banner .banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+#mobile-banner .banner-text span[lang="zh-TW"] { letter-spacing: 0.01em; }
+#mobile-banner .banner-text span[lang="en"] { color: #6a5a20; }
 #mobile-banner-dismiss {
   position: absolute;
   right: 0.5rem;
@@ -849,6 +858,26 @@ canvas { display: block; }
   font-size: 1rem;
   cursor: pointer;
   color: #666;
+  padding: 0.2rem 0.4rem;
+  border-radius: 4px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+#mobile-banner-dismiss:hover {
+  background-color: rgba(0, 0, 0, 0.06);
+  color: #333;
+}
+
+/* On < 1024px viewports the editing panels collapse off-screen so the
+   tool delivers the "preview only" experience the banner promises:
+   3D canvas + framing disclaimer + dismiss banner, no overlapping UI.
+   Self-contained HTML opened on tablet / phone benefits from this too. */
+@media (max-width: 1023px) {
+  #left-column-top,
+  #right-column,
+  #audience-panel,
+  #health-panel {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

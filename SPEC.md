@@ -1,4 +1,3 @@
-# SPEC.md
 # Sound Coverage Sketch — v1 設計規格 / v1 Design Specification
 
 > 此文件是 `coverage` 工具 v1 的**單一真實來源 / Single Source of Truth**。
@@ -59,6 +58,7 @@
 ## 4. 座標系統與單位 / Coordinate System & Units
 
 ### 4.1 世界座標 / World Coordinates
+
 - `x` = 左 / 右（朝右為正）
 - `y` = 前 / 後（朝舞台 / 觀眾正前方為正）
 - `z` = 上 / 下（朝上為正）
@@ -67,6 +67,7 @@
 - 假想聽覺中心本身位於 `(0, 0, listeningHeight)`（耳朵高度），是 `aimAtCentre` 的瞄準目標
 
 ### 4.2 單位 / Units
+
 - `cm` 與 `m` 切換（UI 提供 toggle）
 - 所有顯示數值即時轉換（不重算內部資料；內部統一以 `cm` 儲存）
 - 預設單位：`cm`
@@ -76,6 +77,7 @@
 ## 5. 資料模型 / Data Model
 
 ### 5.1 Speaker
+
 ```ts
 {
   id: string,           // UUID 或自增 ID
@@ -90,9 +92,11 @@
   enabled: boolean      // 是否參與計算（可暫時關閉某顆音響）
 }
 ```
+
 > 不對稱張角支援：`angleH` 與 `angleV` 各自獨立。
 
 ### 5.2 Phantom Speaker
+
 ```ts
 {
   id: string,
@@ -103,6 +107,7 @@
 ```
 
 ### 5.3 Audience
+
 ```ts
 {
   length: number,       // X 軸方向長度（cm）
@@ -110,9 +115,11 @@
   listeningHeight: number  // 聽覺平面高度（cm，相對地面 z=0）
 }
 ```
+
 > 觀眾席矩形以 `(0, 0, 0)` 在 X-Y 平面的投影為中心。
 
 ### 5.4 ViewState
+
 ```ts
 {
   unit: 'cm' | 'm',
@@ -123,6 +130,7 @@
 ```
 
 ### 5.5 完整 State（用於下載 / 上傳）/ Full State (for Save & Open)
+
 ```ts
 {
   schemaVersion: 1,
@@ -144,7 +152,7 @@
 ## 6. v1 視圖層（皆可獨立 toggle，預設值見括號）/ v1 View Layers (each toggleable, default in parentheses)
 
 | Layer key | 內容 / Description | 預設 / Default |
-|---|---|---|
+| --- | --- | --- |
 | `floor` | 地面格線 + 原點小球標記 | ON |
 | `audience` | 觀眾席矩形（半透明） | ON |
 | `listening-plane` | 聽覺平面（半透明懸浮層） | ON |
@@ -163,6 +171,7 @@
 ## 7. 覆蓋熱區計算 / Coverage Heatmap Computation
 
 ### 7.1 計算位置 / Sample Positions
+
 - 計算於**聽覺平面 (listening plane)**：`(x, y) ∈ [-length/2, length/2] × [-width/2, width/2]`，`z = listeningHeight`
 - Grid sampling：建議 grid 解析度 = 兩軸各 50–100 點（視效能調整）
 
@@ -172,13 +181,13 @@
 
 1. 取 speaker 本地基底 `(forward, right, up)` = `speakerBasis(yaw, pitch)`，其中 `right = forward × world-up`、`up = right × forward`。
 2. 計算 `d = P - S`，並投影到三個基底軸：
-   - `f_proj = d · forward`
-   - `r_proj = d · right`
-   - `u_proj = d · up`
+    - `f_proj = d · forward`
+    - `r_proj = d · right`
+    - `u_proj = d · up`
 3. 條件全部成立才算被涵蓋：
-   - `f_proj > 0`（在 speaker 前方）
-   - `|r_proj / f_proj| ≤ tan(angleH / 2)`
-   - `|u_proj / f_proj| ≤ tan(angleV / 2)`
+    - `f_proj > 0`（在 speaker 前方）
+    - `|r_proj / f_proj| ≤ tan(angleH / 2)`
+    - `|u_proj / f_proj| ≤ tan(angleV / 2)`
 
 > **備註 / Rationale**：判定使用矩形角錐（rectangular pyramid）而非球面角度偏移（`atan2` 算 θ_h / θ_v 與 halfH / halfV 比較）。球面版本在 `pitch ≠ 0` 時會產生梯形覆蓋區（trapezoidal coverage，因為 cos 因子讓上下緯度圈半徑不同），與 cone 視覺不一致；矩形版本兩者完全對齊。
 
@@ -189,7 +198,7 @@
 > **Coverage count is a geometric overlap, not a loudness sum.** A speaker 5 m away counts the same as one 1 m away in the heatmap. Per-speaker distance and propagation delay are shown in the speaker-list caption; SPL inference needs speaker specs (sensitivity, max SPL, frequency response) and venue acoustics — that's the **user's domain**, not the tool's.
 
 | 涵蓋顆數 / Coverage count | 顏色 / Color |
-|---|---|
+| --- | --- |
 | 0 | 紅（警告：黑洞 / dead zone） |
 | 1 | 黃 |
 | 2 | 橙偏綠 |
@@ -202,12 +211,13 @@
 ## 8. Layout Health 系統 / Layout Health (Triangulation Diagnostic)
 
 ### 8.1 計算流程 / Computation Flow
+
 1. 對所有 enabled speaker + phantom，計算其相對原點的方向向量
 2. 投影到單位球面 (unit sphere)
 3. 計算凸包 (convex hull) → 取得三角形列表
 4. 對每個三角形計算：
-   - 球面面積 (spherical area)（用三邊弧長 + 球面三角形公式或 L'Huilier theorem）
-   - 最大內角 (largest interior angle)
+    - 球面面積 (spherical area)（用三邊弧長 + 球面三角形公式或 L'Huilier theorem）
+    - 最大內角 (largest interior angle)
 5. 計算整體 L/R 對稱性偏差 (symmetry deviation)（將所有點對 X=0 平面鏡像，與原點集做最近鄰配對的平均距離；單位：球面弧度）
 
 ### 8.2 健康度判定（v1 hardcode）/ Health Thresholds (v1 hardcoded)
@@ -217,12 +227,10 @@
 > **These thresholds are the tool's geometric panning-condition heuristics, not compliance checks against any ITU / SMPTE / EBU standard.** ITU-spec layouts (5.1, 7.1, 22.2, …) can still trigger warn / critical — meaning VBAP would be ill-conditioned in those triangles, **not** that the layout violates a standard.
 
 | 指標 / Metric | 黃 / Warn | 紅 / Critical |
-|---|---|---|
+| --- | --- | --- |
 | 三角形最大內角 / Largest interior angle | > 70° | > 90° |
 | 三角形球面面積 vs 該 layout 中位數 / Spherical area vs layout median | > 1.5× | > 2.5× |
 | L/R 對稱性偏差 / L/R symmetry deviation | > [實測校準] | > [實測校準] |
-
-
 
 每個三角形顏色 = 各指標觸到的最差色。
 
@@ -232,8 +240,6 @@
 
 - **中**：這些三角形是任何 sphere-panning renderer（VBAP、AllRAD ambisonic decoder 等）背後共同的幾何骨架。三角形不健康，無論之後用哪個 renderer，跨過該區域的 phantom source 都會定位不清。**這不是合規檢驗——ITU 標準 layout 也可能觸發警示；那代表 VBAP 在該區條件不佳，不代表 layout 違反規範。**
 - **EN**：These triangles are the geometric backbone every sphere-panning renderer (VBAP, AllRAD-decoded ambisonics, …) works from. Sources panned across an unhealthy triangle will localise poorly regardless of which renderer you use later. **This is not a compliance check — ITU-spec layouts can still trigger warnings; that means VBAP conditioning is poor in that region, not that the layout violates a standard.**
-
-
 
 **動態警示**（依當下 layout 狀態切換）：
 
@@ -263,16 +269,18 @@ phantom speaker 完全由使用者手動放置。
 ## 9. 互動 / Interaction
 
 ### 9.1 Camera
+
 - 滑鼠拖曳：旋轉視角，圍繞 (0, 0, 0)
 - 滾輪：縮放（min/max distance 限制，避免穿模或飛太遠）
 - 預設視角按鈕：
-  - `Perspective`（預設啟動視角）
-  - `Top`（從正上方俯視）
-  - `Front`（從 -Y 方向看 +Y，看舞台）
-  - `Side`（從 +X 方向看 -X）
-  - `Listening`（從 (0, 0, listeningHeight) 朝 +Y 方向看，模擬「坐在聽眾位置」）
+    - `Perspective`（預設啟動視角）
+    - `Top`（從正上方俯視）
+    - `Front`（從 -Y 方向看 +Y，看舞台）
+    - `Side`（從 +X 方向看 -X）
+    - `Listening`（從 (0, 0, listeningHeight) 朝 +Y 方向看，模擬「坐在聽眾位置」）
 
 ### 9.2 編輯 / Editing
+
 - 「+ Add Speaker」：彈出表單輸入 x/y/z/yaw/pitch/angleH/angleV/name
 - 列表中點擊任一 speaker：展開編輯欄位（inline edit）
 - 列表中 × 按鈕：刪除（無 undo，但有確認對話框）
@@ -280,6 +288,7 @@ phantom speaker 完全由使用者手動放置。
 - 觀眾席尺寸 / 聽覺高度：右側面板輸入欄位，即時更新
 
 ### 9.3 視覺輔助 / Visual Aids
+
 - 滑鼠 hover 三角化視圖中的某個三角形：顯示該三角形的最大內角 + 球面面積 + 健康度
 - hover 某顆音響：highlight + 顯示其資料摘要
 
@@ -288,37 +297,44 @@ phantom speaker 完全由使用者手動放置。
 ## 10. 下載 / 上傳 HTML / Save & Open HTML
 
 ### 10.1 下載 / Save (Download)
+
 按下「Download as HTML」：
+
 1. 將完整 State（§5.5）序列化為 JSON
 2. inline 進一個 self-contained HTML template：
-   - p5.js 從 CDN 引用（保留外部依賴是為了檔案小）
-   - 工具邏輯（coverage.js）inline 嵌入
-   - 樣式（coverage.css）inline 嵌入
-   - State JSON 嵌入為 `<script id="coverage-state" type="application/json">{...}</script>`
+    - p5.js 從 CDN 引用（保留外部依賴是為了檔案小）
+    - 工具邏輯（coverage.js）inline 嵌入
+    - 樣式（coverage.css）inline 嵌入
+    - State JSON 嵌入為 `<script id="coverage-state" type="application/json">{...}</script>`
 3. 觸發瀏覽器下載（檔名：`{layoutName}-coverage-sketch.html` 或 `untitled-coverage-sketch.html`）
 
 ### 10.2 下載出 HTML 的特性 / Properties of Saved HTML
+
 - `<title>` = layout 名稱（無命名則 `Sound Coverage Sketch — Untitled`）
 - 檔頭 HTML comment 區塊寫入 metadata：
-  ```html
-  <!--
-    Generated by Sound Coverage Sketch
-    Layout name: {layoutName}
-    Generated at: {ISO 8601 timestamp}
-    Source: https://tools.zcreation.art/coverage
-    Tool version: {toolVersion}
 
-    This file is fully editable.
-    Open it in a modern browser, or upload it back to the source URL to continue editing.
-  -->
-  ```
+    ```html
+    <!--
+      Generated by Sound Coverage Sketch
+      Layout name: {layoutName}
+      Generated at: {ISO 8601 timestamp}
+      Source: https://tools.zcreation.art/coverage
+      Tool version: {toolVersion}
+
+      This file is fully editable.
+      Open it in a modern browser, or upload it back to the source URL to continue editing.
+    -->
+    ```
+
 - **可編輯瀏覽 / Fully editable**：包含所有編輯 UI、可加減音響、可截 PNG、layer toggle 與相機切換照舊
 - **不含 Save HTML / No Save HTML button**：下載產物是 snapshot，再次下載 / round-trip 編輯走 live tool 的「Open from HTML」（§10.3）。boot 時偵測 `#coverage-script-inline` 自動 hide Save HTML 按鈕
 - **固定英文 UI / English-only UI**
 - 開啟即顯示 layout 當前狀態（沿用儲存時的視角、layer toggle、單位設定）
 
 ### 10.3 上傳（Resume Editing）/ Open (Resume Editing)
+
 「Open from HTML」按鈕：
+
 1. 接受 `.html` 檔案
 2. 讀取檔案內容、用 regex / DOMParser 找到 `<script id="coverage-state">` 區塊
 3. 解析 JSON、驗證 `schemaVersion === 1`
@@ -328,6 +344,7 @@ phantom speaker 完全由使用者手動放置。
 ---
 
 ## 11. 截圖匯出 / Screenshot Export
+
 - 「Download as PNG」：擷取當前 canvas
 - 解析度：顯示解析度 × 2（高 DPI）
 - 檔名：`{layoutName}-coverage-{timestamp}.png`
@@ -408,7 +425,7 @@ if (window.innerWidth < 1024) {
 ## 17. 開放決定（v1 開發中或上線後解決）/ Open Decisions (Under Development or Post-Launch)
 
 | 項目 / Item | 內容 / Description | 何時需要決定 / When |
-|---|---|---|
+| --- | --- | --- |
 | L/R 對稱性偏差門檻 | 需以 beta / 真實 layout 校準 | beta |
 | Phantom speaker 數量上限 | 是否設上限避免無意義疊加 | beta |
 | 截圖按鈕是否選擇解析度 | v1 暫定固定 2× | v2 視需要 |
@@ -420,13 +437,13 @@ if (window.innerWidth < 1024) {
 工具的設計觀點與 disclaimer 文字應該誠實地引用以下參考：
 
 - Pulkki, V. (1997). *Virtual Sound Source Positioning Using Vector Base Amplitude Panning.* Journal of the Audio Engineering Society 45(6).
-  - 凸包三角剖分 (convex-hull triangulation) 作為 VBAP 幾何基礎
-  - https://link.springer.com/chapter/10.1007/978-3-030-17207-7_3
+    - 凸包三角剖分 (convex-hull triangulation) 作為 VBAP 幾何基礎
+    - <https://link.springer.com/chapter/10.1007/978-3-030-17207-7_3>
 - IRCAM Spat / Panoramix
-  - phantom speaker at zenith / nadir 的實作參考
-  - https://forum.ircam.fr/projects/detail/spat/
+    - phantom speaker at zenith / nadir 的實作參考
+    - <https://forum.ircam.fr/projects/detail/spat/>
 - Aalto VBAP Library 實作參考
-  - http://research.spa.aalto.fi/projects/vbap-lib/vbap.html
+    - <http://research.spa.aalto.fi/projects/vbap-lib/vbap.html>
 
 工具首頁或許可以放一個 "Further reading" 折疊區塊，列出上述三條連結。
 

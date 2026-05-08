@@ -335,44 +335,6 @@ canvas { display: block; }
   color: var(--muted);
 }
 
-/* Bulk-paste dev affordance — one folded panel under each list. Number
-   triplets parse out of any text (commas / brackets / newlines all ignored)
-   so the user can drop "(100, 100, 220), (-100, …)" directly. */
-.bulk-paste {
-  margin-bottom: 0.45rem;
-  font-size: 0.78rem;
-}
-.bulk-paste summary {
-  cursor: pointer;
-  -webkit-user-select: none;
-  user-select: none;
-  color: var(--muted);
-  padding: 0.2rem 0;
-  font-size: 0.75rem;
-}
-.bulk-paste summary em {
-  font-style: normal;
-  color: #aaa;
-  font-size: 0.68rem;
-  margin-left: 0.3rem;
-}
-.bulk-paste textarea {
-  width: 100%;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.7rem;
-  padding: 0.3rem 0.4rem;
-  border: 1px solid var(--panel-border);
-  border-radius: 4px;
-  resize: vertical;
-  min-height: 2.4em;
-  box-sizing: border-box;
-}
-.bulk-paste button {
-  margin-top: 0.3rem;
-  font-size: 0.72rem;
-  padding: 0.2rem 0.6rem;
-}
-
 /* Speakers */
 #speakers-panel #speakers-list {
   list-style: none;

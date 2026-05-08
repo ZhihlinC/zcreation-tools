@@ -3116,59 +3116,6 @@ function refreshUnitInputs() {
 }
 
 // =============================================================================
-// Bulk paste (dev) — fast scenario seeding for testing. Parses every signed
-// integer / float out of the textarea (commas / brackets / newlines / labels
-// all ignored), groups in triplets as x/y/z. Trailing tokens that don't make
-// a full triplet are dropped silently — caller sees the resulting speaker /
-// phantom count via the rendered list. Lighter-weight cousin to the full
-// HTML import path; useful for ad-hoc scenario testing.
-// =============================================================================
-
-function parseBulkTriplets(text) {
-  const nums = (text.match(/-?\d+(?:\.\d+)?/g) || []).map(Number);
-  const out = [];
-  for (let i = 0; i + 2 < nums.length; i += 3) {
-    out.push({ x: nums[i], y: nums[i + 1], z: nums[i + 2] });
-  }
-  return out;
-}
-
-function bulkReplaceSpeakers(text) {
-  const trips = parseBulkTriplets(text);
-  STATE.speakers = trips.map((t, i) => {
-    const aim = aimAtCentre(t.x, t.y, t.z);
-    return {
-      id: nextSpeakerId(),
-      name: 'Speaker ' + (i + 1),
-      enabled: true,
-      x: t.x, y: t.y, z: t.z,
-      yaw: aim.yaw,
-      pitch: aim.pitch,
-      angleH: 90,
-      angleV: 60,
-    };
-  });
-  syncSpeakerLabels();
-  syncCoordLabels();
-  renderSpeakersList();
-  markCoverageDirty();
-  markTriangulationDirty();
-}
-
-function bulkReplacePhantoms(text) {
-  const trips = parseBulkTriplets(text);
-  STATE.phantoms = trips.map((t, i) => ({
-    id: nextPhantomId(),
-    name: 'Phantom ' + (i + 1),
-    x: t.x, y: t.y, z: t.z,
-  }));
-  syncPhantomLabels();
-  syncCoordLabels();
-  renderPhantomsList();
-  markTriangulationDirty();
-}
-
-// =============================================================================
 // Full UI sync from STATE — runs on initial boot (always) and after the
 // upload path replaces STATE. Idempotent: every render* / sync* helper
 // is safe to call repeatedly.
@@ -3465,8 +3412,6 @@ async function buildSelfContainedHtml(state) {
     const el = doc.querySelector(sel);
     if (el) el.innerHTML = '';
   }
-  // Reset bulk-paste textareas — these carry editor scratch text, not state.
-  doc.querySelectorAll('textarea[data-bulk]').forEach(ta => { ta.value = ''; });
   // Reset disclaimer to expanded so the saved file always shows the framing.
   const disc = doc.getElementById('disclaimer');
   if (disc) disc.classList.remove('collapsed');
@@ -3751,18 +3696,6 @@ window.addEventListener('DOMContentLoaded', () => {
       markTriangulationDirty();
     });
   }
-
-  // Bulk paste buttons (dev affordance) — both Speaker and Phantom panels
-  // share the same data-bulk-go / data-bulk attribute pattern.
-  document.querySelectorAll('button[data-bulk-go]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const target = btn.dataset.bulkGo;
-      const ta = document.querySelector(`textarea[data-bulk="${target}"]`);
-      if (!ta) return;
-      if (target === 'speakers') bulkReplaceSpeakers(ta.value);
-      else if (target === 'phantoms') bulkReplacePhantoms(ta.value);
-    });
-  });
 
   // Initial renders. Calling syncUiFromState() also handles the post-load
   // case (boot loader or HTML upload) where STATE has been replaced and

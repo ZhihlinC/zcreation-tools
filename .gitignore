@@ -1,0 +1,21 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+
+# Local Claude Code config (per-user, not for repo)
+.claude/
+
+# Internal dev docs (kept locally for development continuity, not for public repo)
+CLAUDE.md
+ROADMAP.md
+.markdownlint.json
+
+# Logs
+*.log

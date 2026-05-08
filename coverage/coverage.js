@@ -54,7 +54,7 @@ function nextPhantomId() { return 'p' + (_phantomCounter++); }
 // =============================================================================
 
 const SCHEMA_VERSION = 1;
-const TOOL_VERSION = '1.0.0';
+const TOOL_VERSION = '1.0.0-beta';
 const SOURCE_URL = 'https://tools.zcreation.art/coverage';
 
 // Allowed layer keys — anything outside this whitelist is dropped on load,
@@ -2744,7 +2744,7 @@ function positionLabel(el, x, y, z) {
 // on the canvas and ends on a panel must still release p5's mouseIsPressed.
 // =============================================================================
 
-const PANEL_SELECTOR = '.panel, #disclaimer, #mobile-banner, #overlay-labels';
+const PANEL_SELECTOR = '.panel, #disclaimer, #mobile-banner, #overlay-labels, #tool-footer';
 
 function pointerOnPanel(target) {
   return !!(target && target.closest && target.closest(PANEL_SELECTOR));
@@ -3574,6 +3574,11 @@ async function runExport(btn, label, fn) {
 // =============================================================================
 
 window.addEventListener('DOMContentLoaded', () => {
+  // Tool version footer (populated from TOOL_VERSION so downloaded HTML
+  // shows the version it was saved with).
+  const versionEl = document.getElementById('tool-version-text');
+  if (versionEl) versionEl.textContent = TOOL_VERSION;
+
   // View presets
   document.querySelectorAll('#view-controls button[data-view]').forEach(btn => {
     btn.addEventListener('click', () => {

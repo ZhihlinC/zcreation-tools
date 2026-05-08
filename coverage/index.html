@@ -213,6 +213,14 @@
     <div class="tt-line"><span class="tt-label">Distance</span><span class="tt-value" data-tt="distance"></span></div>
   </div>
 
+  <!-- Tool meta footer — version (and later: GitHub link). Lives bottom-center
+       between audience-panel and health-panel. Populated from TOOL_VERSION
+       on DOMContentLoaded so downloaded HTML shows the version it was
+       saved with. -->
+  <aside id="tool-footer" aria-label="Tool meta">
+    <span class="tool-footer-version">v<span id="tool-version-text"></span></span>
+  </aside>
+
   <!-- Mobile banner (SPEC §13). Shown when viewport < 1024px; manual
        dismiss is session-scoped (not persisted) so reload always re-shows it.
        Bilingual so both audiences read it without language switching. -->

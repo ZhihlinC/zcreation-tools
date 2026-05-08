@@ -326,8 +326,8 @@ canvas { display: block; }
 
 /* Triangulation status caption — sits under the triangulation toggle and
    reflects analyseTriangulation()'s current classification regardless of
-   whether the layer itself is on. data-kind on the row is a hook for M3.E
-   to colour-code (red / yellow / green) once the health system lands. */
+   whether the layer itself is on. data-kind on the row is the hook for
+   colour-coding (red / yellow / green) by the health system. */
 #layers-panel .triangulation-status {
   padding: 0.05rem 0 0.3rem 1.5rem;
   font-size: 0.7rem;
@@ -627,7 +627,7 @@ canvas { display: block; }
 }
 
 /* =============================================================================
-   Layout Health panel (M3.E, SPEC §8.3) — bottom-right floating, mirrors
+   Layout Health panel (SPEC §8.3) — bottom-right floating, mirrors
    audience-panel's positioning style. Framing paragraph is always shown;
    health-status block is rebuilt by composeHealthLines() on every refresh.
    Per-line emoji icon + colour conveys severity (✓ green / ⚠ yellow / ✗ red
@@ -692,7 +692,7 @@ canvas { display: block; }
 }
 
 /* =============================================================================
-   Hover tooltips (M3.F triangle, M3.G speaker) — small floating cards that
+   Hover tooltips (triangle + speaker) — small floating cards that
    follow the cursor. Shared styling on .tooltip; per-target tweaks (e.g.
    triangle's health-level left border) live under the specific id.
    Pointer-events disabled so the tooltip can never steal hover from the

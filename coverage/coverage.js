@@ -1,5 +1,5 @@
 // Sound Coverage Sketch — coverage.js
-// M1 implementation. SPEC.md is the source of truth.
+// SPEC.md is the source of truth.
 //
 // World coordinate system (SPEC §4, audience POV):
 //   +X = right, +Y = forward (toward stage), +Z = up. Right-handed:
@@ -11,11 +11,9 @@
 // createCanvas(). After that, all five camera presets use natural up vectors
 // (e.g. +Z for perspective/front/side/listening, +Y for top) with no extra
 // scale or sign hacks, and the right-hand rule holds visually in every view.
-// See ROADMAP.md discussion item 1.
 //
 // Text in WEBGL: p5's text() in WEBGL is unreliable, so labels are HTML spans
 // positioned each frame via manual view × projection matrix multiplication.
-// See ROADMAP.md discussion item 7.
 
 const STATE = {
   metadata: { layoutName: '' },
@@ -49,7 +47,7 @@ let _phantomCounter = STATE.phantoms.length + 1;
 function nextPhantomId() { return 'p' + (_phantomCounter++); }
 
 // =============================================================================
-// State persistence — version, source URL, embedded-state boot loader (M4.B).
+// State persistence — version, source URL, embedded-state boot loader.
 // Downloaded HTML files carry a <script id="coverage-state" type="application/json">
 // node; on boot, if that node is present and parses cleanly with the right
 // schemaVersion, we replace the default STATE before setup() runs.
@@ -314,7 +312,7 @@ function coneCorners(s, length) {
 const COVERAGE = {
   resX: 80,
   resY: 80,
-  counts: null,                      // Uint8Array(resX * resY) — kept for M3 hover lookups
+  counts: null,                      // Uint8Array(resX * resY) — kept for hover lookups
   groupVerts: [[], [], [], []],      // flat (x0,y0,x1,y0,x1,y1,x0,y1) repeated, per colour bucket 0/1/2/3+
   dirty: true,
   scheduled: false,
@@ -445,7 +443,7 @@ function drawCoverageHeat() {
 }
 
 // =============================================================================
-// Triangulation diagnostic (SPEC §8, ROADMAP M3.B-α — detection + 2D fallback).
+// Triangulation diagnostic (SPEC §8).
 //
 // Classifies the current layout (enabled speakers + all phantoms) by the
 // geometry of their direction vectors from the listening centre:
@@ -454,14 +452,13 @@ function drawCoverageHeat() {
 //   point-at-centre  a point sits on the listening centre (cannot normalize)
 //   collinear        all directions on a single line through origin
 //   planar           directions span a 2D plane through origin → 2D ring
-//   ok               directions span 3D → spherical hull (M3.B-β, pending)
+//   ok               directions span 3D → spherical hull
 //
 // The classification is cached in TRIANGULATION.result and refreshed lazily
 // via markTriangulationDirty(). Status text under the layer toggle reflects
 // the current result regardless of whether the layer is on. Drawing happens
-// only when the layer is on; for B-α only the 'planar' branch draws (a closed
-// polygon connecting points in azimuth order), the 'ok' branch is a no-op
-// until the spherical hull arrives in B-β.
+// only when the layer is on: 'planar' draws a closed polygon connecting
+// points in azimuth order; 'ok' draws the spherical convex-hull triangulation.
 //
 // Coplanarity test: pick the pair (i, j) with the largest |d_i × d_j| as a
 // numerically stable plane-normal candidate (any non-parallel pair gives the
@@ -511,15 +508,15 @@ function ensureTriangulationFresh() {
 }
 
 // ---------------------------------------------------------------------------
-// Sliver pre-merge & spherical convex hull (M3.B-β).
+// Sliver pre-merge & spherical convex hull.
 //
 // Pre-merge: speakers with directions within SLIVER_MERGE_EPS of each other
 // are considered the same panning slot for triangulation purposes — keeping
 // them separate would force the hull to generate near-degenerate sliver
-// triangles that M3.C would falsely flag as red. The threshold is set above
-// the human auditory just-noticeable difference (~1°–3°) so the merge only
-// kicks in when speakers are functionally redundant directionally. See
-// ROADMAP M3.B discussion item 3.
+// triangles that the health classifier would falsely flag as red. The
+// threshold is set above the human auditory just-noticeable difference
+// (~1°–3°) so the merge only kicks in when speakers are functionally
+// redundant directionally.
 //
 // Hull: incremental construction. Seed tetrahedron from 4 extreme points
 // (farthest sequential search); for each remaining point P, find faces
@@ -744,7 +741,7 @@ function buildSphericalHull(points) {
 }
 
 // ---------------------------------------------------------------------------
-// Per-triangle metrics (M3.C) — spherical area via L'Huilier theorem and
+// Per-triangle metrics — spherical area via L'Huilier theorem and
 // max interior angle via spherical law of cosines. Both inputs are unit
 // vectors on the sphere. Returned units: steradians (radians²) for area,
 // radians for max angle. Caller is responsible for converting to the
@@ -812,8 +809,8 @@ function median(values) {
 // so 90.0/89.9 borderline doesn't flip on every edit.
 const HEALTH_ANGLE_YELLOW = 75 * Math.PI / 180;  //  > 75° → yellow
 const HEALTH_ANGLE_RED    = 105 * Math.PI / 180; //  > 105° → red
-// Area ratio thresholds remain subjective ("uneven layout") and stay in
-// the M5 calibration backlog for beta + workshop tuning.
+// Area ratio thresholds remain subjective ("uneven layout") and stay open
+// for beta + workshop tuning.
 const HEALTH_RATIO_YELLOW = 1.5;                 //  > 1.5× median → yellow
 const HEALTH_RATIO_RED    = 2.5;                 //  > 2.5× median → red
 
@@ -913,7 +910,7 @@ function dominantRegion(metrics, level) {
 }
 
 // ---------------------------------------------------------------------------
-// L/R symmetry deviation (M3.D). For each merged point's direction, find
+// L/R symmetry deviation. For each merged point's direction, find
 // the nearest direction in the X-mirrored set; return the mean angular
 // distance (radians). 0 → perfectly mirror-symmetric across the listening
 // centerline (X=0 plane). Larger → asymmetric.
@@ -925,8 +922,8 @@ function dominantRegion(metrics, level) {
 // typical speaker layouts (N ≤ 32 distinct directions) greedy is correct
 // and ~10× cheaper. Acceptable trade for v1.
 //
-// Thresholds per SPEC §8.2 (v1 estimate; ROADMAP discussion item 2 to
-// recalibrate before launch with real layouts):
+// Thresholds per SPEC §8.2 (v1 estimate; recalibrate during beta with
+// real layouts):
 //   > 0.05 rad → yellow
 //   > 0.15 rad → red
 // ---------------------------------------------------------------------------
@@ -1042,8 +1039,9 @@ function analyseTriangulation() {
   }
 
   // Sliver pre-merge — collapse direction-near-duplicate inputs so the hull
-  // doesn't generate sliver triangles that M3.C would falsely flag as red.
-  // The merged-points array is what every downstream branch operates on.
+  // doesn't generate sliver triangles that the health classifier would
+  // falsely flag as red. The merged-points array is what every downstream
+  // branch operates on.
   const inputCount = points.length;
   const merged = premergeSlivers(points);
   const mergeReduction = inputCount - merged.length;
@@ -1177,9 +1175,9 @@ function mergeNote(r) {
 
 // Caption under the triangulation layer toggle is intentionally minimal:
 // it answers "what kind of layout is this and how many points / triangles"
-// — the Layout Health panel (M3.E) carries the health and symmetry warnings
-// that used to live here as suffixes. Keeping mergeNote because it's a
-// non-health input-vs-effective-count fact the panel doesn't surface.
+// — the Layout Health panel carries the health and symmetry warnings.
+// mergeNote stays here because it's a non-health input-vs-effective-count
+// fact the panel doesn't surface.
 function triangulationStatusText(r) {
   if (!r) return '';
   switch (r.kind) {
@@ -1209,9 +1207,8 @@ function triangulationStatusText(r) {
     case 'hull-open':
       return `Open hull — ${r.count} points don't enclose the listening centre${mergeNote(r)}.`;
     case 'planar':
-      // Note: mergeNote moved outside the parens (was nested inside before
-      // M3.D, which produced awkward "(4 points (1 sliver-merged))"). The
-      // new form is "(4 points) (1 sliver-merged)" — fewer nested parens.
+      // mergeNote sits outside the parens to avoid nested-paren ugliness:
+      // "(4 points) (1 sliver-merged)" reads cleaner than "(4 points (1 sliver-merged))".
       return `Planar layout — 2D ring shown in place of triangulation (${r.points.length} points)${mergeNote(r)}.`;
     case 'ok':
       // Health summary + symmetry now live in the Layout Health panel.
@@ -1226,7 +1223,7 @@ function updateTriangulationStatusDom() {
   if (!el) return;
   const text = triangulationStatusText(TRIANGULATION.result);
   el.textContent = text;
-  // Tag the row by kind so CSS can colour-code (red / yellow / green) in M3.E.
+  // Tag the row by kind so CSS can colour-code (red / yellow / green).
   const row = el.closest('.triangulation-status');
   if (row) row.dataset.kind = TRIANGULATION.result ? TRIANGULATION.result.kind : '';
   // Layout Health panel mirrors the same result through a richer surface.
@@ -1234,7 +1231,7 @@ function updateTriangulationStatusDom() {
 }
 
 // ---------------------------------------------------------------------------
-// Layout Health panel (M3.E, SPEC §8.3). Produces a list of {text, level}
+// Layout Health panel (SPEC §8.3). Produces a list of {text, level}
 // lines from the analyseTriangulation result, where level ∈ {ok, info,
 // warn, fail} drives the icon and colour. The panel framing paragraph is
 // static markup in index.html — these lines fill the dynamic status block.
@@ -1396,7 +1393,7 @@ function drawTriangulation() {
 }
 
 // ---------------------------------------------------------------------------
-// Hover tooltips (M3.F triangle, M3.G speaker).
+// Hover tooltips (triangle + speaker).
 //
 // Two tooltips share a picking framework: speaker takes priority over
 // triangle when both would hit (speakers are foreground markers; user
@@ -1898,9 +1895,8 @@ function __triangulationDevTests() {
   check('regular-tetra-all-red',
     r.healthSummary.red === 4 && r.healthSummary.yellow === 0 && r.healthSummary.green === 0,
     r.healthSummary);
-  // M3.E moved health summary and symmetry warnings out of the caption and
-  // into the Layout Health panel. Caption now reports only the kind +
-  // counts; the panel surface carries severity / symmetry signals.
+  // Caption reports only kind + counts. The Layout Health panel carries
+  // severity and symmetry signals.
   check('regular-tetra-caption',
     triangulationStatusText(r) === '3D layout — 4 points → 4 triangles.',
     triangulationStatusText(r));
@@ -1946,7 +1942,7 @@ function __triangulationDevTests() {
     r.symmetry && r.symmetry.level === 'green' && approx(r.symmetry.delta, 0),
     r.symmetry);
 
-  // ===== Symmetry tests (M3.D) =====
+  // ===== Symmetry tests =====
 
   // S1. Symmetric LCR: mirror pair (L, R) + on-axis (C, P) → Δ ≈ 0, green.
   setLayout([
@@ -1988,7 +1984,7 @@ function __triangulationDevTests() {
     r.kind === 'too-few' && r.symmetry && r.symmetry.level === 'green' && r.symmetry.delta === 0,
     { kind: r.kind, sym: r.symmetry });
 
-  // S5. Left-heavy layout (3 L vs 1 R, ROADMAP M3 visual check #4) → red.
+  // S5. Left-heavy layout (3 L vs 1 R) → red.
   setLayout([
     { name: 'L1', x: -300, y:  200, z: 240 },
     { name: 'L2', x: -200, y: -100, z: 240 },
@@ -2021,7 +2017,7 @@ function __triangulationDevTests() {
     r.kind === 'planar' && r.symmetry && r.symmetry.level === 'green',
     { kind: r.kind, sym: r.symmetry });
 
-  // ===== Region detection (M3.E) =====
+  // ===== Region detection =====
 
   check('region-upper',  regionForCentroid({ x: 0, y: 0, z:  0.9 }) === 'upper hemisphere',  '');
   check('region-lower',  regionForCentroid({ x: 0, y: 0, z: -0.9 }) === 'lower hemisphere',  '');
@@ -2036,7 +2032,7 @@ function __triangulationDevTests() {
     regionForCentroid({ x: 0.5, y: 0.5, z: 0.0 }) === 'surround ring',
     '');
 
-  // ===== composeHealthLines via synthetic results (M3.E) =====
+  // ===== composeHealthLines via synthetic results =====
   // Build minimal result objects that satisfy the lines composer's reads,
   // bypassing analyseTriangulation. This isolates the line composition logic
   // from the upstream pipeline so we can hit every branch deterministically.
@@ -2191,7 +2187,7 @@ function __triangulationDevTests() {
     && /add a phantom above or below/.test(lines[0].text),
     lines);
 
-  // ===== pointInTriangle (M3.F) =====
+  // ===== pointInTriangle =====
   // Reference triangle: A=(0,0), B=(10,0), C=(0,10). Centroid (10/3, 10/3).
   check('pit-inside-centroid', pointInTriangle(3, 3, 0, 0, 10, 0, 0, 10) === true,  '');
   check('pit-outside-far',     pointInTriangle(20, 20, 0, 0, 10, 0, 0, 10) === false, '');
@@ -2222,7 +2218,7 @@ function setup() {
   // recreates the WEBGL canvas (and detaches it from #canvas-host), which
   // breaks orbitControl drag because event listeners are bound to the
   // now-orphaned old canvas. preserveDrawingBuffer is needed so the PNG
-  // export (M4.A) can drawImage() the WEBGL canvas without it having been
+  // export can drawImage() the WEBGL canvas without it having been
   // cleared after compositing.
   setAttributes({ antialias: true, preserveDrawingBuffer: true });
   const c = createCanvas(windowWidth, windowHeight, WEBGL);
@@ -2419,7 +2415,7 @@ function drawSpeakerBody(s) {
   // black, so spheres looked like flat discs. This tone keeps the "tasteful
   // dark" feel but lives in the range where the directional gradient is
   // actually visible.
-  // Hover highlight (M3.G): the speaker pointed at by HOVER.speakerId
+  // Hover highlight: the speaker pointed at by HOVER.speakerId
   // brightens toward a soft sky tone so the user can confirm "this is the
   // speaker the tooltip describes". Same hue family as the base, just lifted.
   if (HOVER.speakerId === s.id) {
@@ -2443,10 +2439,9 @@ function drawSpeakerBody(s) {
 function drawPhantomBody(p) {
   push();
   noStroke();
-  // Pale lavender (option A from M3.A colour discussion). Light enough to
-  // read as "imagined / ghostly" against the listening plane while still
-  // distinguishable from the speaker navy / listening-centre teal /
-  // cone orange palette.
+  // Pale lavender — reads as "imagined / ghostly" against the listening
+  // plane while staying distinct from the speaker navy / listening-centre
+  // teal / cone orange palette.
   fill(200, 180, 220, 220);
   translate(p.x, p.y, p.z);
   sphere(16);
@@ -3125,9 +3120,8 @@ function refreshUnitInputs() {
 // integer / float out of the textarea (commas / brackets / newlines / labels
 // all ignored), groups in triplets as x/y/z. Trailing tokens that don't make
 // a full triplet are dropped silently — caller sees the resulting speaker /
-// phantom count via the rendered list. M4 will introduce full state import
-// from a downloaded HTML file; this is the lighter-weight cousin for ad-hoc
-// scenario testing during development.
+// phantom count via the rendered list. Lighter-weight cousin to the full
+// HTML import path; useful for ad-hoc scenario testing.
 // =============================================================================
 
 function parseBulkTriplets(text) {
@@ -3176,8 +3170,8 @@ function bulkReplacePhantoms(text) {
 
 // =============================================================================
 // Full UI sync from STATE — runs on initial boot (always) and after the
-// upload path replaces STATE (M4.C). Idempotent: every render* / sync*
-// helper is safe to call repeatedly.
+// upload path replaces STATE. Idempotent: every render* / sync* helper
+// is safe to call repeatedly.
 // =============================================================================
 
 function syncUiFromState() {
@@ -3212,7 +3206,7 @@ function syncUiFromState() {
   // Camera. Only safe after setup() — pre-setup, p5 globals like width /
   // height are 0 and camera() / perspective() throw. setup() runs its own
   // applyCamera() when cam is first assigned, so the initial-boot pass
-  // intentionally skips this branch and the upload pass (M4.C) hits it.
+  // intentionally skips this branch and the upload pass hits it.
   if (cam) applyCamera();
 
   updateAllSpeakerDerived();
@@ -3221,11 +3215,11 @@ function syncUiFromState() {
 }
 
 // =============================================================================
-// PNG export (M4.A) — composite WEBGL canvas + HTML overlay labels into a
-// 2× viewport PNG. The labels live in the DOM (because p5 WEBGL text() is
-// unreliable, see ROADMAP discussion item 7), so we re-render them via 2D
-// ctx.fillText using their computed font / colour. Panel UI and tooltips
-// are intentionally excluded — the PNG should read as "the scene".
+// PNG export — composite WEBGL canvas + HTML overlay labels into a
+// 2× viewport PNG. The labels live in the DOM (because p5 WEBGL text()
+// is unreliable), so we re-render them via 2D ctx.fillText using their
+// computed font / colour. Panel UI and tooltips are intentionally
+// excluded — the PNG should read as "the scene".
 // =============================================================================
 
 const PNG_EXPORT_SCALE = 2;
@@ -3335,7 +3329,7 @@ function triggerDownload(blob, filename) {
 }
 
 // =============================================================================
-// HTML export (M4.B) — produce a self-contained HTML that opens with the
+// HTML export — produce a self-contained HTML that opens with the
 // current layout pre-loaded. Strategy:
 //   1. Use the current document as the template (so the live tool and a
 //      previously-downloaded copy share one code path; this also avoids a
@@ -3523,7 +3517,7 @@ async function exportHtml() {
 }
 
 // =============================================================================
-// HTML import (M4.C) — accept a previously-saved file, parse out the embedded
+// HTML import — accept a previously-saved file, parse out the embedded
 // state, validate, apply. Failures throw with a user-readable message; the
 // caller surfaces them via alert() and STATE is left untouched.
 // applyLoadedState() throws BEFORE mutating STATE on the schemaVersion guard,
@@ -3640,14 +3634,14 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Save PNG (M4.A) — disable button while exporting so a double-click
-  // doesn't queue two downloads.
+  // Save PNG — disable button while exporting so a double-click doesn't
+  // queue two downloads.
   const savePngBtn = document.getElementById('save-png-btn');
   if (savePngBtn) {
     savePngBtn.addEventListener('click', () => runExport(savePngBtn, 'PNG export', exportPng));
   }
 
-  // Save HTML / Open HTML (M4.B / M4.C) — both are live-tool-only.
+  // Save HTML / Open HTML — both are live-tool-only.
   // A downloaded HTML is a frozen snapshot: it can be viewed and locally
   // edited, but file I/O (re-saving, importing other layouts) belongs on
   // the live tool. Detection: presence of #coverage-script-inline.
@@ -3766,7 +3760,7 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 
   // Initial renders. Calling syncUiFromState() also handles the post-load
-  // case (M4.B boot loader, M4.C upload) where STATE has been replaced and
+  // case (boot loader or HTML upload) where STATE has been replaced and
   // every input / checkbox / camera button needs to be re-derived.
   syncUiFromState();
 

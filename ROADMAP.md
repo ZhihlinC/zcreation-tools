@@ -22,7 +22,7 @@
 - [x] **M2** — 聽覺平面 + 覆蓋熱區（grid sampling + gradient）（完成 2026-05-05，commit `5fa8124`）
 - [x] **M3** — Phantom speaker + 球面凸包三角剖分 + Layout Health（完成 2026-05-05）
 - [x] **M4** — HTML 下載 / 上傳（self-contained）+ PNG 截圖（完成 2026-05-06，A → C 三階段）
-- [ ] **M5** — i18n + mobile banner + landing page 正式化 + meta / OG / 公開化
+- [ ] **M5** — bilingual disclaimer + mobile banner + landing + meta / OG + 公開化（A–D done 2026-05-07/08；剩 E launch day）
 
 ---
 
@@ -517,7 +517,7 @@ QA：8 項 visual checks 全過，包含 round-trip / 錯誤分支 / 空 layoutN
 - 預覽縮圖：與 M5.D OG image 共用同一張截圖。
 - GitHub icon / link：M5.E launch day repo public 之前。
 
-### M5.D — Meta / OG / sitemap / robots
+### M5.D — Meta / OG / sitemap / robots ✅ 2026-05-08
 
 **範圍**
 
@@ -536,6 +536,13 @@ QA：8 項 visual checks 全過，包含 round-trip / 錯誤分支 / 空 layoutN
 1. View source → meta description / OG / canonical 正確。
 2. 本機檢查 `<meta property="og:*">` 完整；OG image 路徑能載入。
 3. `sitemap.xml` 與 `robots.txt` 直接訪問可達。
+
+**收尾備註（2026-05-08）**
+
+- OG image 在 M5.C 即已產出（`4e1fc8f`，1200×630），M5.D 補上兩個 `<head>` 的 OG / Twitter card 與 description SEO 詞、`sitemap.xml` 加 `<lastmod>`。
+- `robots.txt` M1 期間已就位（allow all + sitemap 指向），無變動。
+- `og:image` 用絕對路徑 `https://tools.zcreation.art/og-image.png`，因此 OG 預覽無法在 Live Server 驗，需上線後用 FB Sharing Debugger / opengraph.xyz 走真網址 force re-scrape。
+- 不再做 Twitter-specific 的 `twitter:title` / `twitter:description` / `twitter:image`：X 自 2023 起 fallback 到 `og:*`，重複塞反而徒增維護點。`twitter:card` 仍保留以指定 large image 卡片型別。
 
 ### M5.E — 公開化收尾（launch day 當天最後做）
 
@@ -769,4 +776,4 @@ M5.D OG 圖 dogfood 過程，使用者注意到同樣的 32-channel dome layout 
 
 ---
 
-**最後更新**：2026-05-07（M5 進度：A / B / C done；M5.D OG image 完成、其餘 meta tags / sitemap / robots 待續；新增討論事項 14 / 15、partial-resolved 討論事項 2 角度部分）
+**最後更新**：2026-05-08（M5 進度：A / B / C / D done；剩 M5.E launch day）

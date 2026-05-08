@@ -652,6 +652,10 @@ canvas { display: block; }
   line-height: 1.45;
   color: var(--muted);
 }
+#health-panel .health-framing-disclaimer {
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--panel-border);
+}
 #health-panel .health-status {
   display: flex;
   flex-direction: column;

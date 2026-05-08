@@ -2833,9 +2833,9 @@ const SPEAKER_FIELDS = [
   { key: 'pitch', label: 'Pitch°', kind: 'angle',
     title: 'Vertical aim. 0° = horizontal. +° tilts up' },
   { key: 'angleH', label: 'Spread H°', kind: 'angle',
-    title: 'Horizontal dispersion — total angle (e.g. 90° for typical FOH cabinets)' },
+    title: 'Horizontal dispersion — total angle (e.g. 90° for typical FOH cabinets). Spec-sheet angles usually cite the −6 dB point at ~2 kHz; LF coverage is broader.' },
   { key: 'angleV', label: 'Spread V°', kind: 'angle',
-    title: 'Vertical dispersion — total angle' },
+    title: 'Vertical dispersion — total angle. Spec-sheet angles usually cite the −6 dB point at ~2 kHz; LF coverage is broader.' },
 ];
 
 function renderSpeakersList() {

@@ -15,6 +15,7 @@ Thumbs.db
 # Internal dev docs (kept locally for development continuity, not for public repo)
 CLAUDE.md
 ROADMAP.md
+VIDEO_SCRIPT.md
 .markdownlint.json
 
 # Logs

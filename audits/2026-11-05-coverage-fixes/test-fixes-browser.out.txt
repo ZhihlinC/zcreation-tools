@@ -1,0 +1,50 @@
+PASS  boot: no console / page errors
+PASS  __triangulationDevTests in Chromium (102/102)
+PASS  F-08 Phantoms panel shows the reserve-a-panning-position note
+PASS  F-08 "+ Add Phantom" still fully visible under the note (1440×900)
+PASS  Q-07a "+ Add Speaker" opens a modal form (no speaker added yet)
+PASS  Q-07a speaker form pre-filled with defaults incl. auto-aim
+PASS  Q-07a yaw/pitch follow the position while untouched
+PASS  Q-07a yaw stays as typed once edited
+PASS  Q-07a / F-19 spread 180° rejected: form stays open, nothing added
+PASS  Q-07a Add closes the form and appends the speaker with the form values
+PASS  Q-07a Cancel adds nothing
+PASS  Q-07a form uses the display unit (m)
+PASS  F-17 2.53 m typed in the form stored as 253 cm
+PASS  Q-07a "+ Add Phantom" opens a form with EMPTY coordinates (SPEC §8.4)
+PASS  Q-07a phantom form refuses empty coordinates
+PASS  Q-07a phantom added with the typed position
+PASS  F-19 inline spread 181° not stored
+PASS  F-16 inline Infinity not stored
+PASS  F-16 invalid inline value reverts on commit
+PASS  F-16 audience listening height 0 not stored
+PASS  F-07 disabled speaker name label hidden
+PASS  F-07 Speakers layer off hides all speaker name labels
+PASS  F-07 re-enabled speaker label visible again
+PASS  F-15 camera closer than 100 cm is pushed back to 100 cm (got 100.00)
+PASS  F-15 camera farther than 5000 cm is pulled in to 5000 cm (got 5000.00)
+PASS  F-15 wheel zoom-out at the limit stays at 5000 cm (got 5000.00)
+PASS  F-18 PNG is 2× the viewport (2880×1800)
+PASS  F-18 WebGL canvas was re-rendered at 2880×1800 for the export (not upscaled)
+PASS  F-18 pixel density + canvas size restored after export
+PASS  F-18 camera unchanged by export
+PASS  F-06 PNG filename default is lowercase untitled
+PASS  Q-01 orbit drag recorded in STATE.view.camera
+PASS  F-06 HTML filename keeps the Chinese layout name
+PASS  P-04 inline script contains no raw "</script" or "<!--"
+PASS  P-04 inline script runs to its last line
+PASS  P-04 saved file boots, injected script did not run
+PASS  Q-01 file:// reopen restores the orbited camera
+PASS  Q-07b saved file hides Save HTML and Open HTML
+PASS  F-19 live Open HTML updates document.title
+PASS  Q-01 live Open HTML restores the orbited camera
+PASS  Q-01 clicking a preset clears the free camera
+PASS  F-16 Open of a file without "phantoms" drops the stale phantom
+PASS  F-10 offline: notice shown in the middle of the screen
+PASS  F-10 offline: notice is on top (not covered by a panel)
+PASS  F-10 offline: panels and Layout Health still work
+PASS  F-10 offline: no "radians is not defined" error
+PASS  F-01 Atmos 7.1.4 demo shows the hull-open warning (no triangle scores)
+PASS  mobile banner shown < 1024px with the new copy
+
+browser fix tests: 48/48 passed

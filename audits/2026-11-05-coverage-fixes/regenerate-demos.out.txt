@@ -1,0 +1,2 @@
+demo/Dolby-Atmos-7.1.4-coverage-sketch.html: regenerated (216 KB), layout state identical, filename Dolby-Atmos-7.1.4-coverage-sketch.html
+demo/12ch-Pentakis-Dome-coverage-sketch.html: regenerated (217 KB), layout state identical, filename 12ch-Pentakis-Dome-coverage-sketch.html

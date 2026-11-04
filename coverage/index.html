@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Sound Coverage Sketch</title>
-  <meta name="description" content="Plan multichannel speaker layouts in 3D — visualize cone coverage on the audience plane and check Pulkki-VBAP layout health. A geometric aiming sketch for sound designers, not an acoustic simulation.">
+  <meta name="description" content="Sketch multichannel speaker layouts in 3D: see the geometric coverage of each speaker on the audience plane and get VBAP layout health hints. A sound design sketch tool, not an acoustic simulation.">
   <link rel="canonical" href="https://tools.zcreation.art/coverage/">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://tools.zcreation.art/coverage/">
   <meta property="og:title" content="Sound Coverage Sketch">
-  <meta property="og:description" content="Plan multichannel speaker layouts in 3D — visualize cone coverage on the audience plane and check Pulkki-VBAP layout health. A geometric aiming sketch for sound designers, not an acoustic simulation.">
+  <meta property="og:description" content="Sketch multichannel speaker layouts in 3D: see the geometric coverage of each speaker on the audience plane and get VBAP layout health hints. A sound design sketch tool, not an acoustic simulation.">
   <meta property="og:image" content="https://tools.zcreation.art/og-image.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
@@ -22,6 +22,12 @@
 <body>
 
   <main id="canvas-host" aria-label="3D scene"></main>
+
+  <!-- Shown by coverage.js when p5.js could not be loaded (e.g. a saved file
+       opened offline, audit F-10). Panels keep working without p5. -->
+  <div id="offline-notice" role="status" hidden>
+    <p>The 3D view needs an internet connection to load p5.js. Your layout data in this file is intact — reconnect and reload to see the scene.</p>
+  </div>
 
   <!-- HTML overlay labels (axis labels + speaker names); positioned per-frame
        via manual view × projection matrix multiplication. Replaces p5 WEBGL
@@ -45,28 +51,28 @@
     </button>
     <div id="disclaimer-body" class="disclaimer-body">
       <div class="disclaimer-lang disclaimer-zh" lang="zh-TW">
-        <p>這是一個透過 3D 視覺化呈現音響角度與覆蓋的草圖繪製工具。</p>
-        <p>輸入的音響發散角將作為高頻覆蓋的近似值，並依 Pulkki-VBAP convex-hull 三角化提供 layout 健康度提示。</p>
-        <p><strong>請注意：這個工具不能取代聲學模擬，不預測 SPL、頻率響應、反射或相位，也不模擬任何 renderer 行為。</strong></p>
-        <p>它只回答兩個問題：</p>
+        <p>這是一個用 3D 草擬音響擺位、瞄準與覆蓋範圍的幾何工具。</p>
+        <p>它把你輸入的擴散角當作高頻覆蓋的近似值，並依 Pulkki VBAP 的凸包三角剖分，提供 layout 健康度提示。</p>
+        <p><strong>它不是聲學模擬：不預測 SPL、頻率響應、反射或相位，也不模擬任何 renderer 的行為。</strong></p>
+        <p>它主要幫你看兩件事：</p>
         <ol>
-          <li>「我設想的聽覺中心，真的有被我擺放的音響涵蓋嗎？」</li>
-          <li>「我的多聲道 layout 從幾何上看，對 VBAP 系列 panner 是健康的嗎？」</li>
+          <li>「我設想的聽覺中心，有沒有被我擺的音響涵蓋到？」</li>
+          <li>「從幾何上看，我的多聲道 layout 對 VBAP 系列 panner 是否健康？」</li>
         </ol>
-        <p>聽覺判斷仍仰賴 renderer 與你的雙耳。</p>
+        <p>實際聽起來如何，仍以你的 renderer 與耳朵為準。</p>
       </div>
       <div class="disclaimer-lang disclaimer-en" lang="en">
-        <p>This is a geometric aiming &amp; coverage sketch tool.</p>
-        <p>It uses your speaker dispersion angles as an approximation of high-frequency coverage,
-           and provides layout-health hints based on Pulkki-VBAP convex-hull triangulation.</p>
-        <p><strong>It does not replace acoustic simulation. It does not predict SPL,
-           frequency response, reflections, or phase. It does not model any renderer's behaviour.</strong></p>
-        <p>It only answers two questions:</p>
+        <p>A geometric sketch tool for placing and aiming speakers in 3D and seeing what they cover.</p>
+        <p>It treats your speaker dispersion angles as an approximation of high-frequency coverage,
+           and gives layout-health hints based on Pulkki-VBAP convex-hull triangulation.</p>
+        <p><strong>It is not an acoustic simulation: it does not predict SPL, frequency response,
+           reflections or phase, and it does not model any renderer's behaviour.</strong></p>
+        <p>It is meant to help with two questions:</p>
         <ol>
           <li>"Is my imagined listening centre actually covered by the speakers I've placed?"</li>
           <li>"Geometrically, is my multichannel layout healthy for VBAP-family panners?"</li>
         </ol>
-        <p>Auditory judgement still belongs to your renderer and your ears.</p>
+        <p>How it actually sounds is still up to your renderer and your ears.</p>
       </div>
     </div>
   </aside>
@@ -148,6 +154,7 @@
 
     <section id="phantoms-panel" class="panel">
       <h2>Phantoms</h2>
+      <p class="panel-note" id="phantoms-note">Phantoms reserve a panning position on the sphere — they are not speakers to buy. Add one to see how the layout health changes when that direction is covered.</p>
       <ul id="phantoms-list"></ul>
       <button type="button" id="add-phantom-btn" class="primary-btn">+ Add Phantom</button>
     </section>
@@ -183,6 +190,51 @@
     <div id="health-panel-status" class="health-status"></div>
   </aside>
 
+  <!-- Add Speaker / Add Phantom forms (SPEC §9.2). Values are entered in the
+       current display unit (cm / m); coverage.js converts and validates with
+       the same rules as the inline editors. -->
+  <dialog id="add-speaker-dialog" class="panel add-dialog" aria-labelledby="add-speaker-title">
+    <form method="dialog" id="add-speaker-form" novalidate>
+      <h2 id="add-speaker-title">Add speaker</h2>
+      <label class="field field-wide"><span>Name</span><input type="text" name="name" autocomplete="off" spellcheck="false"></label>
+      <div class="dialog-grid">
+        <label class="field"><span>X <em class="unit-tag"></em></span><input type="number" step="any" name="x" data-kind="len" required></label>
+        <label class="field"><span>Y <em class="unit-tag"></em></span><input type="number" step="any" name="y" data-kind="len" required></label>
+        <label class="field"><span>Z <em class="unit-tag"></em></span><input type="number" step="any" name="z" data-kind="len" required></label>
+        <label class="field"><span>Yaw°</span><input type="number" step="any" name="yaw" required></label>
+        <label class="field"><span>Pitch°</span><input type="number" step="any" name="pitch" required></label>
+        <span class="dialog-grid-spacer" aria-hidden="true"></span>
+        <label class="field" title="Total angle, between 0° and 180°"><span>Spread H°</span><input type="number" step="any" name="angleH" required></label>
+        <label class="field" title="Total angle, between 0° and 180°"><span>Spread V°</span><input type="number" step="any" name="angleV" required></label>
+      </div>
+      <p class="dialog-hint">Yaw and pitch follow the position (aimed at the listening centre) until you edit them.</p>
+      <div class="dialog-actions">
+        <button type="button" class="aim-btn" data-action="aim">⊙ Aim at centre</button>
+        <span class="dialog-actions-spacer"></span>
+        <button type="button" data-action="cancel">Cancel</button>
+        <button type="submit" class="primary-btn" data-action="add">Add</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="add-phantom-dialog" class="panel add-dialog" aria-labelledby="add-phantom-title">
+    <form method="dialog" id="add-phantom-form" novalidate>
+      <h2 id="add-phantom-title">Add phantom</h2>
+      <p class="panel-note">Phantoms reserve a panning position on the sphere — they are not speakers to buy. Add one to see how the layout health changes when that direction is covered.</p>
+      <label class="field field-wide"><span>Name</span><input type="text" name="name" autocomplete="off" spellcheck="false"></label>
+      <div class="dialog-grid">
+        <label class="field"><span>X <em class="unit-tag"></em></span><input type="number" step="any" name="x" data-kind="len" required></label>
+        <label class="field"><span>Y <em class="unit-tag"></em></span><input type="number" step="any" name="y" data-kind="len" required></label>
+        <label class="field"><span>Z <em class="unit-tag"></em></span><input type="number" step="any" name="z" data-kind="len" required></label>
+      </div>
+      <div class="dialog-actions">
+        <span class="dialog-actions-spacer"></span>
+        <button type="button" data-action="cancel">Cancel</button>
+        <button type="submit" class="primary-btn" data-action="add">Add</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- Triangle hover tooltip. Hidden by default; populated and
        positioned by pickTriangle()/updateTooltip() in coverage.js. -->
   <div id="triangle-tooltip" class="tooltip" role="tooltip" hidden>
@@ -215,11 +267,12 @@
 
   <!-- Mobile banner (SPEC §13). Shown when viewport < 1024px; manual
        dismiss is session-scoped (not persisted) so reload always re-shows it.
-       Bilingual so both audiences read it without language switching. -->
+       Bilingual (SPEC §12 exception) so both audiences read it without
+       language switching. -->
   <aside id="mobile-banner" hidden>
     <div class="banner-text">
-      <span lang="zh-TW">此工具為桌面瀏覽器設計，行動裝置僅供預覽。</span>
-      <span lang="en">This tool is designed for desktop. Mobile view is for preview only.</span>
+      <span lang="zh-TW">此工具為桌面瀏覽器設計。在較小的螢幕上只會顯示 3D 畫面，編輯請改用較寬的視窗。</span>
+      <span lang="en">This tool is designed for desktop. On smaller screens only the 3D view is shown — use a wider window to edit.</span>
     </div>
     <button type="button" id="mobile-banner-dismiss" aria-label="Dismiss">✕</button>
   </aside>

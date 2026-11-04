@@ -1,6 +1,6 @@
 # Sound Coverage Sketch
 
-A small browser-based tool for sound designers — sketch multichannel speaker layouts in 3D and check VBAP-family layout health, without a CAD pipeline.
+A small browser-based tool for sound designers — sketch multichannel speaker layouts in 3D, see their geometric coverage, and get VBAP-family layout health hints, without a CAD pipeline.
 
 → **Live**: <https://tools.zcreation.art/coverage/>
 
@@ -11,18 +11,18 @@ A small browser-based tool for sound designers — sketch multichannel speaker l
 - **3D speaker layout** with cone visualisation from manufacturer dispersion angles
 - **Audience-plane coverage heatmap** showing how many speakers reach each listener position
 - **Pulkki-VBAP triangulation** with per-triangle health flags (max angle, area uniformity, L/R symmetry)
-- **Phantom speakers** to sketch panning slots that aren't physical (zenith / nadir closure, etc.)
+- **Phantom speakers** to reserve panning positions on the sphere that aren't physical speakers (e.g. closing the hull above or below the listeners)
 - **Save / Open as a single self-contained HTML file** — your layout travels with its viewer; share it like any other file
 - **English UI** (sound-design vocabulary stays English by convention); the §2 scope disclaimer is bilingual zh-TW / EN
 
 ## What it isn't
 
-This is a **geometric aiming sketch**, not an acoustic simulator. It does not predict SPL, frequency response, reflections, or phase, and does not model any specific renderer. It only answers two questions:
+It is a **geometric sketch**, not an acoustic simulation: it does not predict SPL, frequency response, reflections or phase, and it does not model any renderer's behaviour. It is meant to help with two questions:
 
 1. Is your imagined listening centre actually covered by the speakers you've placed?
 2. Geometrically, is your multichannel layout healthy for VBAP-family panners?
 
-Auditory judgement still belongs to your renderer and your ears. See [SPEC.md §2](./SPEC.md) for the full positioning statement.
+How it actually sounds is still up to your renderer and your ears. See [SPEC.md §2](./SPEC.md) for the full positioning statement.
 
 ## Why this exists
 
@@ -45,7 +45,7 @@ Known scope limits (intentional, see [SPEC §16](./SPEC.md)):
 
 - No SPL / loudness / frequency-response prediction (the tool shows distance and propagation delay; the rest is your domain)
 - No layout preset library (5.1 / 7.1 / Octagon templates, etc.) — the workflow is "draw what you need", not "load a standard and adjust"
-- No mobile-optimised editing (desktop-first; viewport < 1024px shows a banner)
+- No mobile-optimised editing (desktop-first; below 1024px only the 3D view is shown, with a banner saying so)
 
 ## License
 

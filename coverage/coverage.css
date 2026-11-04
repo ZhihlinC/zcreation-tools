@@ -898,8 +898,11 @@ input.invalid,
 }
 
 #offline-notice {
+  /* Horizontally centred; vertically a little below centre so it sits under
+     the expanded §2 panel instead of hiding behind it, and above every
+     panel (z-index) so it is never covered. */
   position: fixed;
-  top: 50%;
+  top: 62%;
   left: 50%;
   transform: translate(-50%, -50%);
   max-width: min(460px, calc(100vw - 2rem));
@@ -911,7 +914,7 @@ input.invalid,
   font-size: 0.9rem;
   line-height: 1.5;
   text-align: center;
-  z-index: 5;
+  z-index: 30;
 }
 #offline-notice[hidden] { display: none; }
 #offline-notice p { margin: 0; }

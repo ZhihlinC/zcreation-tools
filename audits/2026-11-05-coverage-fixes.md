@@ -70,7 +70,7 @@
 | 4 | 每個修正至少一個「改壞就失敗」的測試 | ✅ Node 修正測試 62/62、瀏覽器修正測試 48/48；30 個突變（20 個 Node、10 個瀏覽器）全部被抓到 | `mutation-check.out.txt` |
 | 5 | 截圖：彈出表單、hull-open、Phantoms 說明、離線提示 | ✅ `add-speaker-dialog.png`、`add-phantom-dialog.png`、`hull-open-atmos-demo.png`、`phantoms-note.png`、`offline-notice.png`，另附 `mobile-banner.png` | `audits/2026-11-05-coverage-fixes/` |
 | 6 | SPEC 同步所有決策 | ✅ §2、§5.4、§7.2、§8.1–8.4、§9.1–9.2、§10.1–10.3、§11、§12、§13、§14、§17。SPEC 開頭**沒有**變更紀錄區塊，所以沒有新增；改動處都在文中標了日期 | `SPEC.md` |
-| 7 | 報告、commit、push `coverage-fixes-2026-11` | ✅ 本檔；push 結果見最後 | — |
+| 7 | 報告、commit、push `coverage-fixes-2026-11` | ✅ 本檔；已 push `origin coverage-fixes-2026-11`（未動 main、未 merge） | — |
 
 其他稽核腳本重跑：
 

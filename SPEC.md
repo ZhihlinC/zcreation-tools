@@ -5,6 +5,16 @@
 
 ---
 
+## 變更紀錄 / Changelog
+
+- **1.1.0-beta（2026-11-07）**：2026-11-05 稽核修正加後續調整。
+  - 平面判定改為「所有點彼此的仰角差 ≤ 1°」，同一高度的單圈環不論高低都算平面（§8.1）；包圍檢查 `ε = sin 1°` 不變。
+  - 移除 `surround ring` 標籤（§8.3）；dispersion angle 中文統一為「擴散角」、`Pulkki-VBAP` 統一寫法；中文定位語首句沿用原版（§2）。
+  - 開檔時有值但驗證不過、被換成預設值的欄位，會跳英文提示，不再悄悄改值（§10.3）；`< 1024px` 只顯示 3D 畫面的實際行為寫入 §13。
+  - 工具版本 `1.1.0-beta`；`schemaVersion` 仍為 1，舊存檔照樣能開。
+
+---
+
 ## 1. 專案資訊 / Project Info
 
 - **工具名稱 / Tool name**：Sound Coverage Sketch
@@ -17,9 +27,9 @@
 
 **中文版**
 
-> 這是一個用 3D 草擬音響擺位、瞄準與覆蓋範圍的幾何工具。
+> 這是一個透過 3D 視覺化呈現音響角度與覆蓋的草圖繪製工具。
 >
-> 它把你輸入的擴散角當作高頻覆蓋的近似值，並依 Pulkki VBAP 的凸包三角剖分，提供 layout 健康度提示。
+> 它把你輸入的擴散角當作高頻覆蓋的近似值，並依 Pulkki-VBAP 的凸包三角剖分，提供 layout 健康度提示。
 >
 > **它不是聲學模擬：不預測 SPL、頻率響應、反射或相位，也不模擬任何 renderer 的行為。**
 > 它主要幫你看兩件事：
@@ -53,7 +63,7 @@
 1. **聽覺中心優先 / Listening-centre first**：「假想的聽覺中心 (imaginary listening centre)」永遠是「世界座標原點 (0, 0, 0) 加上聽覺高度」（可能是站、坐姿耳高），所有資料、視角、計算以此為錨。沒有「場館建模」概念。
 2. **可攜性優先 / Portability first**：使用者可隨時下載一份自我完備（self-contained）的 HTML 檔，內含目前 layout，可獨立開啟、可上傳回工具繼續編輯。
 3. **誠實優先 / Honesty first**：工具明確告知它「能」與「不能」告訴使用者的事。任何可能誤導的視覺、文字、警示都必須加上限制條款。
-4. **桌面優先 / Desktop first**：`< 1024px` 顯示提示 banner，但不阻擋。
+4. **桌面優先 / Desktop first**：`< 1024px` 顯示提示 banner，且只顯示 3D 畫面（編輯面板收起，見 §13）；不做 mobile 編輯 UI。
 
 ---
 
@@ -89,13 +99,13 @@
   z: number,            // cm
   yaw: number,          // degrees, 0 = 朝 +Y, 順時針為正（俯視時）
   pitch: number,        // degrees, 0 = 水平, 抬頭為正
-  angleH: number,       // degrees, 水平張角（總角，非半角）
-  angleV: number,       // degrees, 垂直張角（總角，非半角）
+  angleH: number,       // degrees, 水平擴散角（總角，非半角）
+  angleV: number,       // degrees, 垂直擴散角（總角，非半角）
   enabled: boolean      // 是否參與計算（可暫時關閉某顆音響）
 }
 ```
 
-> 不對稱張角支援：`angleH` 與 `angleV` 各自獨立。
+> 不對稱擴散角支援：`angleH` 與 `angleV` 各自獨立。
 
 ### 5.2 Phantom Speaker
 
@@ -147,7 +157,7 @@
     layoutName: string,
     createdAt: string,    // ISO 8601
     sourceUrl: 'https://tools.zcreation.art/coverage',
-    toolVersion: string   // 工具版本，例如 "1.0.0"
+    toolVersion: string   // 工具版本，例如 "1.1.0-beta"
   },
   audience: Audience,
   speakers: Speaker[],
@@ -168,7 +178,7 @@
 | `listening-centre` | 聽覺中心 teal 球（在 `(0, 0, listeningHeight)`）+ 從原點往上的細虛線 | ON |
 | `coverage-heat` | 聽覺平面上的覆蓋熱區（gradient color） | ON |
 | `speakers` | 音響本體（球體 + label） | ON |
-| `cones` | 音響張角錐（4 條邊射線 + 底端輪廓 + 極淡底色） | ON |
+| `cones` | 音響擴散角錐（4 條邊射線 + 底端輪廓 + 極淡底色） | ON |
 | `coords` | 各 speaker / 原點 / 聽覺中心的 `(x, y, z)` 文字標籤 | OFF |
 | `triangulation` | 凸包三角剖分（每個三角形依健康度著色） | OFF |
 | `phantoms` | phantom speaker 點（虛線、半透明） | ON（若有） |
@@ -189,7 +199,7 @@
 對每個 grid point `P`，對每顆 enabled speaker `S`：
 
 1. 取 speaker 本地基底 `(forward, right, up)` = `speakerBasis(yaw, pitch)`，其中 `right = (cos yaw, −sin yaw, 0)`（只由 yaw 決定）、`up = right × forward`。
-    - `|pitch| < 90°` 時，這個 `right` 和 `normalize(forward × world-up)` 完全相同；差別只在 `pitch = ±90°`（吸頂朝下、地板朝上）：`forward × world-up` 在那裡等於零、沒有定義，用 yaw 算的 `right` 仍然有定義，所以朝正下方的音響照樣可以用 yaw 轉向（水平／垂直張角不對稱時才看得出差別）。
+    - `|pitch| < 90°` 時，這個 `right` 和 `normalize(forward × world-up)` 完全相同；差別只在 `pitch = ±90°`（吸頂朝下、地板朝上）：`forward × world-up` 在那裡等於零、沒有定義，用 yaw 算的 `right` 仍然有定義，所以朝正下方的音響照樣可以用 yaw 轉向（水平／垂直擴散角不對稱時才看得出差別）。
 2. 計算 `d = P - S`，並投影到三個基底軸：
     - `f_proj = d · forward`
     - `r_proj = d · right`
@@ -224,7 +234,7 @@
 
 1. 對所有 enabled speaker + phantom，計算其相對**聽覺中心** `(0, 0, listeningHeight)` 的方向向量
 2. 投影到單位球面 (unit sphere)；方向相差 < 0.05 rad（約 2.9°）的點先合併成一個（sliver pre-merge）
-3. **平面 layout 判定**：從聽覺中心看出去，所有點的仰角都在 **±1°** 以內 → 平面 layout（`ℹ Planar layout`，畫 2D 環，不做三角剖分）。只看角度，與距離無關（2 m 和 20 m 外的音響容差相同）。
+3. **平面 layout 判定**：從聽覺中心看出去，所有點彼此的仰角差在 **1° 以內**（最高仰角 − 最低仰角 ≤ 1°）→ 平面 layout（`ℹ Planar layout`，畫 2D 環，不做三角剖分）。只看角度，與距離無關（2 m 和 20 m 外的音響容差相同）。不要求在耳朵高度：同一高度的單圈環（含高於或低於耳朵）都算平面，因為單圈環在 panner 裡通常當 2D 使用；兩圈以上或有頂置／地板喇叭、仰角差超過 1° 時才走下面的 3D 凸包流程。
 4. 計算凸包 (convex hull) → 取得三角形列表
     - 每次建好後檢查三角網是否完整（每條有向邊恰好出現一次、反向邊存在、V − E + F = 2）。不完整時顯示 numerical issue，**不顯示任何三角形分數**。
     - **包圍檢查**：聽覺中心必須在凸包內部——每個面的外法向量 `n` 都要滿足 `n · a > ε`（`a` 為該面任一頂點；`n · a` 即該面所在平面到聽覺中心的距離）。`ε = sin(1°)`，與平面判定用同一個 1°。不通過 → `hull-open`：只顯示警示（§8.3），三角形以中性灰色畫出、不上健康色、不給數字，hover 不顯示三角形資訊。理由：沒包住中心時，球面上有一塊沒有任何三角形覆蓋，剩下的三角形會重疊或退化，那些分數沒有根據，顯示出來反而誤導。
@@ -267,14 +277,14 @@
 - 對稱性問題（獨立一行）：`⚠ Layout is asymmetric (L/R, Δ = X.XX rad). Sources panning across the centerline may behave inconsistently.`
 
 `[region]` 用粗略區域描述，從以下集合中選取：
-`upper hemisphere` / `lower hemisphere` / `front` / `rear` / `right side` / `left side` / `surround ring`
+`upper hemisphere` / `lower hemisphere` / `front` / `rear` / `right side` / `left side`
 
 > **判定區域的方法**：取該三角形的**外法向量**（不是頂點重心）。小三角形兩者幾乎相同；跨很大的三角形（例如 ear-level 環的頂蓋、底蓋）重心會落在水平面附近、被誤標成 front／rear，外法向量則正確指向 upper／lower。
 > 依序判定：`z > 0.7` → `upper hemisphere`；`z < −0.7` → `lower hemisphere`；`y > 0.7` → `front`；`y < −0.7` → `rear`；其餘以最大絕對值分量為準（x → `right side` / `left side`，y → `front` / `rear`，z → `upper hemisphere` / `lower hemisphere`）。
 >
 > **選哪個區域**：取該等級（紅或黃）三角形中出現最多次的區域。**數量平手時列出前兩名**，依上面集合的順序取前兩個，用 `and` 連接（例：`detected in front and rear`）；三個以上平手也只列兩個。
 >
-> 2026-11-05 移除了程式自行加的 `centerline`、`the surround region`、`the layout` 三個標籤。依上面的「最大絕對值分量」規則，`surround ring` 實際上不會被選到；是否保留這個標籤、或另訂它的判定規則，**待決**（見 2026-11-05 修正報告）。
+> 2026-11-05 移除了程式自行加的 `centerline`、`the surround region`、`the layout` 三個標籤；1.1.0-beta 再刪掉一個依上面規則本來就選不到的標籤，標籤共 6 個。
 
 ### 8.4 設計原則 / Design Principles
 
@@ -308,7 +318,7 @@ phantom speaker 完全由使用者手動放置。
 ### 9.2 編輯 / Editing
 
 - 「+ Add Speaker」：彈出表單輸入 x/y/z/yaw/pitch/angleH/angleV/name
-    - 預填新音響的預設值：x = 0、y = 觀眾席前緣再往前 200 cm（`width / 2 + 200`）、z = 240 cm、張角 90° × 60°、名稱 `Speaker N`；yaw/pitch 自動瞄準聽覺中心
+    - 預填新音響的預設值：x = 0、y = 觀眾席前緣再往前 200 cm（`width / 2 + 200`）、z = 240 cm、擴散角 90° × 60°、名稱 `Speaker N`；yaw/pitch 自動瞄準聽覺中心
     - 使用者還沒動 yaw/pitch 之前，改 x/y/z 時 yaw/pitch 會跟著重新瞄準；動過之後就保留使用者的值。「⊙ Aim at centre」重新瞄準並恢復跟隨
     - 數值以目前顯示單位（cm / m）輸入；驗證規則和列表內編輯、開檔相同（§10.3）。不通過的欄位標紅、表單不關閉
 - 列表中點擊任一 speaker：展開編輯欄位（inline edit）。不合法的值（空白、非有限數、超出範圍）不寫入 state，欄位標紅；離開欄位時還原成目前的值
@@ -372,7 +382,9 @@ phantom speaker 完全由使用者手動放置。
 2. 讀取檔案內容、用 regex / DOMParser 找到 `<script id="coverage-state">` 區塊
 3. 解析 JSON、驗證 `schemaVersion === 1`
 4. **先重設成預設 state，再套用檔案內容**（檔案裡沒有的欄位用預設值，不會留下前一份 layout 的資料），進入編輯模式；live 工具的分頁標題跟著改成 `{layoutName} — Sound Coverage Sketch`
-5. 失敗（檔案格式錯 / schema 不符）：顯示錯誤訊息，不破壞當前 state
+5. **不悄悄改值**：欄位**不存在**時用預設值（不提示）；欄位**有值但驗證不過**（例如 `"x": "5"`、`NaN`、超出範圍的擴散角）時同樣換成預設值，但開檔成功後必須在開檔訊息的位置跳一行英文提示（`{N}` 為被換掉的值的數量；`{names}` 為受影響的 speaker／phantom 名稱，觀眾席尺寸受影響時寫 `audience`，去重、最多列 5 個，超過接 `, and K more`）：
+   `⚠ {N} value(s) in this file couldn't be read and were replaced with defaults ({names}). Check them before relying on this layout.`
+6. 失敗（檔案格式錯 / schema 不符）：顯示錯誤訊息，不破壞當前 state
 
 **驗證規則（輸入欄位、Add 表單、開檔共用同一套）**：
 
@@ -416,7 +428,8 @@ if (window.innerWidth < 1024) {
   // EN：This tool is designed for desktop. On smaller screens only the 3D view
   //     is shown — use a wider window to edit.
   // banner 可手動收起，但每次頁面重新載入又會顯示
-  // 不阻擋任何功能、不重排 layout、不切換 mobile UI
+  // < 1024px 只顯示 3D 畫面，編輯面板（左上、右欄、Audience、Layout Health）收起；
+  // 不做 mobile 編輯 UI；提示條可手動收起、重新載入會再出現
 }
 ```
 
@@ -425,8 +438,6 @@ if (window.innerWidth < 1024) {
 - **不做** device 分流
 - 行動裝置仍可瀏覽 + 進行有限互動（orbit / zoom 觸控勉強可用），但不保證好用
 - 此規則同時適用於下載出的 HTML
-
-> **實作現況與待決（2026-11-05）**：目前 `coverage.css` 在 `< 1024px` 時把編輯面板（左上、右欄、Audience、Layout Health）整個隱藏，只留 3D 畫面與 §2 面板——這和上面「不阻擋任何功能、不重排 layout」不一致（2026-11-05 稽核沒有列出這點）。提示條文案照**實際行為**寫（只顯示 3D 畫面）。要改 CSS 還是改這段規則，待 Yves 決定。
 
 ---
 
@@ -478,10 +489,8 @@ if (window.innerWidth < 1024) {
 | L/R 對稱性偏差門檻 | 需以 beta / 真實 layout 校準 | beta |
 | Phantom speaker 數量上限 | 是否設上限避免無意義疊加 | beta |
 | 截圖按鈕是否選擇解析度 | v1 暫定固定 2× | v2 視需要 |
-| 平面 / 包圍檢查的 1° 容差 | §8.1；2026-11-05 依決策訂為 ±1° 仰角、`ε = sin 1°` | beta |
+| 平面 / 包圍檢查的 1° 容差 | §8.1；平面＝仰角差 ≤ 1°（1.1.0-beta 起）、包圍 `ε = sin 1°` | beta |
 | 相機距離 100–5000 cm | §9.1 | beta |
-| `surround ring` 標籤 | §8.3：目前規則不會選到 | 待決 |
-| `< 1024px` 隱藏編輯面板 vs §13「不阻擋」 | §13 | 待決 |
 
 ---
 

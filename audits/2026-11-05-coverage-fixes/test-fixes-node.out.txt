@@ -1097,7 +1097,7 @@ OK  : lines-collinear [
     text: '⚠ Speakers are collinear from the listening centre — layout needs spatial spread.'
   }
 ]
-OK  : small-circle-above-ears-hull-open hull-open
+OK  : small-circle-above-ears-planar planar
 OK  : small-circle-plus-zenith-hull-open { kind: 'hull-open', count: 5 }
 OK  : small-circle-plus-nadir-ok { kind: 'ok' }
 OK  : lines-hull-open [
@@ -1182,12 +1182,19 @@ PASS  F-01 all-above layout → hull-open, no scores
 PASS  F-01 hull-open panel text is the hull-open warning only
 PASS  F-01 ear ring + tops + nadir → ok (encloses)
 PASS  F-01 enclosure tolerance is sin(1°)
-PASS  P-03 ring at ±0.99° elevation, r=120 → planar
-PASS  P-03 ring at ±1.05° elevation, r=120 → not planar
-PASS  P-03 ring at ±0.99° elevation, r=1200 → planar
-PASS  P-03 ring at ±1.05° elevation, r=1200 → not planar
-PASS  P-03 ring at ±0.99° elevation, r=12000 → planar
-PASS  P-03 ring at ±1.05° elevation, r=12000 → not planar
+PASS  P-03 ring with 0.99° elevation spread, r=120 → planar
+PASS  P-03 ring with 1.05° elevation spread, r=120 → not planar
+PASS  P-03 ring with 0.99° elevation spread, r=1200 → planar
+PASS  P-03 ring with 1.05° elevation spread, r=1200 → not planar
+PASS  P-03 ring with 0.99° elevation spread, r=12000 → planar
+PASS  P-03 ring with 1.05° elevation spread, r=12000 → not planar
+PASS  B1 8-ring at +14° (same height) → planar
+PASS  B1 ring at −10° → planar
+PASS  B1 ring at +14° with 0.5° spread → planar
+PASS  B1 ring at +14° with 2° spread → not planar
+PASS  B1 ear ring + one top speaker → hull-open
+PASS  B1 vertical front arc does not throw
+INFO vertical front arc classified as: hull-open
 PASS  F-03 region from normal: straight up
 PASS  F-03 no centerline label
 PASS  F-03 tie → "front and rear"
@@ -1229,6 +1236,11 @@ PASS  Q-01 serializeState writes view.camera
 PASS  Q-01 applyLoadedState restores view.camera
 PASS  Q-01 malformed camera → null (preset used)
 PASS  Q-01 loaded camera distance clamped to ≥ 100 cm
+PASS  B7 string x → warning naming the speaker
+PASS  B7 healthy file → no warning
+PASS  B7 missing fields (not wrong values) → no warning
+PASS  B7 out-of-range spread + audience + phantom → counted and deduped names
+PASS  B7 more than 5 names → "and K more"
 PASS  boot loader applies the embedded state without warnings
 PASS  Q-01 boot loader restores the free camera
 PASS  P-04 escapes </script (any case) and <!--
@@ -1239,4 +1251,4 @@ PASS  P-04 the real coverage.js survives escaping as valid JS
 PASS  F-19 live title for a named layout
 PASS  F-19 live title for an unnamed layout
 
-node fix tests: 62/62 passed
+node fix tests: 73/73 passed

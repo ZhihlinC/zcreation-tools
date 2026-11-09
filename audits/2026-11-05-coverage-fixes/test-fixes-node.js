@@ -47,13 +47,30 @@ check('coverage.js loads without p5 globals (F-10)', true);
   r = api.analyseTriangulation();
   check('F-01 ear ring + tops + nadir → ok (encloses)', r.kind === 'ok', r.kind);
   check('F-01 enclosure tolerance is sin(1°)', Math.abs(api.HEALTH.ENCLOSE_EPS - Math.sin(R(1))) < 1e-15, api.HEALTH.ENCLOSE_EPS);
-  // P-03: ±1° elevation, distance-independent.
+  // P-03 / B1: 1° elevation SPREAD (max − min), distance-independent.
+  const elevRing = (rad, spreadDeg, base = 0) => ring(8, rad, 120).map((p, i) => ({ ...p, z: 120 + rad * Math.tan(R(base + (i % 2 ? 1 : -1) * spreadDeg / 2)) }));
   for (const rad of [120, 1200, 12000]) {
-    set(ring(8, rad, 120).map((p, i) => ({ ...p, z: 120 + (i % 2 ? 1 : -1) * rad * Math.tan(R(0.99)) })));
-    check(`P-03 ring at ±0.99° elevation, r=${rad} → planar`, api.analyseTriangulation().kind === 'planar');
-    set(ring(8, rad, 120).map((p, i) => ({ ...p, z: 120 + (i % 2 ? 1 : -1) * rad * Math.tan(R(1.05)) })));
-    check(`P-03 ring at ±1.05° elevation, r=${rad} → not planar`, api.analyseTriangulation().kind !== 'planar');
+    set(elevRing(rad, 0.99));
+    check(`P-03 ring with 0.99° elevation spread, r=${rad} → planar`, api.analyseTriangulation().kind === 'planar');
+    set(elevRing(rad, 1.05));
+    check(`P-03 ring with 1.05° elevation spread, r=${rad} → not planar`, api.analyseTriangulation().kind !== 'planar');
   }
+  // B1: one ring at one height is planar whatever the elevation.
+  set(ring(8, 500, 120 + 500 * Math.tan(R(14))));
+  check('B1 8-ring at +14° (same height) → planar', api.analyseTriangulation().kind === 'planar', api.analyseTriangulation().kind);
+  set(ring(8, 500, 120 - 500 * Math.tan(R(10))));
+  check('B1 ring at −10° → planar', api.analyseTriangulation().kind === 'planar', api.analyseTriangulation().kind);
+  set(elevRing(500, 0.5, 14));
+  check('B1 ring at +14° with 0.5° spread → planar', api.analyseTriangulation().kind === 'planar');
+  set(elevRing(500, 2, 14));
+  check('B1 ring at +14° with 2° spread → not planar', api.analyseTriangulation().kind !== 'planar', api.analyseTriangulation().kind);
+  set([...ring(8, 300, 120), { x: 0, y: 1, z: 500 }]);
+  check('B1 ear ring + one top speaker → hull-open', api.analyseTriangulation().kind === 'hull-open', api.analyseTriangulation().kind);
+  // Vertical arc in front (through the centre, not horizontal): report-only.
+  set([-60, -20, 20, 60].map(a => ({ x: 0, y: 400 * Math.cos(R(a)), z: 120 + 400 * Math.sin(R(a)) })));
+  check('B1 vertical front arc does not throw', (() => { try { api.analyseTriangulation(); return true; } catch (e) { return false; } })());
+  console.log('INFO vertical front arc classified as: ' + api.analyseTriangulation().kind);
+  // Demo files (Atmos 7.1.4) still not enclosing — covered in the browser test.
   // F-03: region by face normal; ear-level ring caps.
   check('F-03 region from normal: straight up', api.regionForDirection({ x: 0, y: 0.1, z: 0.995 }) === 'upper hemisphere');
   check('F-03 no centerline label', api.regionForDirection({ x: 0, y: 0.6, z: 0.5 }) === 'front');
@@ -198,6 +215,26 @@ check('coverage.js loads without p5 globals (F-10)', true);
   const d = loadCoverage();
   d.applyLoadedState({ ...saved, view: { ...saved.view, camera: { eye: [0, 0, 1], centre: [0, 0, 0], up: [0, 0, 1] } } });
   check('Q-01 loaded camera distance clamped to ≥ 100 cm', Math.abs(Math.hypot(...d.STATE.view.camera.eye) - 100) < 1e-9, d.STATE.view.camera);
+}
+
+// ---------------------------------------------------------------- B7 load warning (no silent value replacement)
+{
+  const mk = () => ({ schemaVersion: 1, audience: { length: 600, width: 800, listeningHeight: 120 },
+    speakers: [{ id: 's1', name: 'Front L', x: 100, y: 200, z: 240, yaw: 0, pitch: 0, angleH: 90, angleV: 60 }], phantoms: [] });
+  const warnFor = (parsed) => { const x = loadCoverage(); return x.loadWarning(x.applyLoadedState(parsed)); };
+  let st = mk(); st.speakers[0].x = '5';
+  const w1 = warnFor(st);
+  check('B7 string x → warning naming the speaker', w1 === "⚠ 1 value(s) in this file couldn't be read and were replaced with defaults (Front L). Check them before relying on this layout.", w1);
+  check('B7 healthy file → no warning', warnFor(mk()) === '');
+  st = mk(); delete st.speakers[0].angleH; delete st.speakers[0].yaw; delete st.audience.width;
+  check('B7 missing fields (not wrong values) → no warning', warnFor(st) === '', warnFor(st));
+  st = mk(); st.speakers[0].angleH = 400; st.audience.length = NaN; st.phantoms = [{ id: 'p1', name: 'Ph', x: null, y: 0, z: 0 }];
+  const w2 = warnFor(st);
+  check('B7 out-of-range spread + audience + phantom → counted and deduped names',
+    /^⚠ 3 value\(s\).*\(Front L, audience, Ph\)/.test(w2) || /^⚠ 3 value\(s\).*\((?:Front L|audience|Ph), /.test(w2), w2);
+  st = mk(); st.speakers = Array.from({ length: 7 }, (_, i) => ({ id: 's' + i, name: 'S' + i, x: 'bad', y: 0, z: 0, yaw: 0, pitch: 0, angleH: 90, angleV: 60 }));
+  const w3 = warnFor(st);
+  check('B7 more than 5 names → "and K more"', w3.includes('(S0, S1, S2, S3, S4, and 2 more)') && w3.startsWith('⚠ 7 value(s)'), w3);
 }
 
 // ---------------------------------------------------------------- Q-01 / F-16 boot loader (saved file opened directly)

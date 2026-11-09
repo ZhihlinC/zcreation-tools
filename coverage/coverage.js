@@ -86,7 +86,7 @@ function nextPhantomId() { return 'p' + (_phantomCounter++); }
 // =============================================================================
 
 const SCHEMA_VERSION = 1;
-const TOOL_VERSION = '1.0.0-beta';
+const TOOL_VERSION = '1.1.0-beta';
 const SOURCE_URL = 'https://tools.zcreation.art/coverage';
 
 // Allowed layer keys — anything outside this whitelist is dropped on load,
@@ -100,8 +100,13 @@ const CAMERA_PRESETS = ['perspective', 'top', 'front', 'side', 'listening'];
 
 // Read a field through the shared validator; fall back when it fails.
 // Strings that hold numbers are NOT accepted (the tool always writes numbers).
-function loadNumber(v, validator, fallback) {
-  return validator(v) ? v : fallback;
+// A field that is present but fails validation is replaced by the fallback
+// AND recorded in `bad` (owner name) so the open dialog can say so (SPEC
+// §10.3, honesty first). A missing field (undefined) is not an error.
+function loadNumber(v, validator, fallback, bad, owner) {
+  if (validator(v)) return v;
+  if (v !== undefined && bad) bad.push(owner);
+  return fallback;
 }
 
 function loadVec3(v) {
@@ -128,6 +133,7 @@ function applyLoadedState(parsed) {
   }
 
   const next = makeDefaultState();
+  const bad = [];  // owner name of every present-but-invalid value
 
   // Metadata: only layoutName round-trips into the editing UI; the other
   // fields are write-only on save, ignored on load (we'll regenerate them).
@@ -138,7 +144,7 @@ function applyLoadedState(parsed) {
   // Audience.
   if (parsed.audience && typeof parsed.audience === 'object') {
     for (const k of ['length', 'width', 'listeningHeight']) {
-      next.audience[k] = loadNumber(parsed.audience[k], isValidAudienceValue, next.audience[k]);
+      next.audience[k] = loadNumber(parsed.audience[k], isValidAudienceValue, next.audience[k], bad, 'audience');
     }
   }
 
@@ -154,9 +160,9 @@ function applyLoadedState(parsed) {
           name: typeof s.name === 'string' ? s.name : 'Speaker',
           enabled: s.enabled !== false,
         };
-        for (const k of ['x', 'y', 'z', 'yaw', 'pitch']) out[k] = loadNumber(s[k], isValidFinite, 0);
-        out.angleH = loadNumber(s.angleH, isValidSpread, 90);
-        out.angleV = loadNumber(s.angleV, isValidSpread, 60);
+        for (const k of ['x', 'y', 'z', 'yaw', 'pitch']) out[k] = loadNumber(s[k], isValidFinite, 0, bad, out.name);
+        out.angleH = loadNumber(s.angleH, isValidSpread, 90, bad, out.name);
+        out.angleV = loadNumber(s.angleV, isValidSpread, 60, bad, out.name);
         if (out.id === null) missingIds.push(out);
         return out;
       });
@@ -171,7 +177,7 @@ function applyLoadedState(parsed) {
           id: typeof p.id === 'string' ? p.id : null,
           name: typeof p.name === 'string' ? p.name : 'Phantom',
         };
-        for (const k of ['x', 'y', 'z']) out[k] = loadNumber(p[k], isValidFinite, 0);
+        for (const k of ['x', 'y', 'z']) out[k] = loadNumber(p[k], isValidFinite, 0, bad, out.name);
         if (out.id === null) missingIds.push(out);
         return out;
       });
@@ -206,6 +212,15 @@ function applyLoadedState(parsed) {
   for (const item of missingIds) {
     item.id = STATE.speakers.includes(item) ? nextSpeakerId() : nextPhantomId();
   }
+  return { count: bad.length, names: [...new Set(bad)] };
+}
+
+// One-line warning for the open dialog, or '' when nothing was replaced.
+function loadWarning({ count, names }) {
+  if (!count) return '';
+  const shown = names.slice(0, 5).join(', ');
+  const more = names.length > 5 ? `, and ${names.length - 5} more` : '';
+  return `⚠ ${count} value(s) in this file couldn't be read and were replaced with defaults (${shown}${more}). Check them before relying on this layout.`;
 }
 
 function rebuildIdCounters() {
@@ -575,7 +590,7 @@ function drawCoverageHeat() {
 //   too-few          < 4 points after the sliver pre-merge
 //   point-at-centre  a point sits on the listening centre (cannot normalize)
 //   collinear        all directions on a single line through origin
-//   planar           every direction within ±1° of ear level → 2D ring
+//   planar           elevation spread (max − min) ≤ 1° → 2D ring
 //   hull-open        3D, but the hull does not enclose the listening centre
 //                    → warning only, no triangle scores (audit F-01)
 //   numerical-issue  the hull came out non-manifold → no scores (audit F-02)
@@ -657,8 +672,9 @@ const SLIVER_MERGE_EPS = 0.05;          // rad ≈ 2.9°, above auditory JND
 const HULL_DET_EPS     = 1e-7;          // signed-determinant threshold
 const HULL_VISIBILITY_EPS = 1e-9;       // dot threshold for face-visibility
 
-// Planar tolerance (audit P-03): a layout whose every direction is within
-// ±PLANAR_ELEVATION_DEG of ear level is treated as a 2D ring.
+// Planar tolerance (audit P-03, revised B1): a layout whose directions all
+// lie within PLANAR_ELEVATION_DEG of each other in elevation (max − min) is
+// treated as a 2D ring, wherever that ring sits relative to the ears.
 const PLANAR_ELEVATION_DEG = 1;
 const PLANAR_SIN_TOL = Math.sin(PLANAR_ELEVATION_DEG * Math.PI / 180);
 // Enclosure tolerance (audit F-01): the same 1° — a hull face whose plane
@@ -1270,11 +1286,13 @@ function analyseTriangulation() {
     };
   }
 
-  // Planar (SPEC §8.1, audit P-03): every point is within ±1° of ear level
-  // as seen from the listening centre. Purely angular, so the tolerance is
-  // the same for a speaker 2 m or 20 m away. Drawn as a 2D ring in azimuth
-  // order (0° = +Y, clockwise looking down).
-  if (merged.every(p => Math.abs(p.dir.z) <= PLANAR_SIN_TOL)) {
+  // Planar (SPEC §8.1, audit P-03): elevation spread (max − min) ≤ 1° as
+  // seen from the listening centre; a ring at one height above or below the
+  // ears counts. Purely angular, so the tolerance is the same for a speaker
+  // 2 m or 20 m away. Drawn as a 2D ring in azimuth order (0° = +Y,
+  // clockwise looking down).
+  const elev = merged.map(p => Math.asin(Math.max(-1, Math.min(1, p.dir.z))));
+  if (Math.max(...elev) - Math.min(...elev) <= PLANAR_ELEVATION_DEG * Math.PI / 180) {
     const azimuth = (d) => Math.atan2(d.x, d.y);
     const sorted = merged.slice().sort((p, q) => azimuth(p.dir) - azimuth(q.dir));
     return {
@@ -2389,9 +2407,8 @@ function __triangulationDevTests() {
     lines);
 
   // Small circle above the ears: 4 speakers at z=240, listener at z=120.
-  // Every elevation is ~22°, not within ±1° of ear level, so this is NOT a
-  // planar ring any more (P-03): the directions sit on one plane that does
-  // not contain the listening centre → hull-open.
+  // Every elevation is the same (~16°), so the spread is 0° → a planar ring
+  // (B1: a single ring at one height is a 2D ring wherever it sits).
   setLayout([
     { x: -300, y: -300, z: 240 },
     { x:  300, y: -300, z: 240 },
@@ -2399,7 +2416,7 @@ function __triangulationDevTests() {
     { x: -300, y:  300, z: 240 },
   ]);
   r = analyseTriangulation();
-  check('small-circle-above-ears-hull-open', r.kind === 'hull-open', r.kind);
+  check('small-circle-above-ears-planar', r.kind === 'planar', r.kind);
   // Adding a phantom ABOVE does not enclose the listening centre either: all
   // five directions are above ear level. (Before the F-01 fix this case was
   // asserted as a healthy 'ok' hull with 6 scored triangles.)
@@ -2547,15 +2564,16 @@ function __triangulationDevTests() {
   r = analyseTriangulation();
   check('audit-demo-atmos-714-hull-open', r.kind === 'hull-open' && !r.healthSummary, r.kind);
 
-  // P-03: planar tolerance is ±1° of elevation, independent of distance.
+  // P-03 / B1: planar tolerance is a 1° elevation SPREAD (max − min),
+  // independent of distance. ringAt alternates ±elevDeg/2 → spread = elevDeg.
   {
     const ringAt = (rad, elevDeg) => ring(8, rad, 120, 0, 'E', null).map((p, i) => ({
-      ...p, z: 120 + (i % 2 ? 1 : -1) * rad * Math.tan(elevDeg * Math.PI / 180),
+      ...p, z: 120 + (i % 2 ? 1 : -1) * rad * Math.tan(elevDeg / 2 * Math.PI / 180),
     }));
     for (const rad of [150, 300, 3000]) {
-      setLayout(ringAt(rad, 0.9));
+      setLayout(ringAt(rad, 0.9));  // spread 0.9°
       check(`planar-tolerance-0.9deg-r${rad}`, analyseTriangulation().kind === 'planar', '');
-      setLayout(ringAt(rad, 1.2));
+      setLayout(ringAt(rad, 1.2));  // spread 1.2°
       check(`not-planar-1.2deg-r${rad}`, analyseTriangulation().kind !== 'planar', '');
     }
     // The audit G case: ±0.25 cm of height noise on an ear-level ring used
@@ -4006,10 +4024,11 @@ function extractEmbeddedState(htmlText) {
 async function importHtmlFile(file) {
   const text = await file.text();
   const parsed = extractEmbeddedState(text);
-  applyLoadedState(parsed);
+  const loss = applyLoadedState(parsed);
   syncUiFromState();
   // Keep the tab title in step with the opened layout (audit F-19).
   document.title = layoutTitle(STATE.metadata.layoutName);
+  return loadWarning(loss);
 }
 
 // Live-tool tab title for a layout name. (Saved files use the bare layout
@@ -4312,7 +4331,8 @@ window.addEventListener('DOMContentLoaded', () => {
         openHtmlInput.value = '';
         if (!file) return;
         try {
-          await importHtmlFile(file);
+          const warning = await importHtmlFile(file);
+          if (warning) alert(warning);
         } catch (err) {
           console.error('HTML import failed:', err);
           alert('Open HTML failed:\n\n' + (err && err.message ? err.message : err));

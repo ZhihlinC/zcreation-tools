@@ -25,14 +25,14 @@ Thresholds in code: angle yellow/red = 75 / 105 deg; SPEC §8.2 says 70 / 90.  a
   panel  : ℹ Planar layout — 2D ring shown in place of triangulation.
 
 ### B2  8-ring above ears (z = 240)
-  result : {"kind":"hull-open"}
-  caption: Open hull — 8 points don't enclose the listening centre.
-  panel  : ⚠ Layout doesn't enclose the listening centre — add a phantom above or below to close the panning grid.
+  result : {"kind":"planar"}
+  caption: Planar layout — 2D ring shown in place of triangulation (8 points).
+  panel  : ℹ Planar layout — 2D ring shown in place of triangulation.
 
 ### B3  8-ring below ears (z = 50)
-  result : {"kind":"hull-open"}
-  caption: Open hull — 8 points don't enclose the listening centre.
-  panel  : ⚠ Layout doesn't enclose the listening centre — add a phantom above or below to close the panning grid.
+  result : {"kind":"planar"}
+  caption: Planar layout — 2D ring shown in place of triangulation (8 points).
+  panel  : ℹ Planar layout — 2D ring shown in place of triangulation.
 
 ### B4  rectangular ring, uneven radius, ear height
   result : {"kind":"planar"}
@@ -143,8 +143,8 @@ Thresholds in code: angle yellow/red = 75 / 105 deg; SPEC §8.2 says 70 / 90.  a
            ℹ Planar layout — 2D ring shown in place of triangulation.
   ±2 cm -> kind=planar
            ℹ Planar layout — 2D ring shown in place of triangulation.
-  ±5 cm -> kind=planar
-           ℹ Planar layout — 2D ring shown in place of triangulation.
+  ±5 cm -> kind=hull-open
+           ⚠ Layout doesn't enclose the listening centre — add a phantom above or below to close the panning grid.
 
 ================ H. random 3D clouds: hull invariants ================
   300 random clouds: 0 with manifold/unused-vertex/area anomalies, 0 valid hulls not enclosing centre

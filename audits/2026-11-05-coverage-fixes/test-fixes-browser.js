@@ -225,6 +225,22 @@ const shot = async (page, name, opts = {}) => { if (SHOTS) await page.screenshot
   await p4.setInputFiles('#open-html-input', noPh);
   await p4.waitForTimeout(500);
   check('F-16 Open of a file without "phantoms" drops the stale phantom', (await p4.evaluate(() => STATE.phantoms.length)) === 0 && (await p4.locator('.phantom-item').count()) === 0);
+  // B7: present-but-invalid values are replaced AND announced; missing fields / healthy files are silent.
+  {
+    const variant = (name, edit) => {
+      const o = JSON.parse(JSON.stringify(st)); edit(o);
+      const f = path.join(OUT, name);
+      fs.writeFileSync(f, html.replace(/(<script id="coverage-state" type="application\/json">)[\s\S]*?(<\/script>)/, (m, x, y) => x + JSON.stringify(o).replace(/</g, '\\u003c') + y));
+      return f;
+    };
+    const open = async f => { p4.__lastDialog = undefined; await p4.setInputFiles('#open-html-input', f); await p4.waitForTimeout(600); return p4.__lastDialog === undefined ? [] : [p4.__lastDialog]; };
+    const first = st.speakers[0].name;
+    const bad = await open(variant('bad-x.html', o => { o.speakers[0].x = '5'; }));
+    check('B7 open file with string x → one warning naming the speaker',
+      bad.length === 1 && bad[0] === `⚠ 1 value(s) in this file couldn't be read and were replaced with defaults (${first}). Check them before relying on this layout.`, bad);
+    check('B7 open healthy file → no dialog', (await open(saved)).length === 0);
+    check('B7 open file with a missing field → no dialog', (await open(variant('missing-field.html', o => { delete o.speakers[0].angleH; }))).length === 0);
+  }
   await p4.context().close();
 
   // ===================================================================== F-10 offline

@@ -41,11 +41,11 @@
   speaker x = Infinity serialises as: null  -> reload gives x = 0
 
 ================ L3. download filenames (SPEC §10.1 / §11) ================
-  layoutName="Workshop A"           html=Workshop-A-coverage-sketch.html          png=Workshop-A-coverage-2026-11-04T17-18-36.png
-  layoutName="工作坊 7.1.4"            html=工作坊-7.1.4-coverage-sketch.html           png=工作坊-7.1.4-coverage-2026-11-04T17-18-36.png
-  layoutName="Théâtre — salle 2"    html=Théâtre-—-salle-2-coverage-sketch.html   png=Théâtre-—-salle-2-coverage-2026-11-04T17-18-36.png
-  layoutName=""                     html=untitled-coverage-sketch.html            png=untitled-coverage-2026-11-04T17-18-36.png
-  layoutName="../../etc"            html=etc-coverage-sketch.html                 png=etc-coverage-2026-11-04T17-18-36.png
+  layoutName="Workshop A"           html=Workshop-A-coverage-sketch.html          png=Workshop-A-coverage-2026-11-09T06-02-59.png
+  layoutName="工作坊 7.1.4"            html=工作坊-7.1.4-coverage-sketch.html           png=工作坊-7.1.4-coverage-2026-11-09T06-02-59.png
+  layoutName="Théâtre — salle 2"    html=Théâtre-—-salle-2-coverage-sketch.html   png=Théâtre-—-salle-2-coverage-2026-11-09T06-02-59.png
+  layoutName=""                     html=untitled-coverage-sketch.html            png=untitled-coverage-2026-11-09T06-02-59.png
+  layoutName="../../etc"            html=etc-coverage-sketch.html                 png=etc-coverage-2026-11-09T06-02-59.png
 
 ================ K2b. yaw-only right vector vs current speakerBasis ================
   right = (cos yaw, -sin yaw, 0) vs code: max diff for |pitch|<87.4° = 4.58e-16; for |pitch|<90° = 0.000

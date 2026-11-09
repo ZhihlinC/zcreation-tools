@@ -39,7 +39,7 @@ Built and maintained by [Zhih-Lin Chen](https://zcreation.art) alongside a July 
 
 ## Feedback (beta)
 
-This is in **v1.0.0-beta**. If a sketched layout surprises you — health panel warns about something it shouldn't, or misses something it should, or wording is confusing — please [open an issue](../../issues). Beta feedback shapes v1.
+This is in **v1.1.0-beta**. If a sketched layout surprises you — health panel warns about something it shouldn't, or misses something it should, or wording is confusing — please [open an issue](../../issues). Beta feedback shapes v1.
 
 Known scope limits (intentional, see [SPEC §16](./SPEC.md)):
 

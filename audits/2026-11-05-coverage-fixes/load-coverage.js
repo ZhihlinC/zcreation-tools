@@ -36,7 +36,7 @@ function loadCoverage(opts = {}) {
     makeDefaultState, serializeState, escapeInlineScript, escapeInlineStyle,
     clampCameraEye, CAMERA_DISTANCE_LIMITS, regionForDirection, dominantRegion,
     isValidFinite, isValidAudienceValue, isValidSpread, validatorForField,
-    filenameStem, buildMetadataComment, layoutTitle,
+    filenameStem, buildMetadataComment, layoutTitle, loadWarning,
     HEALTH: { HEALTH_ANGLE_YELLOW, HEALTH_ANGLE_RED, HEALTH_RATIO_YELLOW, HEALTH_RATIO_RED,
               SYMMETRY_DELTA_YELLOW, SYMMETRY_DELTA_RED, PLANAR_ELEVATION_DEG, ENCLOSE_EPS },
   };`, ctx);

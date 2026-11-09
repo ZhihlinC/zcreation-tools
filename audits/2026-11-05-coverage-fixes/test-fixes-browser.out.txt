@@ -40,6 +40,9 @@ PASS  F-19 live Open HTML updates document.title
 PASS  Q-01 live Open HTML restores the orbited camera
 PASS  Q-01 clicking a preset clears the free camera
 PASS  F-16 Open of a file without "phantoms" drops the stale phantom
+PASS  B7 open file with string x → one warning naming the speaker
+PASS  B7 open healthy file → no dialog
+PASS  B7 open file with a missing field → no dialog
 PASS  F-10 offline: notice shown in the middle of the screen
 PASS  F-10 offline: notice is on top (not covered by a panel)
 PASS  F-10 offline: panels and Layout Health still work
@@ -47,4 +50,4 @@ PASS  F-10 offline: no "radians is not defined" error
 PASS  F-01 Atmos 7.1.4 demo shows the hull-open warning (no triangle scores)
 PASS  mobile banner shown < 1024px with the new copy
 
-browser fix tests: 48/48 passed
+browser fix tests: 51/51 passed

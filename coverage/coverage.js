@@ -212,7 +212,7 @@ function applyLoadedState(parsed) {
   for (const item of missingIds) {
     item.id = STATE.speakers.includes(item) ? nextSpeakerId() : nextPhantomId();
   }
-  return { count: bad.length, names: [...new Set(bad)] };
+  return { count: bad.length, names: [...new Set(bad.map(n => n.trim() ? n : '(unnamed)'))] };
 }
 
 // One-line warning for the open dialog, or '' when nothing was replaced.
@@ -590,7 +590,7 @@ function drawCoverageHeat() {
 //   too-few          < 4 points after the sliver pre-merge
 //   point-at-centre  a point sits on the listening centre (cannot normalize)
 //   collinear        all directions on a single line through origin
-//   planar           elevation spread (max − min) ≤ 1° → 2D ring
+//   planar           elevation spread (max − min) ≤ 2° → 2D ring
 //   hull-open        3D, but the hull does not enclose the listening centre
 //                    → warning only, no triangle scores (audit F-01)
 //   numerical-issue  the hull came out non-manifold → no scores (audit F-02)
@@ -675,12 +675,13 @@ const HULL_VISIBILITY_EPS = 1e-9;       // dot threshold for face-visibility
 // Planar tolerance (audit P-03, revised B1): a layout whose directions all
 // lie within PLANAR_ELEVATION_DEG of each other in elevation (max − min) is
 // treated as a 2D ring, wherever that ring sits relative to the ears.
-const PLANAR_ELEVATION_DEG = 1;
-const PLANAR_SIN_TOL = Math.sin(PLANAR_ELEVATION_DEG * Math.PI / 180);
-// Enclosure tolerance (audit F-01): the same 1° — a hull face whose plane
-// passes within sin(1°) of the listening centre counts as "not enclosing".
-// Such a face spans almost a whole hemisphere, so nothing healthy is lost.
-const ENCLOSE_EPS = PLANAR_SIN_TOL;
+const PLANAR_ELEVATION_DEG = 2;
+// Enclosure tolerance (audit F-01), independent of the planar one: a hull face
+// whose plane passes within sin(1°) of the listening centre counts as "not
+// enclosing". Such a face spans almost a whole hemisphere, so nothing healthy
+// is lost.
+const ENCLOSE_DEG = 1;
+const ENCLOSE_EPS = Math.sin(ENCLOSE_DEG * Math.PI / 180);
 
 // Group input points by union-find on pairwise direction angle. Returns the
 // merged-point array (length ≤ input length). Each merged point carries
@@ -1286,7 +1287,7 @@ function analyseTriangulation() {
     };
   }
 
-  // Planar (SPEC §8.1, audit P-03): elevation spread (max − min) ≤ 1° as
+  // Planar (SPEC §8.1, audit P-03): elevation spread (max − min) ≤ 2° as
   // seen from the listening centre; a ring at one height above or below the
   // ears counts. Purely angular, so the tolerance is the same for a speaker
   // 2 m or 20 m away. Drawn as a 2D ring in azimuth order (0° = +Y,
@@ -2564,17 +2565,17 @@ function __triangulationDevTests() {
   r = analyseTriangulation();
   check('audit-demo-atmos-714-hull-open', r.kind === 'hull-open' && !r.healthSummary, r.kind);
 
-  // P-03 / B1: planar tolerance is a 1° elevation SPREAD (max − min),
+  // P-03 / B1: planar tolerance is a 2° elevation SPREAD (max − min),
   // independent of distance. ringAt alternates ±elevDeg/2 → spread = elevDeg.
   {
     const ringAt = (rad, elevDeg) => ring(8, rad, 120, 0, 'E', null).map((p, i) => ({
       ...p, z: 120 + (i % 2 ? 1 : -1) * rad * Math.tan(elevDeg / 2 * Math.PI / 180),
     }));
     for (const rad of [150, 300, 3000]) {
-      setLayout(ringAt(rad, 0.9));  // spread 0.9°
-      check(`planar-tolerance-0.9deg-r${rad}`, analyseTriangulation().kind === 'planar', '');
-      setLayout(ringAt(rad, 1.2));  // spread 1.2°
-      check(`not-planar-1.2deg-r${rad}`, analyseTriangulation().kind !== 'planar', '');
+      setLayout(ringAt(rad, 1.9));  // spread 1.9°
+      check(`planar-tolerance-1.9deg-r${rad}`, analyseTriangulation().kind === 'planar', '');
+      setLayout(ringAt(rad, 2.2));  // spread 2.2°
+      check(`not-planar-2.2deg-r${rad}`, analyseTriangulation().kind !== 'planar', '');
     }
     // The audit G case: ±0.25 cm of height noise on an ear-level ring used
     // to flip to "✗ 12 problematic triangles". Now it stays planar.
@@ -2582,6 +2583,9 @@ function __triangulationDevTests() {
     const rnd2 = () => ((sd = (sd * 1664525 + 1013904223) >>> 0) / 4294967296);
     setLayout(ring(8, 300, 120).map(p => ({ ...p, z: 120 + (rnd2() * 2 - 1) * 0.25 })));
     check('audit-G-ear-ring-jitter-planar', analyseTriangulation().kind === 'planar', '');
+    // T1: ±5 cm hanging-height noise on a 3 m ear ring is planar too.
+    setLayout(ring(8, 300, 120).map((p, i) => ({ ...p, z: 120 + (i % 2 ? 5 : -5) })));
+    check('planar-ear-ring-pm5cm', analyseTriangulation().kind === 'planar', '');
   }
 
   // F-02 regression (audit J): ring + nadir / zenith / tops with coordinates

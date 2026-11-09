@@ -47,13 +47,13 @@ check('coverage.js loads without p5 globals (F-10)', true);
   r = api.analyseTriangulation();
   check('F-01 ear ring + tops + nadir → ok (encloses)', r.kind === 'ok', r.kind);
   check('F-01 enclosure tolerance is sin(1°)', Math.abs(api.HEALTH.ENCLOSE_EPS - Math.sin(R(1))) < 1e-15, api.HEALTH.ENCLOSE_EPS);
-  // P-03 / B1: 1° elevation SPREAD (max − min), distance-independent.
+  // P-03 / B1: 2° elevation SPREAD (max − min), distance-independent.
   const elevRing = (rad, spreadDeg, base = 0) => ring(8, rad, 120).map((p, i) => ({ ...p, z: 120 + rad * Math.tan(R(base + (i % 2 ? 1 : -1) * spreadDeg / 2)) }));
   for (const rad of [120, 1200, 12000]) {
-    set(elevRing(rad, 0.99));
-    check(`P-03 ring with 0.99° elevation spread, r=${rad} → planar`, api.analyseTriangulation().kind === 'planar');
-    set(elevRing(rad, 1.05));
-    check(`P-03 ring with 1.05° elevation spread, r=${rad} → not planar`, api.analyseTriangulation().kind !== 'planar');
+    set(elevRing(rad, 1.99));
+    check(`P-03 ring with 1.99° elevation spread, r=${rad} → planar`, api.analyseTriangulation().kind === 'planar');
+    set(elevRing(rad, 2.05));
+    check(`P-03 ring with 2.05° elevation spread, r=${rad} → not planar`, api.analyseTriangulation().kind !== 'planar');
   }
   // B1: one ring at one height is planar whatever the elevation.
   set(ring(8, 500, 120 + 500 * Math.tan(R(14))));
@@ -63,7 +63,12 @@ check('coverage.js loads without p5 globals (F-10)', true);
   set(elevRing(500, 0.5, 14));
   check('B1 ring at +14° with 0.5° spread → planar', api.analyseTriangulation().kind === 'planar');
   set(elevRing(500, 2, 14));
-  check('B1 ring at +14° with 2° spread → not planar', api.analyseTriangulation().kind !== 'planar', api.analyseTriangulation().kind);
+  check('B1 ring at +14° with 2° spread → planar (was not planar at the 1° tolerance)', api.analyseTriangulation().kind === 'planar', api.analyseTriangulation().kind);
+  set(elevRing(500, 3, 14));
+  check('B1 ring at +14° with 3° spread → not planar', api.analyseTriangulation().kind !== 'planar', api.analyseTriangulation().kind);
+  // T1 jitter case: ear-height 8-ring, r = 300, heights alternate ±5 cm.
+  set(ring(8, 300, 120).map((p, i) => ({ ...p, z: 120 + (i % 2 ? 5 : -5) })));
+  check('T1 ear ring r=300 with ±5 cm height jitter → planar', api.analyseTriangulation().kind === 'planar', api.analyseTriangulation().kind);
   set([...ring(8, 300, 120), { x: 0, y: 1, z: 500 }]);
   check('B1 ear ring + one top speaker → hull-open', api.analyseTriangulation().kind === 'hull-open', api.analyseTriangulation().kind);
   // Vertical arc in front (through the centre, not horizontal): report-only.
@@ -225,6 +230,9 @@ check('coverage.js loads without p5 globals (F-10)', true);
   let st = mk(); st.speakers[0].x = '5';
   const w1 = warnFor(st);
   check('B7 string x → warning naming the speaker', w1 === "⚠ 1 value(s) in this file couldn't be read and were replaced with defaults (Front L). Check them before relying on this layout.", w1);
+  st = mk(); st.speakers = ['', '   ', 'Ok'].map((n, i) => ({ id: 's' + i, name: n, x: '5', y: 0, z: 0, yaw: 0, pitch: 0, angleH: 90, angleV: 60 }));
+  const wu = warnFor(st);
+  check('T4 empty / blank names → "(unnamed)" once, no blank item', wu.includes('defaults ((unnamed), Ok)') , wu);
   check('B7 healthy file → no warning', warnFor(mk()) === '');
   st = mk(); delete st.speakers[0].angleH; delete st.speakers[0].yaw; delete st.audience.width;
   check('B7 missing fields (not wrong values) → no warning', warnFor(st) === '', warnFor(st));

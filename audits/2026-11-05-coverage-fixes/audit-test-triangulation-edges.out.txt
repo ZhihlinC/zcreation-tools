@@ -143,8 +143,8 @@ Thresholds in code: angle yellow/red = 75 / 105 deg; SPEC §8.2 says 70 / 90.  a
            ℹ Planar layout — 2D ring shown in place of triangulation.
   ±2 cm -> kind=planar
            ℹ Planar layout — 2D ring shown in place of triangulation.
-  ±5 cm -> kind=hull-open
-           ⚠ Layout doesn't enclose the listening centre — add a phantom above or below to close the panning grid.
+  ±5 cm -> kind=planar
+           ℹ Planar layout — 2D ring shown in place of triangulation.
 
 ================ H. random 3D clouds: hull invariants ================
   300 random clouds: 0 with manifold/unused-vertex/area anomalies, 0 valid hulls not enclosing centre

@@ -1,7 +1,7 @@
 boot errors: none
-orbit drag moved camera eye: [ 1400, 0, 200 ] -> [ 760, -1143, -74 ]
+orbit drag moved camera eye: [ 1400, 0, 200 ] -> [ 757, -1145, -75 ]
 
-saved file: RT-工作坊-Test-coverage-sketch.html 217 KB
+saved file: RT-工作坊-Test-coverage-sketch.html 218 KB
   starts with metadata comment: true
   <title>: RT 工作坊 Test
   p5 still from CDN: true
@@ -14,7 +14,7 @@ saved file: RT-工作坊-Test-coverage-sketch.html 217 KB
   STATE diff (excluding metadata): identical
   layoutName: "RT 工作坊 Test" -> "RT 工作坊 Test"
   UI diff: identical
-  camera eye before save (after orbit): [ 760, -1143, -74 ]  after reopen: [ 760, -1143, -74 ] (cameraPreset = side)
+  camera eye before save (after orbit): [ 757, -1145, -75 ]  after reopen: [ 757, -1145, -75 ] (cameraPreset = side)
   free camera (eye+centre+up) identical after file:// reopen: true
   disabled speaker labels before save / after reopen: ["C:hidden"] / ["C:hidden"]
   snapshot hides Save HTML / Open HTML: true / true
@@ -35,9 +35,9 @@ saved file: RT-工作坊-Test-coverage-sketch.html 217 KB
 
 [disabled speaker "L"] name label after disable + view change: {"visibility":"hidden","display":"block","text":"L","left":"663.794px"}
 [speakers layer OFF] label "R" visibility/display: visible/none
-[wheel zoom] camera distance start=1400  after zoom-in spam=218.2  after zoom-out spam=1467
-[in-browser __triangulationDevTests] 102/102
-[perf, headless SwiftShader] redraw() ms with 32 speakers: {"redrawMedianMs":"13.8","computeCoverageMs":"1.06","analyseTriangulationMs":"0.27"}
+[wheel zoom] camera distance start=1400  after zoom-in spam=228.4  after zoom-out spam=1510
+[in-browser __triangulationDevTests] 103/103
+[perf, headless SwiftShader] redraw() ms with 32 speakers: {"redrawMedianMs":"12.1","computeCoverageMs":"1.00","analyseTriangulationMs":"0.25"}
 [viewport 800px] mobile banner visible: true  text: "此工具為桌面瀏覽器設計。在較小的螢幕上只會顯示 3D 畫面，編輯請改用較寬的視窗。 / This tool is designed for desktop. On smaller screens only the 3D view is shown — use a wider window to edit."
 
-artifacts in /var/folders/90/z3wm78592r59j8jsqhzsmqfm0000gn/T/cov-rt-bwg7uP
+artifacts in /var/folders/90/z3wm78592r59j8jsqhzsmqfm0000gn/T/cov-rt-Gkbhk7

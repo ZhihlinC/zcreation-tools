@@ -1159,13 +1159,14 @@ OK  : region-big-caps-follow-face-normal {
 OK  : audit-F2-ring-plus-zenith-hull-open hull-open
 OK  : audit-F3-ring-zenith-nadir-ok ok
 OK  : audit-demo-atmos-714-hull-open hull-open
-OK  : planar-tolerance-0.9deg-r150 
-OK  : not-planar-1.2deg-r150 
-OK  : planar-tolerance-0.9deg-r300 
-OK  : not-planar-1.2deg-r300 
-OK  : planar-tolerance-0.9deg-r3000 
-OK  : not-planar-1.2deg-r3000 
+OK  : planar-tolerance-1.9deg-r150 
+OK  : not-planar-2.2deg-r150 
+OK  : planar-tolerance-1.9deg-r300 
+OK  : not-planar-2.2deg-r300 
+OK  : planar-tolerance-1.9deg-r3000 
+OK  : not-planar-2.2deg-r3000 
 OK  : audit-G-ear-ring-jitter-planar 
+OK  : planar-ear-ring-pm5cm 
 OK  : audit-J-rounding-0-of-504-non-manifold 0/504 
 OK  : audit-J2-order-independent [ 'ok', 'ok' ]
 OK  : manifold-guard-detects-duplicate-edge 
@@ -1176,22 +1177,24 @@ OK  : pit-on-edge-AB
 OK  : pit-on-edge-hypot 
 OK  : pit-just-outside-AB 
 OK  : pit-reverse-winding 
-Triangulation tests: 102/102 passed.
-PASS  __triangulationDevTests all pass (102/102)
+Triangulation tests: 103/103 passed.
+PASS  __triangulationDevTests all pass (103/103)
 PASS  F-01 all-above layout → hull-open, no scores
 PASS  F-01 hull-open panel text is the hull-open warning only
 PASS  F-01 ear ring + tops + nadir → ok (encloses)
 PASS  F-01 enclosure tolerance is sin(1°)
-PASS  P-03 ring with 0.99° elevation spread, r=120 → planar
-PASS  P-03 ring with 1.05° elevation spread, r=120 → not planar
-PASS  P-03 ring with 0.99° elevation spread, r=1200 → planar
-PASS  P-03 ring with 1.05° elevation spread, r=1200 → not planar
-PASS  P-03 ring with 0.99° elevation spread, r=12000 → planar
-PASS  P-03 ring with 1.05° elevation spread, r=12000 → not planar
+PASS  P-03 ring with 1.99° elevation spread, r=120 → planar
+PASS  P-03 ring with 2.05° elevation spread, r=120 → not planar
+PASS  P-03 ring with 1.99° elevation spread, r=1200 → planar
+PASS  P-03 ring with 2.05° elevation spread, r=1200 → not planar
+PASS  P-03 ring with 1.99° elevation spread, r=12000 → planar
+PASS  P-03 ring with 2.05° elevation spread, r=12000 → not planar
 PASS  B1 8-ring at +14° (same height) → planar
 PASS  B1 ring at −10° → planar
 PASS  B1 ring at +14° with 0.5° spread → planar
-PASS  B1 ring at +14° with 2° spread → not planar
+PASS  B1 ring at +14° with 2° spread → planar (was not planar at the 1° tolerance)
+PASS  B1 ring at +14° with 3° spread → not planar
+PASS  T1 ear ring r=300 with ±5 cm height jitter → planar
 PASS  B1 ear ring + one top speaker → hull-open
 PASS  B1 vertical front arc does not throw
 INFO vertical front arc classified as: hull-open
@@ -1237,6 +1240,7 @@ PASS  Q-01 applyLoadedState restores view.camera
 PASS  Q-01 malformed camera → null (preset used)
 PASS  Q-01 loaded camera distance clamped to ≥ 100 cm
 PASS  B7 string x → warning naming the speaker
+PASS  T4 empty / blank names → "(unnamed)" once, no blank item
 PASS  B7 healthy file → no warning
 PASS  B7 missing fields (not wrong values) → no warning
 PASS  B7 out-of-range spread + audience + phantom → counted and deduped names
@@ -1251,4 +1255,4 @@ PASS  P-04 the real coverage.js survives escaping as valid JS
 PASS  F-19 live title for a named layout
 PASS  F-19 live title for an unnamed layout
 
-node fix tests: 73/73 passed
+node fix tests: 76/76 passed

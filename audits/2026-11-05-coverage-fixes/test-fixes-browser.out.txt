@@ -1,5 +1,5 @@
 PASS  boot: no console / page errors
-PASS  __triangulationDevTests in Chromium (102/102)
+PASS  __triangulationDevTests in Chromium (103/103)
 PASS  F-08 Phantoms panel shows the reserve-a-panning-position note
 PASS  F-08 "+ Add Phantom" still fully visible under the note (1440×900)
 PASS  Q-07a "+ Add Speaker" opens a modal form (no speaker added yet)

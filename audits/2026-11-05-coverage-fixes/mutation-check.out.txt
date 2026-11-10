@@ -4,44 +4,66 @@ KILLED   [node] F-01  enclosure ε = 0 instead of sin 1°
            ↳ FAIL  F-01 enclosure tolerance is sin(1°)  — 0
 KILLED   [node] B1    planar test back to "every point within ±1° of ear level"
            ↳ FAIL: small-circle-above-ears-planar hull-open
-KILLED   [node] T1    planar tolerance back to 1°
-           ↳ FAIL: planar-tolerance-1.9deg-r150 
-KILLED   [node] F-03  region from vertex centroid instead of face normal
-           ↳ FAIL: region-big-caps-follow-face-normal {
-KILLED   [node] B7    loader stops recording replaced values (no warning)
-           ↳ FAIL  B7 string x → warning naming the speaker  — 
 KILLED   [node] T4    blank names no longer shown as (unnamed)
            ↳ FAIL  T4 empty / blank names → "(unnamed)" once, no blank item  — ⚠ 3 value(s) in this file couldn't be read and were replaced with defaults (,    , O
+KILLED   [node] T1    planar tolerance back to 1°
+           ↳ FAIL: planar-tolerance-1.9deg-r150 
+KILLED   [node] B7    loader stops recording replaced values (no warning)
+           ↳ FAIL  B7 string x → warning naming the speaker  — 
+KILLED   [node] F-03  region from vertex centroid instead of face normal
+           ↳ FAIL: region-big-caps-follow-face-normal {
 KILLED   [node] F-03  tie → first label only
            ↳ FAIL: region-tie-two front
-KILLED   [node] F-02  drop the manifold guard
-           ↳ FAIL  F-02 guard: non-manifold hull → numerical-issue, no scores  — {"kind":"hull-open","count":6,"points":[{"kind":"speaker","name":"S0","pos":{"x":3
 KILLED   [node] F-02  per-face visibility (no connected flood fill)
            ↳ FAIL: audit-D3-zenith-nadir-ok-manifold { kind: 'numerical-issue', faces: undefined }
-KILLED   [node] F-05  old basis (forward × world-up, +Y fallback)
-           ↳ FAIL  F-05 pitch −90°: yaw 90 → right = −Y (yaw still turns the speaker)  — {"x":1,"y":0,"z":6.123233995736766e-17}
 KILLED   [node] F-03  re-add the centerline rule
            ↳ FAIL: region-max-component-y centerline
+KILLED   [node] F-02  drop the manifold guard
+           ↳ FAIL  F-02 guard: non-manifold hull → numerical-issue, no scores  — {"kind":"hull-open","count":6,"points":[{"kind":"speaker","name":"S0","pos":{"x":3
+KILLED   [node] F-05  old basis (forward × world-up, +Y fallback)
+           ↳ FAIL  F-05 pitch −90°: yaw 90 → right = −Y (yaw still turns the speaker)  — {"x":1,"y":0,"z":6.123233995736766e-17}
 KILLED   [node] F-06  ASCII-only filename filter
            ↳ FAIL  F-06 html filename for "工作坊 7.1.4"  — 7-1-4-coverage-sketch.html
 KILLED   [node] F-16  merge into current STATE instead of reset
            ↳ FAIL  F-16 file without phantoms key → phantoms reset to default (none)  — [{"id":"p1","name":"Zenith","x":0,"y":0,"z":500}]
-KILLED   [node] F-16  audience accepts ≤ 0
-           ↳ FAIL  F-16 invalid audience values → defaults  — {"length":-5,"width":800,"listeningHeight":0}
 KILLED   [node] F-19  spread allows ≥ 180°
            ↳ FAIL  F-19 spread 180 / 0 rejected on load → defaults 90 / 60  — {"id":"s1","name":"A","enabled":true,"x":0,"y":0,"z":10,"yaw":0,"pitch":5,"angleH":18
+KILLED   [node] F-16  audience accepts ≤ 0
+           ↳ FAIL  F-16 invalid audience values → defaults  — {"length":-5,"width":800,"listeningHeight":0}
 KILLED   [node] F-17  no 0.01 cm rounding
            ↳ FAIL  F-17 2.53 m → 253 cm  — 252.99999999999997
-KILLED   [node] Q-01  boot loader moved back to the top (TDZ)
-           ↳ FAIL  boot loader applies the embedded state without warnings  — ["Embedded coverage-state failed to load; using defaults. ReferenceError: Cannot acce
-KILLED   [node] Q-01  camera not serialised
-           ↳ FAIL  Q-01 serializeState writes view.camera  — {"unit":"cm","cameraPreset":"perspective","camera":null,"layers":{"floor":true,"audience":true,"listen
 KILLED   [node] F-15  clamp does nothing
            ↳ FAIL  F-15 eye 10 cm from centre pushed out to 100 cm  — [0,0,130]
+KILLED   [node] Q-01  camera not serialised
+           ↳ FAIL  Q-01 serializeState writes view.camera  — {"unit":"cm","cameraPreset":"perspective","camera":null,"layers":{"floor":true,"audience":true,"listen
+KILLED   [node] Q-01  boot loader moved back to the top (TDZ)
+           ↳ FAIL  boot loader applies the embedded state without warnings  — ["Embedded coverage-state failed to load; using defaults. ReferenceError: Cannot acce
 KILLED   [node] F-10  math depends on p5 radians() again  (suite crashed)
 KILLED   [node] P-04  no inline-script escaping
            ↳ FAIL  P-04 escapes </script (any case) and <!--  — a</script>b</SCRIPT x<!--y
 KILLED   [node] F-19  title helper ignores the layout name
            ↳ FAIL  F-19 live title for a named layout
+KILLED   [browser] B7    open dialog no longer shows the warning
+           ↳ FAIL  B7 open file with string x → one warning naming the speaker  — []
+KILLED   [browser] F-07  disabled speakers skip label update (old code)
+           ↳ FAIL  F-07 disabled speaker name label hidden  — visible
+KILLED   [browser] F-07  speaker label host ignores the layer
+           ↳ FAIL  F-07 Speakers layer off hides all speaker name labels  — block
+KILLED   [browser] F-15  per-frame clamp not called
+           ↳ FAIL  F-15 camera closer than 100 cm is pushed back to 100 cm (got 30.00)  — 30
+KILLED   [browser] F-18  PNG upscaled instead of re-rendered
+           ↳ FAIL  F-18 WebGL canvas was re-rendered at 2880×1800 for the export (not upscaled)  — {"src":[[1440,900]],"now":[1440,900],"density":1,"cam":"700,-900
+KILLED   [browser] Q-01  orbit not tracked
+           ↳ FAIL  Q-01 orbit drag recorded in STATE.view.camera  — {"cam":[-375.216,-1185.944,518.628,0,0,100],"state":null}
+KILLED   [browser] Q-07a phantom form pre-fills the zenith
+           ↳ FAIL  Q-07a "+ Add Phantom" opens a form with EMPTY coordinates (SPEC §8.4)  — {"open":true,"name":"Phantom 1","xyz":["0","0","250"],"note":true}
+KILLED   [browser] F-10  offline notice never shown
+           ↳ FAIL  F-10 offline: notice shown in the middle of the screen  — {"p5":false,"notice":false,"text":"The 3D view needs an internet connection to load p5
+KILLED   [browser] Q-07a speaker form not auto-aimed
+           ↳ FAIL  Q-07a speaker form pre-filled with defaults incl. auto-aim  — {"open":true,"modal":true,"values":{"name":"Speaker 4","x":"0","y":"600","z":"240"
+KILLED   [browser] F-19  title not updated after Open HTML
+           ↳ FAIL  F-19 live Open HTML updates document.title  — Sound Coverage Sketch
+KILLED   [browser] F-08  phantom note removed from the panel
+           ↳ FAIL  F-08 Phantoms panel shows the reserve-a-panning-position note  — null
 
-mutations: 23, killed: 23, survived: 0
+mutations: 34, killed: 34, survived: 0

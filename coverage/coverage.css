@@ -15,7 +15,7 @@ html, body {
   padding: 0;
   background: var(--bg);
   color: var(--fg);
-  font-family: system-ui, "Jost", -apple-system, "Helvetica Neue", "Noto Sans TC", sans-serif;
+  font-family: system-ui, -apple-system, "Helvetica Neue", "Noto Sans TC", sans-serif;
   height: 100%;
   overflow: hidden;
 }
@@ -217,7 +217,9 @@ canvas { display: block; }
 }
 #right-column > #phantoms-panel {
   flex: 1 1 auto;
-  min-height: 110px;
+  /* Tall enough for heading + the always-visible phantom note + one row +
+     the Add button, so the note never pushes "+ Add Phantom" out of view. */
+  min-height: 190px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -873,6 +875,110 @@ canvas { display: block; }
   #health-panel {
     display: none;
   }
+}
+
+/* =============================================================================
+   Panel notes, invalid inputs, offline notice, Add Speaker / Add Phantom
+   dialogs (2026-11 fixes).
+   ============================================================================= */
+.panel-note {
+  margin: 0 0 0.45rem;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  color: var(--muted);
+}
+#phantoms-panel .panel-note { flex: 0 0 auto; }
+
+input.invalid,
+.speaker-editor .field input.invalid,
+.phantom-editor .field input.invalid {
+  border-color: #d04545;
+  background: #fff3f3;
+  outline-color: #d04545;
+}
+
+#offline-notice {
+  /* Horizontally centred; vertically a little below centre so it sits under
+     the expanded §2 panel instead of hiding behind it, and above every
+     panel (z-index) so it is never covered. */
+  position: fixed;
+  top: 62%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: min(460px, calc(100vw - 2rem));
+  padding: 1rem 1.2rem;
+  background: var(--panel-bg);
+  border: 1px solid #e0c560;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  text-align: center;
+  z-index: 30;
+}
+#offline-notice[hidden] { display: none; }
+#offline-notice p { margin: 0; }
+
+.add-dialog {
+  width: min(380px, calc(100vw - 2rem));
+  padding: 1rem 1.1rem;
+  color: var(--fg);
+}
+.add-dialog::backdrop { background: rgba(30, 30, 40, 0.25); }
+.add-dialog form { margin: 0; }
+.add-dialog h2 { margin-bottom: 0.6rem; }
+.add-dialog .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.add-dialog .field em { font-style: normal; opacity: 0.8; }
+.add-dialog .field input {
+  width: 100%;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 3px;
+  font: inherit;
+  font-size: 0.82rem;
+  background: white;
+  color: var(--fg);
+}
+.add-dialog .field input[type="number"] { text-align: right; }
+.add-dialog .field-wide { margin-bottom: 0.5rem; }
+.add-dialog .dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.35rem 0.5rem;
+}
+.add-dialog .dialog-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+.add-dialog .dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.8rem;
+}
+.add-dialog .dialog-actions-spacer { flex: 1 1 auto; }
+.add-dialog .dialog-actions .aim-btn { margin-top: 0; }
+.add-dialog .dialog-actions button[data-action="cancel"] {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+}
+.add-dialog .dialog-actions .primary-btn {
+  display: inline-block;
+  width: auto;
+  padding: 0.35rem 1rem;
+  border-style: solid;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,0 +1,1258 @@
+PASS  coverage.js loads without p5 globals (F-10)
+OK  : too-few(3) {
+  kind: 'too-few',
+  count: 3,
+  inputCount: 3,
+  mergeReduction: 0,
+  symmetry: { delta: 0, level: 'green' }
+}
+OK  : point-at-centre-single { kind: 'point-at-centre', names: [ 'X' ] }
+OK  : point-at-centre-grammar-1 “X” sits on the listening centre — cannot triangulate.
+OK  : point-at-centre-multi { kind: 'point-at-centre', names: [ 'L', 'R' ] }
+OK  : point-at-centre-grammar-2 “L” and “R” sit on the listening centre — cannot triangulate.
+OK  : point-at-centre-grammar-many “A”, “B”, “C”, and 2 more sit on the listening centre — cannot triangulate.
+OK  : planar-4pts-ear-height {
+  kind: 'planar',
+  points: [
+    {
+      kind: 'speaker',
+      name: 'S0',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S3',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S1',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S2',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    }
+  ],
+  normal: { x: 0, y: 0, z: 1 },
+  inputCount: 4,
+  mergeReduction: 0,
+  symmetry: { delta: 0, level: 'green' }
+}
+OK  : ok-tetrahedron-points {
+  kind: 'ok',
+  points: [
+    {
+      kind: 'speaker',
+      name: 'S0',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S1',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S2',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S3',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    }
+  ],
+  faces: [
+    {
+      a: 3,
+      b: 2,
+      c: 1,
+      nx: -0.8871814968566939,
+      ny: -0.40152818339671864,
+      nz: -0.2273413943241464
+    },
+    {
+      a: 0,
+      b: 1,
+      c: 2,
+      nx: 0,
+      ny: 0.08188133814149025,
+      nz: 0.9966420854369731
+    },
+    {
+      a: 0,
+      b: 3,
+      c: 1,
+      nx: 0,
+      ny: 0.9056799788495566,
+      nz: -0.42396199819213337
+    },
+    {
+      a: 0,
+      b: 2,
+      c: 3,
+      nx: 0.8871814968566939,
+      ny: -0.4015281833967186,
+      nz: -0.22734139432414635
+    }
+  ],
+  metrics: [
+    {
+      area: 4.020176923512896,
+      maxAngle: 2.435092938083352,
+      areaRatio: 1.2690615312109543,
+      level: 'red',
+      region: 'left side'
+    },
+    {
+      area: 2.2105246556706644,
+      maxAngle: 1.9049481498674274,
+      areaRatio: 0.6978030712771893,
+      level: 'red',
+      region: 'upper hemisphere'
+    },
+    {
+      area: 2.3154921116627163,
+      maxAngle: 1.9431442192288064,
+      areaRatio: 0.7309384687890458,
+      level: 'red',
+      region: 'front'
+    },
+    {
+      area: 4.020176923512896,
+      maxAngle: 2.435092938083352,
+      areaRatio: 1.2690615312109543,
+      level: 'red',
+      region: 'right side'
+    }
+  ],
+  medianArea: 3.167834517587806,
+  healthSummary: { green: 0, yellow: 0, red: 4 },
+  minPlaneOffset: 0.2273413943241464,
+  inputCount: 4,
+  mergeReduction: 0,
+  symmetry: { delta: 0, level: 'green' }
+}
+OK  : ok-tetrahedron-faces {
+  kind: 'ok',
+  points: [
+    {
+      kind: 'speaker',
+      name: 'S0',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S1',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S2',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S3',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    }
+  ],
+  faces: [
+    {
+      a: 3,
+      b: 2,
+      c: 1,
+      nx: -0.8871814968566939,
+      ny: -0.40152818339671864,
+      nz: -0.2273413943241464
+    },
+    {
+      a: 0,
+      b: 1,
+      c: 2,
+      nx: 0,
+      ny: 0.08188133814149025,
+      nz: 0.9966420854369731
+    },
+    {
+      a: 0,
+      b: 3,
+      c: 1,
+      nx: 0,
+      ny: 0.9056799788495566,
+      nz: -0.42396199819213337
+    },
+    {
+      a: 0,
+      b: 2,
+      c: 3,
+      nx: 0.8871814968566939,
+      ny: -0.4015281833967186,
+      nz: -0.22734139432414635
+    }
+  ],
+  metrics: [
+    {
+      area: 4.020176923512896,
+      maxAngle: 2.435092938083352,
+      areaRatio: 1.2690615312109543,
+      level: 'red',
+      region: 'left side'
+    },
+    {
+      area: 2.2105246556706644,
+      maxAngle: 1.9049481498674274,
+      areaRatio: 0.6978030712771893,
+      level: 'red',
+      region: 'upper hemisphere'
+    },
+    {
+      area: 2.3154921116627163,
+      maxAngle: 1.9431442192288064,
+      areaRatio: 0.7309384687890458,
+      level: 'red',
+      region: 'front'
+    },
+    {
+      area: 4.020176923512896,
+      maxAngle: 2.435092938083352,
+      areaRatio: 1.2690615312109543,
+      level: 'red',
+      region: 'right side'
+    }
+  ],
+  medianArea: 3.167834517587806,
+  healthSummary: { green: 0, yellow: 0, red: 4 },
+  minPlaneOffset: 0.2273413943241464,
+  inputCount: 4,
+  mergeReduction: 0,
+  symmetry: { delta: 0, level: 'green' }
+}
+OK  : ok-tetrahedron-manifold 
+OK  : ok-metrics-shape {
+  kind: 'ok',
+  points: [
+    {
+      kind: 'speaker',
+      name: 'S0',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S1',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S2',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S3',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    }
+  ],
+  faces: [
+    {
+      a: 3,
+      b: 2,
+      c: 1,
+      nx: -0.8871814968566939,
+      ny: -0.40152818339671864,
+      nz: -0.2273413943241464
+    },
+    {
+      a: 0,
+      b: 1,
+      c: 2,
+      nx: 0,
+      ny: 0.08188133814149025,
+      nz: 0.9966420854369731
+    },
+    {
+      a: 0,
+      b: 3,
+      c: 1,
+      nx: 0,
+      ny: 0.9056799788495566,
+      nz: -0.42396199819213337
+    },
+    {
+      a: 0,
+      b: 2,
+      c: 3,
+      nx: 0.8871814968566939,
+      ny: -0.4015281833967186,
+      nz: -0.22734139432414635
+    }
+  ],
+  metrics: [
+    {
+      area: 4.020176923512896,
+      maxAngle: 2.435092938083352,
+      areaRatio: 1.2690615312109543,
+      level: 'red',
+      region: 'left side'
+    },
+    {
+      area: 2.2105246556706644,
+      maxAngle: 1.9049481498674274,
+      areaRatio: 0.6978030712771893,
+      level: 'red',
+      region: 'upper hemisphere'
+    },
+    {
+      area: 2.3154921116627163,
+      maxAngle: 1.9431442192288064,
+      areaRatio: 0.7309384687890458,
+      level: 'red',
+      region: 'front'
+    },
+    {
+      area: 4.020176923512896,
+      maxAngle: 2.435092938083352,
+      areaRatio: 1.2690615312109543,
+      level: 'red',
+      region: 'right side'
+    }
+  ],
+  medianArea: 3.167834517587806,
+  healthSummary: { green: 0, yellow: 0, red: 4 },
+  minPlaneOffset: 0.2273413943241464,
+  inputCount: 4,
+  mergeReduction: 0,
+  symmetry: { delta: 0, level: 'green' }
+}
+OK  : mixed-speaker-phantom-counts {
+  kind: 'ok',
+  points: [
+    {
+      kind: 'speaker',
+      name: 'S0',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S1',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'phantom',
+      name: 'P0',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'phantom',
+      name: 'P1',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    }
+  ],
+  faces: [
+    {
+      a: 2,
+      b: 3,
+      c: 1,
+      nx: 0.829711620201842,
+      ny: -0.462220739708432,
+      nz: -0.3129386762377324
+    },
+    {
+      a: 0,
+      b: 1,
+      c: 3,
+      nx: 0,
+      ny: 0.9284766908852593,
+      nz: -0.37139067635410367
+    },
+    {
+      a: 0,
+      b: 2,
+      c: 1,
+      nx: -0,
+      ny: 0.03819145275046761,
+      nz: 0.9992704403397554
+    },
+    {
+      a: 0,
+      b: 3,
+      c: 2,
+      nx: -0.829711620201842,
+      ny: -0.462220739708432,
+      nz: -0.3129386762377324
+    }
+  ],
+  metrics: [
+    {
+      area: 3.3010633683423594,
+      maxAngle: 2.158798930342464,
+      areaRatio: 1.0291747808058316,
+      level: 'red',
+      region: 'right side'
+    },
+    {
+      area: 2.8503358924481477,
+      maxAngle: 2.0131705497716412,
+      areaRatio: 0.8886511678224405,
+      level: 'red',
+      region: 'front'
+    },
+    {
+      area: 3.113907985226305,
+      maxAngle: 2.1112158270654806,
+      areaRatio: 0.9708252191941684,
+      level: 'red',
+      region: 'upper hemisphere'
+    },
+    {
+      area: 3.3010633683423594,
+      maxAngle: 2.158798930342464,
+      areaRatio: 1.0291747808058316,
+      level: 'red',
+      region: 'left side'
+    }
+  ],
+  medianArea: 3.2074856767843323,
+  healthSummary: { green: 0, yellow: 0, red: 4 },
+  minPlaneOffset: 0.31293867623773236,
+  inputCount: 4,
+  mergeReduction: 0,
+  symmetry: { delta: 0, level: 'green' }
+}
+OK  : disabled-excluded {
+  kind: 'too-few',
+  count: 3,
+  inputCount: 3,
+  mergeReduction: 0,
+  symmetry: { delta: 0, level: 'green' }
+}
+OK  : collinear-merges-to-too-few {
+  kind: 'too-few',
+  count: 2,
+  inputCount: 4,
+  mergeReduction: 2,
+  symmetry: { delta: 0, level: 'green' }
+}
+OK  : planar-azimuth-sorted order=WNES
+OK  : octahedron-faces {
+  kind: 'ok',
+  points: [
+    {
+      kind: 'speaker',
+      name: '+X',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: '-X',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: '+Y',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: '-Y',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: '+Z',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: '-Z',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    }
+  ],
+  faces: [
+    {
+      a: 1,
+      b: 4,
+      c: 2,
+      nx: -0.5773502691896258,
+      ny: 0.5773502691896258,
+      nz: 0.5773502691896258
+    },
+    {
+      a: 0,
+      b: 2,
+      c: 4,
+      nx: 0.5773502691896258,
+      ny: 0.5773502691896258,
+      nz: 0.5773502691896258
+    },
+    {
+      a: 3,
+      b: 0,
+      c: 4,
+      nx: 0.5773502691896258,
+      ny: -0.5773502691896258,
+      nz: 0.5773502691896258
+    },
+    {
+      a: 3,
+      b: 4,
+      c: 1,
+      nx: -0.5773502691896258,
+      ny: -0.5773502691896258,
+      nz: 0.5773502691896258
+    },
+    {
+      a: 5,
+      b: 1,
+      c: 2,
+      nx: -0.5773502691896258,
+      ny: 0.5773502691896258,
+      nz: -0.5773502691896258
+    },
+    {
+      a: 5,
+      b: 2,
+      c: 0,
+      nx: 0.5773502691896258,
+      ny: 0.5773502691896258,
+      nz: -0.5773502691896258
+    },
+    {
+      a: 5,
+      b: 3,
+      c: 1,
+      nx: -0.5773502691896258,
+      ny: -0.5773502691896258,
+      nz: -0.5773502691896258
+    },
+    {
+      a: 5,
+      b: 0,
+      c: 3,
+      nx: 0.5773502691896258,
+      ny: -0.5773502691896258,
+      nz: -0.5773502691896258
+    }
+  ],
+  metrics: [
+    {
+      area: 1.5707963267948966,
+      maxAngle: 1.5707963267948966,
+      areaRatio: 1,
+      level: 'yellow',
+      region: 'left side'
+    },
+    {
+      area: 1.5707963267948966,
+      maxAngle: 1.5707963267948966,
+      areaRatio: 1,
+      level: 'yellow',
+      region: 'right side'
+    },
+    {
+      area: 1.5707963267948966,
+      maxAngle: 1.5707963267948966,
+      areaRatio: 1,
+      level: 'yellow',
+      region: 'right side'
+    },
+    {
+      area: 1.5707963267948966,
+      maxAngle: 1.5707963267948966,
+      areaRatio: 1,
+      level: 'yellow',
+      region: 'left side'
+    },
+    {
+      area: 1.5707963267948966,
+      maxAngle: 1.5707963267948966,
+      areaRatio: 1,
+      level: 'yellow',
+      region: 'left side'
+    },
+    {
+      area: 1.5707963267948966,
+      maxAngle: 1.5707963267948966,
+      areaRatio: 1,
+      level: 'yellow',
+      region: 'right side'
+    },
+    {
+      area: 1.5707963267948966,
+      maxAngle: 1.5707963267948966,
+      areaRatio: 1,
+      level: 'yellow',
+      region: 'left side'
+    },
+    {
+      area: 1.5707963267948966,
+      maxAngle: 1.5707963267948966,
+      areaRatio: 1,
+      level: 'yellow',
+      region: 'right side'
+    }
+  ],
+  medianArea: 1.5707963267948966,
+  healthSummary: { green: 0, yellow: 8, red: 0 },
+  minPlaneOffset: 0.5773502691896258,
+  inputCount: 6,
+  mergeReduction: 0,
+  symmetry: { delta: 0, level: 'green' }
+}
+OK  : octahedron-manifold 
+OK  : cube-faces {
+  kind: 'ok',
+  points: [
+    {
+      kind: 'speaker',
+      name: 'S0',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S1',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S2',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S3',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S4',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S5',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S6',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'S7',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    }
+  ],
+  faces: [
+    { a: 0, b: 1, c: 2, nx: 0, ny: 0, nz: 1 },
+    { a: 3, b: 7, c: 2, nx: 0, ny: -1, nz: 0 },
+    { a: 3, b: 2, c: 1, nx: 0, ny: 0, nz: 1 },
+    { a: 3, b: 1, c: 7, nx: -1, ny: 0, nz: 0 },
+    { a: 4, b: 0, c: 2, nx: 1, ny: 0, nz: -0 },
+    { a: 4, b: 1, c: 0, nx: 0, ny: 1, nz: -0 },
+    { a: 5, b: 4, c: 7, nx: 0, ny: 0, nz: -1 },
+    { a: 5, b: 7, c: 1, nx: -1, ny: 0, nz: 0 },
+    { a: 5, b: 1, c: 4, nx: 0, ny: 1, nz: 0 },
+    { a: 6, b: 4, c: 2, nx: 1, ny: 0, nz: 0 },
+    { a: 6, b: 2, c: 7, nx: 0, ny: -1, nz: 0 },
+    { a: 6, b: 7, c: 4, nx: 0, ny: 0, nz: -1 }
+  ],
+  metrics: [
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'upper hemisphere'
+    },
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'rear'
+    },
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'upper hemisphere'
+    },
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'left side'
+    },
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'right side'
+    },
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'front'
+    },
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'lower hemisphere'
+    },
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'left side'
+    },
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'front'
+    },
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'right side'
+    },
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'rear'
+    },
+    {
+      area: 1.0471975511965974,
+      maxAngle: 2.0943951023931957,
+      areaRatio: 1,
+      level: 'red',
+      region: 'lower hemisphere'
+    }
+  ],
+  medianArea: 1.0471975511965974,
+  healthSummary: { green: 0, yellow: 0, red: 12 },
+  minPlaneOffset: 0.5773502691896257,
+  inputCount: 8,
+  mergeReduction: 0,
+  symmetry: { delta: 0, level: 'green' }
+}
+OK  : cube-manifold 
+OK  : sliver-merge-count {
+  kind: 'ok',
+  points: [
+    {
+      kind: 'merged',
+      name: "A + A'",
+      names: [Array],
+      sourceCount: 2,
+      dir: [Object],
+      pos: [Object]
+    },
+    {
+      kind: 'speaker',
+      name: 'B',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'C',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    },
+    {
+      kind: 'speaker',
+      name: 'D',
+      pos: [Object],
+      dir: [Object],
+      names: [Array],
+      sourceCount: 1
+    }
+  ],
+  faces: [
+    {
+      a: 2,
+      b: 1,
+      c: 3,
+      nx: -0.8824853398845816,
+      ny: -0.3894730613271251,
+      nz: -0.2636861001063045
+    },
+    {
+      a: 0,
+      b: 3,
+      c: 1,
+      nx: -0.0001993581602603227,
+      ny: 0.8817537716982324,
+      nz: -0.47170991758947095
+    },
+    {
+      a: 0,
+      b: 1,
+      c: 2,
+      nx: 0.0003033135185332005,
+      ny: 0.061683857475123186,
+      nz: 0.998095691668839
+    },
+    {
+      a: 0,
+      b: 2,
+      c: 3,
+      nx: 0.8824360193200385,
+      ny: -0.3895496799706909,
+      nz: -0.26373797345345834
+    }
+  ],
+  metrics: [
+    {
+      area: 3.679778837430039,
+      maxAngle: 2.356194490192345,
+      areaRatio: 1.0847242043435879,
+      level: 'red',
+      region: 'left side'
+    },
+    {
+      area: 2.101864704932385,
+      maxAngle: 1.836556608638361,
+      areaRatio: 0.6195871057533355,
+      level: 'red',
+      region: 'front'
+    },
+    {
+      area: 3.105557092378362,
+      maxAngle: 2.1915653542934876,
+      areaRatio: 0.9154552745964455,
+      level: 'red',
+      region: 'upper hemisphere'
+    },
+    {
+      area: 3.6791699796183903,
+      maxAngle: 2.3561944901923453,
+      areaRatio: 1.0845447254035547,
+      level: 'red',
+      region: 'right side'
+    }
+  ],
+  medianArea: 3.392363535998376,
+  healthSummary: { green: 0, yellow: 0, red: 4 },
+  minPlaneOffset: 0.26368610010630444,
+  inputCount: 5,
+  mergeReduction: 1,
+  symmetry: { delta: 0.00021757126234258627, level: 'green' }
+}
+OK  : sliver-merge-status-format 3D layout — 4 points → 4 triangles (1 sliver-merged).
+OK  : sliver-merge-to-too-few {
+  kind: 'too-few',
+  count: 2,
+  inputCount: 4,
+  mergeReduction: 2,
+  symmetry: { delta: 1.4968827289062958, level: 'red' }
+}
+OK  : random50-ok ok
+OK  : random50-manifold 
+OK  : random50-summary-totals { summary: { green: 5, yellow: 53, red: 36 }, faces: 94 }
+OK  : regular-tetra-area [
+  3.141592653589794,
+  3.141592653589794,
+  3.141592653589794,
+  3.141592653589794
+]
+OK  : regular-tetra-max-angle [
+  2.0943951023931957,
+  2.0943951023931957,
+  2.0943951023931957,
+  2.0943951023931957
+]
+OK  : regular-tetra-area-ratio [ 1, 1, 1, 1 ]
+OK  : regular-tetra-all-red { green: 0, yellow: 0, red: 4 }
+OK  : regular-tetra-caption 3D layout — 4 points → 4 triangles.
+OK  : regular-tetra-symmetry-red { delta: 1.2309594173407747, level: 'red' }
+OK  : regular-tetra-panel-2-lines [
+  {
+    level: 'fail',
+    text: '✗ 4 problematic triangles detected in right side and left side. Consider adding phantom speaker(s).'
+  },
+  {
+    level: 'fail',
+    text: '⚠ Layout is asymmetric (L/R, Δ = 1.23 rad). Sources panning across the centerline may behave inconsistently.'
+  }
+]
+OK  : regular-tetra-panel-fail-triangles {
+  level: 'fail',
+  text: '✗ 4 problematic triangles detected in right side and left side. Consider adding phantom speaker(s).'
+}
+OK  : regular-tetra-panel-asymmetric {
+  level: 'fail',
+  text: '⚠ Layout is asymmetric (L/R, Δ = 1.23 rad). Sources panning across the centerline may behave inconsistently.'
+}
+OK  : regular-octa-area [
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966
+]
+OK  : regular-octa-max-angle [
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966,
+  1.5707963267948966
+]
+OK  : regular-octa-all-yellow { green: 0, yellow: 8, red: 0 }
+OK  : regular-octa-symmetry-green { delta: 0, level: 'green' }
+OK  : symmetric-lcr-green { delta: 0, level: 'green' }
+OK  : asymmetric-r-shift-yellow { delta: 0.06647427413511646, level: 'yellow' }
+OK  : single-off-axis-red { kind: 'too-few', sym: { delta: 2.060753653048625, level: 'red' } }
+OK  : single-on-centerline-green { kind: 'too-few', sym: { delta: 0, level: 'green' } }
+OK  : left-heavy-red { delta: 0.34449854950184566, level: 'red' }
+OK  : left-heavy-panel-symmetry-fail {
+  level: 'fail',
+  text: '⚠ Layout is asymmetric (L/R, Δ = 0.34 rad). Sources panning across the centerline may behave inconsistently.'
+}
+OK  : planar-carries-symmetry { kind: 'planar', sym: { delta: 0, level: 'green' } }
+OK  : region-upper 
+OK  : region-lower 
+OK  : region-front 
+OK  : region-rear 
+OK  : region-right 
+OK  : region-left 
+OK  : region-max-component-y front
+OK  : region-max-component-x right side
+OK  : region-max-component-z 
+OK  : region-labels-only-spec-set 
+OK  : region-tie-two front and rear
+OK  : region-tie-three-lists-two 
+OK  : region-no-tie-single 
+OK  : lines-ok-all-green [ { level: 'ok', text: '✓ Layout looks healthy.' } ]
+OK  : lines-ok-green-with-asymmetric [
+  { level: 'ok', text: '✓ Layout looks healthy.' },
+  {
+    level: 'warn',
+    text: '⚠ Layout is asymmetric (L/R, Δ = 0.00 rad). Sources panning across the centerline may behave inconsistently.'
+  }
+]
+OK  : lines-ok-yellow-region [
+  {
+    level: 'warn',
+    text: '⚠ 3 suspect triangles detected in upper hemisphere. Coverage may degrade.'
+  }
+]
+OK  : lines-ok-red-wins [
+  {
+    level: 'fail',
+    text: '✗ 1 problematic triangle detected in rear. Consider adding phantom speaker(s).'
+  }
+]
+OK  : lines-too-few [
+  {
+    level: 'warn',
+    text: '⚠ Add ≥ 4 enabled speakers or phantoms — only 3 reachable.'
+  }
+]
+OK  : lines-planar [
+  {
+    level: 'info',
+    text: 'ℹ Planar layout — 2D ring shown in place of triangulation.'
+  }
+]
+OK  : lines-point-at-centre-plural [
+  {
+    level: 'fail',
+    text: '✗ 2 points sit on the listening centre — cannot triangulate.'
+  }
+]
+OK  : lines-collinear [
+  {
+    level: 'warn',
+    text: '⚠ Speakers are collinear from the listening centre — layout needs spatial spread.'
+  }
+]
+OK  : small-circle-above-ears-planar planar
+OK  : small-circle-plus-zenith-hull-open { kind: 'hull-open', count: 5 }
+OK  : small-circle-plus-nadir-ok { kind: 'ok' }
+OK  : lines-hull-open [
+  {
+    level: 'warn',
+    text: "⚠ Layout doesn't enclose the listening centre — add a phantom above or below to close the panning grid."
+  }
+]
+OK  : lines-numerical-issue [
+  {
+    level: 'warn',
+    text: '⚠ Numerical issue — the triangulation for this layout could not be built reliably, so no health scores are shown.'
+  }
+]
+OK  : audit-D1-all-above-hull-open hull-open
+OK  : audit-D1-panel-no-scores [
+  {
+    level: 'warn',
+    text: "⚠ Layout doesn't enclose the listening centre — add a phantom above or below to close the panning grid."
+  }
+]
+OK  : audit-D2-plus-zenith-still-open hull-open
+OK  : audit-D3-zenith-nadir-ok-manifold { kind: 'ok', faces: 24 }
+OK  : audit-D3-area-sums-to-sphere 
+OK  : audit-D5-ear-ring-plus-tops-hull-open hull-open
+OK  : audit-D6-plus-nadir-ok ok
+OK  : audit-D7-two-rings-ok { green: 12, yellow: 0, red: 8 }
+OK  : audit-D7-red-caps-are-upper-lower [
+  'lower hemisphere',
+  'lower hemisphere',
+  'lower hemisphere',
+  'lower hemisphere',
+  'upper hemisphere',
+  'upper hemisphere',
+  'upper hemisphere',
+  'upper hemisphere'
+]
+OK  : audit-D7-panel-tie-lists-two {
+  level: 'fail',
+  text: '✗ 8 problematic triangles detected in upper hemisphere and lower hemisphere. Consider adding phantom speaker(s).'
+}
+OK  : region-big-caps-follow-face-normal {
+  kind: 'ok',
+  capRegions: [
+    'upper hemisphere',
+    'upper hemisphere',
+    'upper hemisphere',
+    'upper hemisphere',
+    'upper hemisphere',
+    'upper hemisphere',
+    'lower hemisphere',
+    'lower hemisphere',
+    'lower hemisphere',
+    'lower hemisphere',
+    'lower hemisphere',
+    'lower hemisphere'
+  ]
+}
+OK  : audit-F2-ring-plus-zenith-hull-open hull-open
+OK  : audit-F3-ring-zenith-nadir-ok ok
+OK  : audit-demo-atmos-714-hull-open hull-open
+OK  : planar-tolerance-1.9deg-r150 
+OK  : not-planar-2.2deg-r150 
+OK  : planar-tolerance-1.9deg-r300 
+OK  : not-planar-2.2deg-r300 
+OK  : planar-tolerance-1.9deg-r3000 
+OK  : not-planar-2.2deg-r3000 
+OK  : audit-G-ear-ring-jitter-planar 
+OK  : planar-ear-ring-pm5cm 
+OK  : audit-J-rounding-0-of-504-non-manifold 0/504 
+OK  : audit-J2-order-independent [ 'ok', 'ok' ]
+OK  : manifold-guard-detects-duplicate-edge 
+OK  : pit-inside-centroid 
+OK  : pit-outside-far 
+OK  : pit-on-vertex 
+OK  : pit-on-edge-AB 
+OK  : pit-on-edge-hypot 
+OK  : pit-just-outside-AB 
+OK  : pit-reverse-winding 
+Triangulation tests: 103/103 passed.
+PASS  __triangulationDevTests all pass (103/103)
+PASS  F-01 all-above layout → hull-open, no scores
+PASS  F-01 hull-open panel text is the hull-open warning only
+PASS  F-01 ear ring + tops + nadir → ok (encloses)
+PASS  F-01 enclosure tolerance is sin(1°)
+PASS  P-03 ring with 1.99° elevation spread, r=120 → planar
+PASS  P-03 ring with 2.05° elevation spread, r=120 → not planar
+PASS  P-03 ring with 1.99° elevation spread, r=1200 → planar
+PASS  P-03 ring with 2.05° elevation spread, r=1200 → not planar
+PASS  P-03 ring with 1.99° elevation spread, r=12000 → planar
+PASS  P-03 ring with 2.05° elevation spread, r=12000 → not planar
+PASS  B1 8-ring at +14° (same height) → planar
+PASS  B1 ring at −10° → planar
+PASS  B1 ring at +14° with 0.5° spread → planar
+PASS  B1 ring at +14° with 2° spread → planar (was not planar at the 1° tolerance)
+PASS  B1 ring at +14° with 3° spread → not planar
+PASS  T1 ear ring r=300 with ±5 cm height jitter → planar
+PASS  B1 ear ring + one top speaker → hull-open
+PASS  B1 vertical front arc does not throw
+INFO vertical front arc classified as: hull-open
+PASS  F-03 region from normal: straight up
+PASS  F-03 no centerline label
+PASS  F-03 tie → "front and rear"
+PASS  F-02 guard: healthy octahedron → ok
+PASS  F-02 guard: non-manifold hull → numerical-issue, no scores
+PASS  F-02 guard: panel says numerical issue
+PASS  F-02 guard: failed insertion → numerical-issue
+PASS  F-05 |pitch| < 87.4°: right vector identical to previous behaviour (K2b)
+PASS  F-05 pitch −90°: yaw 0 → right = +X
+PASS  F-05 pitch −90°: yaw 90 → right = −Y (yaw still turns the speaker)
+PASS  F-05 basis stays orthonormal at pitch −90°
+PASS  F-05 ceiling speaker: yaw 0 vs yaw 90 give different X spans
+PASS  F-06 html filename for "工作坊 7.1.4"
+PASS  F-06 html filename for "Théâtre — salle 2"
+PASS  F-06 html filename for "a/b\\c:d*e?f\"g<h>i|j"
+PASS  F-06 html filename for "..hidden"
+PASS  F-06 html filename for ""
+PASS  F-06 html filename for "   "
+PASS  F-06 PNG uses the same lowercase "untitled"
+PASS  F-06 PNG keeps CJK name
+PASS  F-16 file without phantoms key → phantoms reset to default (none)
+PASS  F-16 file without speakers key → default LCR, not the previous list
+PASS  F-16 file without view → default layers
+PASS  F-16 invalid audience values → defaults
+PASS  F-16 non-finite speaker numbers → 0
+PASS  F-19 spread 180 / 0 rejected on load → defaults 90 / 60
+PASS  F-16/F-19 shared validators
+PASS  F-16 schema mismatch leaves STATE untouched
+PASS  F-16 generated id does not collide
+PASS  F-17 2.53 m → 253 cm
+PASS  F-17 1.1 m → 110 cm
+PASS  F-17 0.12345 m → 12.35 cm (0.01 cm)
+PASS  F-17 cm input untouched
+PASS  F-15 limits 100–5000 cm
+PASS  F-15 eye 10 cm from centre pushed out to 100 cm
+PASS  F-15 eye 900 m away pulled in to 50 m
+PASS  F-15 in-range eye unchanged
+PASS  Q-01 serializeState writes view.camera
+PASS  Q-01 applyLoadedState restores view.camera
+PASS  Q-01 malformed camera → null (preset used)
+PASS  Q-01 loaded camera distance clamped to ≥ 100 cm
+PASS  B7 string x → warning naming the speaker
+PASS  T4 empty / blank names → "(unnamed)" once, no blank item
+PASS  B7 healthy file → no warning
+PASS  B7 missing fields (not wrong values) → no warning
+PASS  B7 out-of-range spread + audience + phantom → counted and deduped names
+PASS  B7 more than 5 names → "and K more"
+PASS  boot loader applies the embedded state without warnings
+PASS  Q-01 boot loader restores the free camera
+PASS  P-04 escapes </script (any case) and <!--
+PASS  P-04 escaping is idempotent
+PASS  P-04 escaped JS evaluates to the same strings
+PASS  P-04 </style escaped in inline CSS
+PASS  P-04 the real coverage.js survives escaping as valid JS
+PASS  F-19 live title for a named layout
+PASS  F-19 live title for an unnamed layout
+
+node fix tests: 76/76 passed

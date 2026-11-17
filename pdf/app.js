@@ -531,6 +531,8 @@ function renderPicker() {
   renderPreview();
 }
 
+// a shift-press would otherwise start extending the text selection
+$('groups').addEventListener('mousedown', e => { if (e.shiftKey) e.preventDefault(); });
 $('groups').addEventListener('click', e => {
   const group = e.target.closest('.group');
   if (!group) return;

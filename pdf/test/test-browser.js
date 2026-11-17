@@ -208,8 +208,10 @@ async function pickerTest(browser, base) {
   await tile(1, 0).locator('input').click();                       // untick B1 (anchor)
   await tile(1, 1).locator('input').click({ modifiers: ['Shift'] }); // B1..B2 → unticked
   check('shift+click unticks the range', (await order(pg)).join() === 'A1,A3', (await order(pg)).join());
+  check('shift+click selects no text', await pg.evaluate(() => window.getSelection().toString()) === '', await pg.evaluate(() => window.getSelection().toString()));
   await tile(0, 0).click();                                           // focus A1 (no change)
   await tile(0, 2).click({ modifiers: ['Shift'] });                 // on the thumbnail: A1..A3 take A3's new state (untick)
+  check('shift+click on a thumbnail selects no text', await pg.evaluate(() => window.getSelection().toString()) === '', await pg.evaluate(() => window.getSelection().toString()));
   check('shift+click on a thumbnail works too', (await order(pg)).join() === '', (await order(pg)).join());
   await pg.keyboard.press('Control+z');
   check('a range is one undo step', (await order(pg)).join() === 'A1,A3' && (await toastText(pg)).includes('第 1～3 頁'), (await order(pg)).join());

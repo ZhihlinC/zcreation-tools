@@ -336,6 +336,8 @@ html, body {
 #pv-toggle span { writing-mode: vertical-rl; letter-spacing: 0.1em; }
 #pv-toggle::before { content: "›"; font-size: 1rem; line-height: 1; }
 #pv-toggle[aria-expanded="false"]::before { content: "‹"; }
+/* Shift+click picks a range; it must not also select text */
+#groups { user-select: none; -webkit-user-select: none; }
 .group { margin-bottom: 1rem; background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: var(--radius); }
 .group header { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--panel-border); }
 .group.folded header { border-bottom: 0; }

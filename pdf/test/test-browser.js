@@ -181,9 +181,12 @@ async function pickerTest(browser, base) {
   // fold a group; collapse / reopen the preview
   await pg.locator('#groups .group').nth(0).locator('.fold').click();
   check('folding hides the tiles', !(await tile(0, 0).isVisible()));
+  const handle = async () => { const b = await pg.locator('#pv-toggle').boundingBox(); return [Math.round(b.x + b.width), Math.round(b.y)]; };
+  const openAt = await handle();
   await pg.click('#pv-toggle');
-  check('preview can be closed', !(await pg.isVisible('#preview')) && await pg.isVisible('#pv-open'));
-  await pg.click('#pv-open');
+  check('preview can be closed', !(await pg.isVisible('#preview')) && await pg.getAttribute('#pv-toggle', 'aria-expanded') === 'false');
+  check('the handle stays in the same place', JSON.stringify(await handle()) === JSON.stringify(openAt), `${await handle()} vs ${openAt}`);
+  await pg.click('#pv-toggle');
   check('and reopened', await pg.isVisible('#preview'));
   await pg.locator('#groups .group').nth(0).locator('.fold').click();
 

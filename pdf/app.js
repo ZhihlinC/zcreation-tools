@@ -289,7 +289,9 @@ function renderChrome() {
   for (const b of document.querySelectorAll('#toolbar .step2')) b.hidden = S.step !== 2 || b.dataset.off === '1';
   $('preview').hidden = !S.pvOpen;
   $('picker').classList.toggle('pv-closed', !S.pvOpen);
-  $('pv-open').hidden = S.step !== 1 || S.pvOpen || S.sources.size === 0;
+  $('pv-toggle').setAttribute('aria-expanded', S.pvOpen);
+  $('pv-toggle').querySelector('span').textContent = S.pvOpen ? '收起' : '預覽';
+  $('pv-toggle').title = S.pvOpen ? '收起大預覽' : '展開大預覽';
   if (S.step === 1) {
     $('status').textContent = S.sources.size ? `共 ${S.sources.size} 份檔案，已選 ${n} 頁` : '';
   } else {
@@ -557,8 +559,8 @@ async function renderPreview() {
   cv.getContext('2d').drawImage(off, 0, 0);
   cv.dataset.key = S.focus;
 }
-$('pv-toggle').onclick = () => { S.pvOpen = false; pvShown = null; render(); };
-$('pv-open').onclick = () => { S.pvOpen = true; render(); };
+// one handle on the right edge, in the same place whether open or closed
+$('pv-toggle').onclick = () => { S.pvOpen = !S.pvOpen; pvShown = null; render(); };
 window.addEventListener('resize', () => { pvShown = null; renderPreview(); });
 
 // visible tiles in reading order (folded groups skipped)

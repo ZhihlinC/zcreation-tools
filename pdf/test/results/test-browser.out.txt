@@ -133,6 +133,14 @@ ok   符合 fits again
 ok   step 2 preview collapses
 ok   頁面調整 reopens the side preview
 ok   no page errors (side preview)
+ok   one page: its value
+ok   shift-select in step 2 highlights no text
+ok   3 pages selected
+ok   mixed values read 不一致
+ok   the range is noted
+ok   a uniform field stays plain
+ok   dragging sets them all (live)
+ok   undo returns the mixed values
 ok   user-password message
 ok   owner-only message
 ok   not-a-PDF message
@@ -156,7 +164,7 @@ ok   300 dpi: page sizes = preview sizes, no rotation left
 ok   300 dpi: one image per page at 300 dpi
 ok   300 dpi: no text left in the file
 ok   300 dpi: nothing but pages, images and their content
-  300 dpi: 11 pages in 487 ms, 820 KB
+  300 dpi: 11 pages in 505 ms, 820 KB
 ok   300 dpi: covered text is gone from the pixels
 ok   300 dpi: shape burned in where previewed
 ok   300 dpi: nothing red outside the shape
@@ -166,7 +174,7 @@ ok   600 dpi: page sizes = preview sizes, no rotation left
 ok   600 dpi: one image per page at 600 dpi
 ok   600 dpi: no text left in the file
 ok   600 dpi: nothing but pages, images and their content
-  600 dpi: 11 pages in 956 ms, 2706 KB
+  600 dpi: 11 pages in 986 ms, 2706 KB
 ok   600 dpi: covered text is gone from the pixels
 ok   600 dpi: shape burned in where previewed
 ok   600 dpi: nothing red outside the shape
@@ -177,12 +185,12 @@ ok   loading card shows the stages
 ok   loading card has a progress bar
 ok   no loading card left behind
 ok   download assembled off the page thread
-  step 1, 150 pages: load 46 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.8 max 16.8, 0 frames > 50 ms of 388
+  step 1, 150 pages: load 48 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.8 max 16.8, 0 frames > 50 ms of 388
 ok   step 1: thumbnails are lazy (not all drawn up front)
 ok   step 1: scrolling draws more thumbnails
 ok   step 1: scroll p95 frame < 100 ms
-  step 2, 150 pages: load 60 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
+  step 2, 150 pages: load 68 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
 ok   step 2: thumbnails are lazy (not all drawn up front)
 ok   step 2: scrolling draws more thumbnails
 ok   step 2: scroll p95 frame < 100 ms
-182 passed, 0 failed
+190 passed, 0 failed

@@ -337,7 +337,7 @@ html, body {
 #pv-toggle::before { content: "›"; font-size: 1rem; line-height: 1; }
 #pv-toggle[aria-expanded="false"]::before { content: "‹"; }
 /* Shift+click picks a range; it must not also select text */
-#groups { user-select: none; -webkit-user-select: none; }
+#groups, #grid { user-select: none; -webkit-user-select: none; }
 .group { margin-bottom: 1rem; background: var(--panel-bg); border: 1px solid var(--panel-border); border-radius: var(--radius); }
 .group header { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--panel-border); }
 .group.folded header { border-bottom: 0; }
@@ -387,3 +387,6 @@ html, body {
   padding: 1px 6px; border-radius: 999px; white-space: nowrap;
   background: rgba(42, 42, 42, 0.78); color: #fff; font-size: 0.7rem;
 }
+#adjust .adj-row.mixed output { color: #9a5b00; }
+#adjust .adj-row.mixed input[type=range] { opacity: 0.45; }
+#adj-mixed { margin: -0.3rem 0 0.7rem; padding: 0.4rem 0.6rem; border-radius: 6px; background: #fff7e6; color: #7a4a00; font-size: 0.8rem; line-height: 1.45; }

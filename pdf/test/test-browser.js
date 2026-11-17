@@ -119,6 +119,7 @@ async function main() {
     await rotationTest(browser, base, pdfjs);
     await adjustTest(browser, base, pdfjs);
     await sidePreviewTest(browser, base);
+    await mixedAdjustTest(browser, base);
     await errorsTest(browser, base);
     await dropGuardTest(browser, base);
     await cjkTest(browser, base);
@@ -596,6 +597,32 @@ async function sidePreviewTest(browser, base) {
   await pg.click('#adjust-btn');
   check('頁面調整 reopens the side preview', await pg.isVisible('#preview #adjust'));
   check('no page errors (side preview)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
+}
+
+// Pages with different 縮放 / 白邊 selected together: the number reads
+// 不一致 with the range noted; dragging sets them all. Shift-selecting in
+// step 2 highlights no text.
+async function mixedAdjustTest(browser, base) {
+  const pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 3);
+  const set = (id, v, change = true) => pg.evaluate(([id, v, change]) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); if (change) e.dispatchEvent(new Event('change', { bubbles: true })); }, [id, v, change]);
+  await cardAt(pg, 0).click();
+  await set('adj-margin', 2.5);
+  check('one page: its value', (await pg.textContent('#adj-margin-out')) === '2.5%' && await pg.isHidden('#adj-mixed'));
+  await cardAt(pg, 2).click({ modifiers: ['Shift'] });
+  check('shift-select in step 2 highlights no text', await pg.evaluate(() => window.getSelection().toString()) === '', await pg.evaluate(() => window.getSelection().toString()));
+  check('3 pages selected', await pg.evaluate(() => window.__pdfTool.S.sel.size) === 3);
+  check('mixed values read 不一致', (await pg.textContent('#adj-margin-out')) === '不一致' && await pg.locator('#adj-margin').evaluate(e => e.closest('.adj-row').classList.contains('mixed')));
+  check('the range is noted', (await pg.textContent('#adj-mixed')).includes('白邊 0%～2.5%') && await pg.isVisible('#adj-mixed'), await pg.textContent('#adj-mixed'));
+  check('a uniform field stays plain', (await pg.textContent('#adj-zoom-out')) === '0%' && !(await pg.locator('#adj-zoom').evaluate(e => e.closest('.adj-row').classList.contains('mixed'))));
+  await set('adj-margin', 4, false); // still dragging
+  check('dragging sets them all (live)', await pg.evaluate(() => window.__pdfTool.S.pages.map(p => p.margin).join()) === '4,4,4' && (await pg.textContent('#adj-margin-out')) === '4%' && await pg.isHidden('#adj-mixed'));
+  await pg.evaluate(() => document.getElementById('adj-margin').dispatchEvent(new Event('change', { bubbles: true })));
+  await pg.click('#pv-label');
+  await pg.keyboard.press('Control+z');
+  check('undo returns the mixed values', await pg.evaluate(() => window.__pdfTool.S.pages.map(p => p.margin || 0).join()) === '2.5,0,0' && (await pg.textContent('#adj-margin-out')) === '不一致');
   await pg.close();
 }
 

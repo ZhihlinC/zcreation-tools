@@ -534,7 +534,7 @@ function renderPicker() {
 }
 
 // a shift-press would otherwise start extending the text selection
-$('groups').addEventListener('mousedown', e => { if (e.shiftKey) e.preventDefault(); });
+for (const id of ['groups', 'grid']) $(id).addEventListener('mousedown', e => { if (e.shiftKey) e.preventDefault(); });
 $('groups').addEventListener('click', e => {
   const group = e.target.closest('.group');
   if (!group) return;
@@ -815,23 +815,32 @@ function rotateEntry(p) {
 const adjLabel = p => [p.zoom ? `縮放 ${p.zoom > 0 ? '+' : ''}${p.zoom}%` : '', p.margin ? `白邊 ${p.margin}%` : ''].filter(Boolean).join('・');
 let adjBefore = null; // snapshot taken when a slider drag starts; committed on release
 function adjustTargets() { return S.pages.filter(p => S.sel.has(p.uid)); }
+// Several pages with different values: the slider cannot show them all, so
+// the number reads 不一致 and a note gives the range; dragging sets them all
+// to one value (the usual "mixed" convention, not a warning).
+const fmtZoom = v => `${v > 0 ? '+' : ''}${v}%`, fmtMargin = v => `${v}%`;
 function syncAdjustPanel() {
   const t = adjustTargets();
   $('adjust').classList.toggle('off', !t.length);
   $('adj-zoom').disabled = $('adj-margin').disabled = $('adj-reset').disabled = !t.length;
-  if (!t.length) { $('adj-for').textContent = '先在左邊點選要調整的頁面'; return; }
-  if (adjBefore) return; // mid-drag: the slider owns its value
-  const z = t[0].zoom || 0, m = t[0].margin || 0;
-  $('adj-zoom').value = z; $('adj-margin').value = m;
-  $('adj-zoom-out').textContent = `${z > 0 ? '+' : ''}${z}%`;
-  $('adj-margin-out').textContent = `${m}%`;
+  if (!t.length) { $('adj-for').textContent = '先在左邊點選要調整的頁面'; $('adj-mixed').hidden = true; return; }
   $('adj-for').textContent = `套用到選取的 ${t.length} 頁`;
+  const notes = [];
+  for (const [field, id, fmt, name] of [['zoom', 'adj-zoom', fmtZoom, '縮放'], ['margin', 'adj-margin', fmtMargin, '白邊']]) {
+    const vals = t.map(p => p[field] || 0);
+    const lo = Math.min(...vals), hi = Math.max(...vals), mixed = lo !== hi;
+    $(id).closest('.adj-row').classList.toggle('mixed', mixed);
+    if (!adjBefore) $(id).value = vals[0]; // mid-drag the slider owns its value
+    $(id + '-out').textContent = mixed ? '不一致' : fmt(vals[0]);
+    if (mixed) notes.push(`${name} ${fmt(lo)}～${fmt(hi)}`);
+  }
+  $('adj-mixed').hidden = !notes.length;
+  $('adj-mixed').textContent = notes.length ? `選取的頁面數值不同（${notes.join('；')}）。拖動滑桿會全部設成同一個值。` : '';
 }
 function applyAdjust(field, value) {
   if (!adjBefore) adjBefore = snapshot();
   for (const p of adjustTargets()) p[field] = value;
-  $('adj-zoom-out').textContent = `${Number($('adj-zoom').value) > 0 ? '+' : ''}${$('adj-zoom').value}%`;
-  $('adj-margin-out').textContent = `${$('adj-margin').value}%`;
+  syncAdjustPanel();
   renderGrid(); // live thumbnails
   renderPreview(); // and the big preview
 }

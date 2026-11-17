@@ -466,6 +466,12 @@ function togglePick(src, i) {
   pick(src, i, on);
   render();
 }
+function rangePick(src, from, to, on) {
+  const a = Math.min(from, to), b = Math.max(from, to);
+  commit(`${on ? '選回' : '不選'} ${S.sources.get(src).name} 第 ${a + 1}～${b + 1} 頁`);
+  for (let i = a; i <= b; i++) pick(src, i, on);
+  render();
+}
 function pickAll(src, on) {
   const n = S.sources.get(src).geoms.length;
   if ([...Array(n).keys()].every(i => isPicked(src, i) === on)) return;
@@ -538,7 +544,16 @@ $('groups').addEventListener('click', e => {
   const tile = e.target.closest('.tile');
   if (!tile) return;
   const [, i] = tile.dataset.key.split(':');
+  const prev = S.focus;
   S.focus = tile.dataset.key;
+  // Shift+click: every page from the last clicked one (same file) to this
+  // one takes this page's new state — one undo step
+  const [psrc, pi] = (prev || '').split(':');
+  if (e.shiftKey && psrc === src) {
+    e.preventDefault();
+    tile.focus({ preventScroll: true });
+    return rangePick(src, Number(pi), Number(i), !isPicked(src, Number(i)));
+  }
   if (e.target.closest('.tick')) {
     e.preventDefault(); // the label would toggle the box itself; state comes from S.pages
     return togglePick(src, Number(i));

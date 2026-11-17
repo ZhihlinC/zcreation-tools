@@ -204,6 +204,18 @@ async function pickerTest(browser, base) {
   await tile(1, 0).locator('input').click();
   const b1 = await pg.evaluate(() => window.__pdfTool.S.pages.find(p => window.__pdfTool.S.sources.get(p.src).name === 'a4-landscape.pdf' && p.index === 0));
   check('re-ticked page keeps its shapes', b1 && b1.shapes.length === 1, JSON.stringify(b1 && b1.shapes));
+  // Shift+click: the clicked page's new state for the whole range, one undo step
+  await tile(1, 0).locator('input').click();                       // untick B1 (anchor)
+  await tile(1, 1).locator('input').click({ modifiers: ['Shift'] }); // B1..B2 → unticked
+  check('shift+click unticks the range', (await order(pg)).join() === 'A1,A3', (await order(pg)).join());
+  await tile(0, 0).click();                                           // focus A1 (no change)
+  await tile(0, 2).click({ modifiers: ['Shift'] });                 // on the thumbnail: A1..A3 take A3's new state (untick)
+  check('shift+click on a thumbnail works too', (await order(pg)).join() === '', (await order(pg)).join());
+  await pg.keyboard.press('Control+z');
+  check('a range is one undo step', (await order(pg)).join() === 'A1,A3' && (await toastText(pg)).includes('第 1～3 頁'), (await order(pg)).join());
+  await tile(0, 1).click();
+  await tile(0, 0).locator('input').click({ modifiers: ['Shift'] }); // A2..A1 backwards: A1 is ticked → untick both
+  check('range works backwards', (await order(pg)).join() === 'A3', (await order(pg)).join());
   check('no page errors (picker)', pg.errors.length === 0, pg.errors.join(' | '));
   await pg.close();
 }

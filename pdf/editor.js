@@ -138,7 +138,7 @@ async function showPage() {
   // cap the bitmap (~16 MP) so large pages on hi-dpi screens never exceed
   // the browser's canvas limit and render blank
   const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(16e6 / (p.w * k * p.h * k)));
-  const vp = pdfPage.getViewport({ scale: k * dpr });
+  const vp = pdfPage.getViewport({ scale: k * dpr, rotation: (pdfPage.rotate + (p.rot || 0)) % 360 });
   const off = document.createElement('canvas');
   off.width = Math.round(vp.width); off.height = Math.round(vp.height);
   E.renderTask = pdfPage.render({ canvas: off, viewport: vp, annotationMode: ctx.pdfjsLib.AnnotationMode.DISABLE });

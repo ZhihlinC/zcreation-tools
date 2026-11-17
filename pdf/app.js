@@ -255,6 +255,13 @@ function renderGrid() {
   S.pages.forEach((p, i) => {
     live.add(p.uid);
     const c = cards.get(p.uid) || makeCard(p);
+    const fs = fitSize(p);
+    if (c.sheet.style.width !== fs.w + 'px' || c.sheet.style.height !== fs.h + 'px') {
+      c.sheet.style.width = fs.w + 'px';
+      c.sheet.style.height = fs.h + 'px';
+      c.canvas.style.visibility = 'hidden';
+      queue.add(c.el); // redraw in the new orientation
+    }
     if (grid.children[i] !== c.el) grid.insertBefore(c.el, grid.children[i] || null);
     c.el.querySelector('.num').textContent = i + 1;
     const src = S.sources.get(p.src);
@@ -267,6 +274,7 @@ function renderGrid() {
   for (const [id, c] of cards) {
     if (!live.has(id)) { forgetCard(c); cards.delete(id); }
   }
+  pump();
 }
 
 function renderChrome() {
@@ -288,6 +296,7 @@ function renderChrome() {
     $('status').textContent = n ? `共 ${n} 頁` + (k ? `，已選 ${k} 頁` : '') : (S.sources.size ? '還沒有選任何頁面，回「1 選頁」勾選' : '');
   }
   $('delete-btn').disabled = !k;
+  $('rotate-btn').disabled = !k;
   $('dup-btn').disabled = !k;
   $('edit-btn').disabled = !n || !ctx.editorAvailable;
   $('undo-btn').disabled = !S.undo.length;
@@ -691,6 +700,25 @@ function deleteSelected() {
   S.sel.clear();
   render();
 }
+// Turn a page 90° clockwise. Its shapes turn with it, so they stay on the
+// same content: a display point (x, y) of a W×H page goes to (H − y, x).
+function rotateEntry(p) {
+  const H = p.h;
+  for (const s of p.shapes) {
+    const n = { x1: H - s.y1, y1: s.x1, x2: H - s.y2, y2: s.x2 };
+    if (s.type !== 'line') Object.assign(n, { x1: Math.min(n.x1, n.x2), x2: Math.max(n.x1, n.x2), y1: Math.min(n.y1, n.y2), y2: Math.max(n.y1, n.y2) });
+    Object.assign(s, n);
+  }
+  [p.w, p.h] = [p.h, p.w];
+  p.rot = ((p.rot || 0) + 90) % 360;
+  p.rotate = (p.rotate + 90) % 360;
+}
+function rotateSelected() {
+  if (!S.sel.size) return;
+  commit(`向右轉 ${S.sel.size} 頁`);
+  for (const p of S.pages) if (S.sel.has(p.uid)) rotateEntry(p);
+  render();
+}
 function duplicateSelected() {
   if (!S.sel.size) return;
   commit(`複製 ${S.sel.size} 頁`);
@@ -716,7 +744,7 @@ async function rasterize(pages, dpi, onProgress) {
     onProgress(i + 1, pages.length);
     const p = pages[i];
     const page = await S.sources.get(p.src).doc.getPage(p.index + 1);
-    const vp = page.getViewport({ scale: Math.min(dpi / 72, MAX_CANVAS_SIDE / Math.max(p.w, p.h)) });
+    const vp = page.getViewport({ scale: Math.min(dpi / 72, MAX_CANVAS_SIDE / Math.max(p.w, p.h)), rotation: (page.rotate + (p.rot || 0)) % 360 });
     const canvas = document.createElement('canvas');
     canvas.width = Math.round(vp.width);
     canvas.height = Math.round(vp.height);
@@ -797,6 +825,7 @@ async function download(dpi = 0) {
   }
 }
 $('delete-btn').onclick = deleteSelected;
+$('rotate-btn').onclick = rotateSelected;
 $('dup-btn').onclick = duplicateSelected;
 $('add-btn').onclick = () => $('file-input').click();
 $('undo-btn').onclick = undo;
@@ -829,6 +858,7 @@ document.addEventListener('keydown', e => {
   if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); S.sel = new Set(S.pages.map(p => p.uid)); render(); }
   else if (e.key === 'Delete' || e.key === 'Backspace') { if (S.sel.size) { e.preventDefault(); deleteSelected(); } }
   else if (e.key === 'Escape') { S.sel.clear(); render(); }
+  else if ((e.key === 'r' || e.key === 'R') && !mod && S.sel.size) { e.preventDefault(); rotateSelected(); }
 });
 
 // Shared with the shape editor (editor.js).

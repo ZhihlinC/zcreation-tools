@@ -329,7 +329,9 @@
     return doc.context.enumerateIndirectObjects().filter(([, o]) => o instanceof PDFLib.PDFDict && String(o.get(PDFLib.PDFName.of('Type'))) === '/Page').length;
   }
 
-  // sources: [{ id, bytes }]; pages: [{ src, index, shapes }] in output order.
+  // sources: [{ id, bytes }]; pages: [{ src, index, shapes, rot? }] in output
+  // order. rot = extra clockwise rotation the user asked for (0/90/180/270);
+  // shapes are in the display space of the rotated page.
   // opts.sanitize exists only so the tests can prove the fail-closed check.
   async function assemble(PDFLib, sources, pages, opts = {}) {
     const sanitize = opts.sanitize || sanitizeSource;
@@ -368,6 +370,7 @@
     }
     pages.forEach((p, i) => {
       const page = out.addPage(copied.get(p.src + ':' + p.index + '#' + occ[i]));
+      if (p.rot) page.setRotation(PDFLib.degrees((pageGeom(page).rotate + p.rot) % 360));
       if (p.shapes && p.shapes.length) {
         const g = pageGeom(page);
         // the preview used pdf.js's geometry; drawing with a different one would

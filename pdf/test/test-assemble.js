@@ -95,9 +95,21 @@ const GEO_PLAN = [
   { src: 'G', index: 5, mark: 'G5', shapes: [] },
 ];
 
+// The user's extra rotation (step 2 「向右轉」): output /Rotate = source +
+// rot, and shapes given in the rotated display space land where pdf.js puts
+// those display points on the output page.
+const ROT_SOURCES = { A: 'a4-portrait.pdf', D: 'odd.pdf' };
+const ROT_PLAN = [
+  { src: 'A', index: 0, mark: 'A1', rot: 90, shapes: SHAPES },   // 0 → 90
+  { src: 'A', index: 1, mark: 'A2', rot: 180, shapes: SHAPES },  // 0 → 180
+  { src: 'D', index: 0, mark: 'D1', rot: 90, shapes: SHAPES },   // 90 → 180
+  { src: 'D', index: 3, mark: 'D4', rot: 270, shapes: SHAPES },  // 270 + crop → 180
+  { src: 'D', index: 4, mark: 'D5', rot: 180, shapes: [] },      // 180 → 0
+];
+
 async function testAssemble(SOURCES, PLAN, outName) {
   const sources = Object.entries(SOURCES).map(([id, f]) => ({ id, bytes: read(f) }));
-  const outBytes = await A.assemble(PDFLib, sources, PLAN.map(p => ({ src: p.src, index: p.index, shapes: p.shapes })));
+  const outBytes = await A.assemble(PDFLib, sources, PLAN.map(p => ({ src: p.src, index: p.index, shapes: p.shapes, rot: p.rot })));
   fs.mkdirSync(path.join(__dirname, 'out'), { recursive: true });
   fs.writeFileSync(path.join(__dirname, 'out', outName), outBytes);
   const out = await open(outBytes.slice());
@@ -110,7 +122,8 @@ async function testAssemble(SOURCES, PLAN, outName) {
     const text = (await p.getTextContent()).items.map(t => t.str).join('');
     check(`page ${i + 1} is ${want.mark}`, text.includes(want.mark), JSON.stringify(text));
     const sp = await srcDocs[want.src].getPage(want.index + 1);
-    check(`page ${i + 1} keeps rotation`, p.rotate === sp.rotate, `${p.rotate} vs ${sp.rotate}`);
+    const wantRot = (sp.rotate + (want.rot || 0)) % 360;
+    check(`page ${i + 1} rotation = source + user`, p.rotate === wantRot, `${p.rotate} vs ${wantRot}`);
     check(`page ${i + 1} keeps view box`, nearArr(p.view, sp.view), `${p.view} vs ${sp.view}`);
     const vp = p.getViewport({ scale: 1 });
     const paths = drawnPaths(pdfjs, await p.getOperatorList());
@@ -256,6 +269,7 @@ async function testValidation() {
   await testPageGeom();
   await testAssemble(SOURCES, PLAN, 'assembled.pdf');
   await testAssemble(GEO_SOURCES, GEO_PLAN, 'geometry-out.pdf');
+  await testAssemble(ROT_SOURCES, ROT_PLAN, 'rotated-out.pdf');
   await testNoOrphanPages();
   await testNoLeaks();
   await testFidelity();

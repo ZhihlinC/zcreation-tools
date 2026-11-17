@@ -115,6 +115,7 @@ async function main() {
     await pickerTest(browser, base);
     await flowTest(browser, base, pdfjs);
     await rotatedTest(browser, base, pdfjs);
+    await rotationTest(browser, base, pdfjs);
     await errorsTest(browser, base);
     await dropGuardTest(browser, base);
     await cjkTest(browser, base);
@@ -406,6 +407,73 @@ async function rotatedTest(browser, base) {
     check(`rot${a.page.rotate} p${a.n} ${a.s.type} PDFKit outside clean`, !close(kit[k * 2 + 1].rgb, color, 20), kit[k * 2 + 1].rgb);
   });
   check('no page errors (rotated)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
+}
+
+// 「向右轉」: the page turns 90° clockwise per press, its shapes turn with it
+// (so they stay on the same content), and both outputs carry the rotation.
+// Independent check: in the output, the shape's user-space box must still
+// contain the page's text marker, wherever the rotation puts them on screen.
+async function rotationTest(browser, base, pdfjs) {
+  const pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-landscape.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 2);
+  await waitThumbs(pg);
+  // a red box over B1's "B1" marker (display 40..110 × 45..85 on the landscape page)
+  await cardAt(pg, 0).dblclick();
+  await editorReady(pg);
+  await setStyle(pg, { tool: 'rect', stroke: 'black', fill: 'red', width: '2' });
+  await dragPts(pg, 30, 40, 120, 100);
+  await pg.keyboard.press('Escape');
+  const before = await shapesOf(pg, 0);
+  await cardAt(pg, 0).click();
+  await pg.click('#rotate-btn');
+  const after = await pg.evaluate(() => { const p = window.__pdfTool.S.pages[0]; return { w: p.w, h: p.h, rot: p.rot, rotate: p.rotate, s: p.shapes[0] }; });
+  check('rotate swaps the page size', Math.round(after.w) === 595 && Math.round(after.h) === 842 && after.rot === 90, JSON.stringify(after));
+  const sheet = await cardAt(pg, 0).locator('.sheet').boundingBox();
+  check('thumbnail turns portrait', sheet.height > sheet.width, JSON.stringify(sheet));
+  await pg.waitForFunction(() => [...document.querySelectorAll('#grid .card[data-uid] canvas')][0].style.visibility !== 'hidden');
+  await pg.keyboard.press('Control+z');
+  check('undo rotate', JSON.stringify(await shapesOf(pg, 0)) === JSON.stringify(before) && await pg.evaluate(() => !window.__pdfTool.S.pages[0].rot));
+  await cardAt(pg, 0).click();
+  await pg.keyboard.press('r');
+  check('R key rotates too', await pg.evaluate(() => window.__pdfTool.S.pages[0].rot) === 90);
+  // the editor shows the turned page: open it and check the red box is where the state says
+  await cardAt(pg, 0).dblclick();
+  await editorReady(pg);
+  const p0 = await curPage(pg);
+  check('editor shows the turned page', Math.round(p0.w) === 595 && Math.round(p0.h) === 842);
+  await pg.keyboard.press('Escape');
+  await cardAt(pg, 1).click();
+  await pg.keyboard.press('r'); // B2 turned too, no shapes: its marker shows where content went
+
+  // original output: /Rotate 90, and the box still covers the "B1" text
+  const { file } = await download(pg, 'rotated-vector.pdf');
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(file)), verbosity: 0 }).promise;
+  const p1 = await doc.getPage(1);
+  check('original output page is rotated 90', p1.rotate === 90, p1.rotate);
+  const text = (await p1.getTextContent()).items.find(t => t.str === 'B1');
+  const box = drawnPaths(pdfjs, await p1.getOperatorList())[0];
+  const [tx, ty] = [text.transform[4] + 5, text.transform[5] + 5]; // a point inside the glyphs, user space
+  check('box still covers the B1 marker after rotating', box && tx > box.bbox[0] && tx < box.bbox[2] && ty > box.bbox[1] && ty < box.bbox[3], JSON.stringify({ tx, ty, box: box && box.bbox }));
+  // image output: page is portrait, red where the editor showed the box
+  const { file: img } = await download(pg, 'rotated-300.pdf', 300);
+  const idoc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(img)), verbosity: 0 }).promise;
+  const ip = await idoc.getPage(1);
+  check('image output page is portrait', Math.round(ip.view[2]) === 595 && Math.round(ip.view[3]) === 842 && ip.rotate === 0, JSON.stringify(ip.view));
+  const s = after.s;
+  const kit = pdfkitColors(img, [{ page: 1, x: ((s.x1 + s.x2) / 2) / 595.28, y: ((s.y1 + s.y2) / 2) / 841.89 }]);
+  if (kit) check('image output: red box burned in where the editor shows it', close(kit[0].rgb, RGB.red), kit[0].rgb);
+  // the page content itself is turned: B2's marker, located in the original
+  // output by pdf.js, is dark in the image output at the same display spot
+  const v2 = await doc.getPage(2);
+  const t2 = (await v2.getTextContent()).items.find(t => t.str === 'B2');
+  const [dx, dy] = v2.getViewport({ scale: 1 }).convertToViewportPoint(t2.transform[4], t2.transform[5]);
+  const pts = [];
+  for (let a = -12; a <= 12; a += 4) for (let b = -12; b <= 12; b += 4) pts.push({ page: 2, x: (dx + a) / 595.28, y: (dy + b) / 841.89 });
+  const k2 = pdfkitColors(img, pts);
+  if (k2) check('image output: page content turned with the page', k2.some(c => c.rgb[0] + c.rgb[1] + c.rgb[2] < 300), `at display ${dx.toFixed(0)},${dy.toFixed(0)}`);
+  check('no page errors (rotation)', pg.errors.length === 0, pg.errors.join(' | '));
   await pg.close();
 }
 

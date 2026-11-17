@@ -1,3 +1,22 @@
+ok   starts on step 1
+ok   one group per file
+ok   all pages ticked at first
+ok   group counts
+ok   un-ticked page leaves the output
+ok   un-ticked page greyed
+ok   status counts picked pages
+ok   preview shows the clicked page
+ok   arrow key moves the preview
+ok   space re-ticks the focused page, back in file order
+ok   undo works in step 1
+ok   全不選 drops the whole file
+ok   全選 brings it back
+ok   folding hides the tiles
+ok   preview can be closed
+ok   and reopened
+ok   step 2 shows only picked pages
+ok   re-ticked page keeps its shapes
+ok   no page errors (picker)
 ok   empty state shown at start
 ok   empty state hidden with pages
 ok   loaded order
@@ -53,7 +72,7 @@ ok   p2 line PDFKit inside = shape colour
 ok   p2 line PDFKit outside = preview outside
 ok   PDFKit: copy page 3 has the blue rect
 ok   PDFKit: duplicate page 4 does not
-ok   empty state after deleting all
+ok   step-2 hint after deleting all (files stay in step 1)
 ok   download disabled when empty
 ok   no leave warning when there are no pages
 ok   leave warning with pages not downloaded since the last change
@@ -75,6 +94,17 @@ ok   rot0 p6 rect PDFKit outside clean
 ok   rot0 p6 ellipse preview = PDFKit (inside)
 ok   rot0 p6 ellipse PDFKit outside clean
 ok   no page errors (rotated)
+ok   rotate swaps the page size
+ok   thumbnail turns portrait
+ok   undo rotate
+ok   R key rotates too
+ok   editor shows the turned page
+ok   original output page is rotated 90
+ok   box still covers the B1 marker after rotating
+ok   image output page is portrait
+ok   image output: red box burned in where the editor shows it
+ok   image output: page content turned with the page
+ok   no page errors (rotation)
 ok   user-password message
 ok   owner-only message
 ok   not-a-PDF message
@@ -89,6 +119,7 @@ ok   dropped file added
 ok   non-embedded CJK text renders in the thumbnail
 ok   annotations are not drawn in the preview (output drops them)
 ok   load-failure banner when worker is missing
+ok   load-failure banner when the pdf-lib worker is missing
 ok   download dialog defaults to the original
 ok   original output keeps text
 ok   300 dpi file name
@@ -97,7 +128,7 @@ ok   300 dpi: page sizes = preview sizes, no rotation left
 ok   300 dpi: one image per page at 300 dpi
 ok   300 dpi: no text left in the file
 ok   300 dpi: nothing but pages, images and their content
-  300 dpi: 11 pages in 504 ms, 820 KB
+  300 dpi: 11 pages in 473 ms, 820 KB
 ok   300 dpi: covered text is gone from the pixels
 ok   300 dpi: shape burned in where previewed
 ok   300 dpi: nothing red outside the shape
@@ -107,14 +138,23 @@ ok   600 dpi: page sizes = preview sizes, no rotation left
 ok   600 dpi: one image per page at 600 dpi
 ok   600 dpi: no text left in the file
 ok   600 dpi: nothing but pages, images and their content
-  600 dpi: 11 pages in 1057 ms, 2706 KB
+  600 dpi: 11 pages in 965 ms, 2706 KB
 ok   600 dpi: covered text is gone from the pixels
 ok   600 dpi: shape burned in where previewed
 ok   600 dpi: nothing red outside the shape
   (original output keeps B1 under the white box as text: B1)
 ok   no page errors (raster)
-  150 pages: load 44 ms; thumbnails drawn before scroll 40/150, after 150/150; frame ms p50 16.7 p95 16.8 max 16.8, 0 frames > 50 ms of 388
-ok   thumbnails are lazy (not all drawn up front)
-ok   scrolling draws more thumbnails
-ok   scroll p95 frame < 100 ms
-115 passed, 0 failed
+ok   upload check does not parse on the page thread
+ok   loading card shows the stages
+ok   loading card has a progress bar
+ok   no loading card left behind
+ok   download assembled off the page thread
+  step 1, 150 pages: load 43 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
+ok   step 1: thumbnails are lazy (not all drawn up front)
+ok   step 1: scrolling draws more thumbnails
+ok   step 1: scroll p95 frame < 100 ms
+  step 2, 150 pages: load 65 ms; thumbnails drawn before scroll 40/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
+ok   step 2: thumbnails are lazy (not all drawn up front)
+ok   step 2: scrolling draws more thumbnails
+ok   step 2: scroll p95 frame < 100 ms
+154 passed, 0 failed

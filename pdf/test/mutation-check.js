@@ -52,6 +52,8 @@ const M = [
   { file: 'app.js', suite: 'browser', what: 'cmaps not configured', find: "  cMapUrl: new URL('./vendor/cmaps/', import.meta.url).href,\n", replace: '' },
   { file: 'app.js', suite: 'browser', what: 'duplicate shares shapes with original', find: "shapes: p.shapes.map(s => ({ ...s, id: 'h' + (nextId++) })) }));", replace: 'shapes: p.shapes }));' },
   { file: 'editor.js', suite: 'browser', what: 'move/resize undo snapshot taken after the drag', find: "ctx.commit(a.mode === 'move' ? '移動圖形' : '縮放圖形', before);", replace: "ctx.commit(a.mode === 'move' ? '移動圖形' : '縮放圖形');" },
+  { file: 'app.js', suite: 'browser', what: 'step 1: re-ticked page goes to the end, not back in file order', find: '  S.pages.splice(at, 0, ...back);', replace: '  S.pages.push(...back);' },
+  { file: 'app.js', suite: 'browser', what: 'step 1: un-ticking forgets the shapes', find: '    S.parked.set(key, gone);\n', replace: '' },
   { file: 'app.js', suite: 'browser', what: 'upload check parses on the page thread', find: ', { pageCount: workerPageCount });', replace: ');' },
   { file: 'app.js', suite: 'browser', what: 'download assembled on the page thread', find: "bytes = (await inWorker({ op: 'assemble', sources, pages }, sources.map(s => s.bytes.buffer))).bytes;", replace: 'bytes = await A.assemble(window.PDFLib, sources, pages);' },
   { file: 'app.js', suite: 'browser', what: 'image version ignores the chosen dpi', find: 'getViewport({ scale: Math.min(dpi / 72,', replace: 'getViewport({ scale: Math.min(1,' },

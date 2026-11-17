@@ -112,6 +112,7 @@ async function main() {
   const browser = await chromium.launch();
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
   try {
+    await pickerTest(browser, base);
     await flowTest(browser, base, pdfjs);
     await rotatedTest(browser, base, pdfjs);
     await errorsTest(browser, base);
@@ -129,14 +130,76 @@ async function main() {
   process.exit(failed ? 1 : 0);
 }
 
-async function newPage(browser, base) {
+async function newPage(browser, base, step = 2) {
   const pg = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
   pg.errors = [];
   pg.on('pageerror', e => pg.errors.push(e.message));
   pg.on('console', m => { if (/Content Security Policy|Refused to/.test(m.text())) pg.errors.push(m.text()); });
   await pg.goto(base);
   await pg.waitForFunction(() => window.__pdfTool && window.__pdfTool.editorAvailable);
+  if (step === 2) await pg.click('#step2-tab'); // most tests work on the ordering grid
   return pg;
+}
+
+// Step 1 (選頁): one collapsible group per file, a checkbox per page (all
+// ticked at first), a big preview that follows the focus. Un-ticking leaves
+// the page out of the output; ticking again restores it in file order with
+// the shapes it had.
+async function pickerTest(browser, base) {
+  const pg = await newPage(browser, base, 1);
+  check('starts on step 1', await pg.getAttribute('#step1-tab', 'aria-pressed') === 'true' && await pg.isVisible('#empty'));
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf'), fx('a4-landscape.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 5);
+  check('one group per file', await pg.locator('#groups .group').count() === 2);
+  check('all pages ticked at first', await pg.locator('#groups .tile input:checked').count() === 5);
+  const gcount = i => pg.locator('#groups .group').nth(i).locator('.gcount').textContent();
+  check('group counts', (await gcount(0)) === '已選 3 / 3 頁' && (await gcount(1)) === '已選 2 / 2 頁', await gcount(0));
+  const tile = (g, i) => pg.locator('#groups .group').nth(g).locator('.tile').nth(i);
+
+  // un-tick A2: out of the output, greyed, counts follow
+  await tile(0, 1).locator('input').click();
+  check('un-ticked page leaves the output', (await order(pg)).join() === 'A1,A3,B1,B2', (await order(pg)).join());
+  check('un-ticked page greyed', await tile(0, 1).evaluate(e => e.classList.contains('off')));
+  check('status counts picked pages', (await pg.textContent('#status')).includes('已選 4 頁'), await pg.textContent('#status'));
+  // preview follows a click, arrow keys move it, space toggles
+  await tile(1, 0).click();
+  await pg.waitForFunction(() => document.getElementById('pv-canvas').dataset.key && document.getElementById('pv-label').textContent.includes('a4-landscape.pdf · 第 1 頁'));
+  check('preview shows the clicked page', (await pg.textContent('#pv-label')).startsWith('a4-landscape.pdf · 第 1 頁'));
+  await pg.keyboard.press('ArrowLeft');
+  check('arrow key moves the preview', (await pg.textContent('#pv-label')).startsWith('a4-portrait.pdf · 第 3 頁'), await pg.textContent('#pv-label'));
+  await pg.keyboard.press('ArrowLeft');
+  await pg.keyboard.press(' ');
+  check('space re-ticks the focused page, back in file order', (await order(pg)).join() === 'A1,A2,A3,B1,B2', (await order(pg)).join());
+  await pg.keyboard.press('Control+z');
+  check('undo works in step 1', (await order(pg)).join() === 'A1,A3,B1,B2' && (await toastText(pg)).includes('已復原：選回'), (await order(pg)).join());
+  // 全不選 / 全選 per group
+  await pg.locator('#groups .group').nth(1).locator('[data-all="0"]').click();
+  check('全不選 drops the whole file', (await order(pg)).join() === 'A1,A3', (await order(pg)).join());
+  await pg.locator('#groups .group').nth(1).locator('[data-all="1"]').click();
+  check('全選 brings it back', (await order(pg)).join() === 'A1,A3,B1,B2', (await order(pg)).join());
+  // fold a group; collapse / reopen the preview
+  await pg.locator('#groups .group').nth(0).locator('.fold').click();
+  check('folding hides the tiles', !(await tile(0, 0).isVisible()));
+  await pg.click('#pv-toggle');
+  check('preview can be closed', !(await pg.isVisible('#preview')) && await pg.isVisible('#pv-open'));
+  await pg.click('#pv-open');
+  check('and reopened', await pg.isVisible('#preview'));
+  await pg.locator('#groups .group').nth(0).locator('.fold').click();
+
+  // shapes survive un-tick / re-tick: draw on B1 in step 2, un-tick and re-tick it in step 1
+  await pg.click('#step2-tab');
+  check('step 2 shows only picked pages', await pg.locator('#grid .card[data-uid]').count() === 4);
+  await cardAt(pg, 2).dblclick();
+  await editorReady(pg);
+  await dragPts(pg, 100, 100, 300, 200);
+  await pg.keyboard.press('Escape');
+  await pg.click('#step1-tab');
+  await tile(1, 0).locator('input').click();
+  await tile(1, 0).locator('input').click();
+  const b1 = await pg.evaluate(() => window.__pdfTool.S.pages.find(p => window.__pdfTool.S.sources.get(p.src).name === 'a4-landscape.pdf' && p.index === 0));
+  check('re-ticked page keeps its shapes', b1 && b1.shapes.length === 1, JSON.stringify(b1 && b1.shapes));
+  check('no page errors (picker)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
 }
 
 // DoD #1–#3: two PDFs → delete, duplicate, reorder, interleave → four shapes
@@ -302,7 +365,7 @@ async function flowTest(browser, base, pdfjs) {
   // delete everything → empty state again; leaving warns while not downloaded
   await pg.keyboard.press('Control+a');
   await pg.keyboard.press('Delete');
-  check('empty state after deleting all', await pg.isVisible('#empty'));
+  check('step-2 hint after deleting all (files stay in step 1)', await pg.isVisible('#grid-empty') && !(await pg.isVisible('#empty')));
   check('download disabled when empty', await pg.isDisabled('#download-btn'));
   const leaving = () => pg.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; });
   check('no leave warning when there are no pages', !(await leaving()));
@@ -565,13 +628,17 @@ async function rasterTest(browser, base, pdfjs) {
 
 // DoD #5: 150 pages; thumbnails are lazy and scrolling stays smooth
 async function bigScrollTest(browser, base) {
-  const pg = await newPage(browser, base);
+  for (const step of [1, 2]) await bigScroll(browser, base, step);
+}
+async function bigScroll(browser, base, step) {
+  const pg = await newPage(browser, base, step);
+  const view = step === 1 ? '#groups' : '#grid';
   const t0 = Date.now();
   await pg.setInputFiles('#file-input', [fx('big-150.pdf')]);
   await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 150, null, { timeout: 30000 });
   const loadMs = Date.now() - t0;
   await pg.waitForTimeout(1500);
-  const drawnBefore = await pg.evaluate(() => [...document.querySelectorAll('#grid canvas')].filter(c => c.style.visibility !== 'hidden').length);
+  const drawnBefore = await pg.evaluate(v => [...document.querySelectorAll(v + ' canvas')].filter(c => c.style.visibility !== 'hidden').length, view);
   await pg.evaluate(() => {
     window.__frames = [];
     let last = performance.now();
@@ -583,13 +650,13 @@ async function bigScrollTest(browser, base) {
     const f = window.__frames.slice(2).sort((a, b) => a - b);
     return { frames: f.length, p50: f[Math.floor(f.length * 0.5)], p95: f[Math.floor(f.length * 0.95)], max: f[f.length - 1], over50: f.filter(x => x > 50).length };
   });
-  const drawnAfter = await pg.evaluate(() => [...document.querySelectorAll('#grid canvas')].filter(c => c.style.visibility !== 'hidden').length);
-  console.log(`  150 pages: load ${loadMs} ms; thumbnails drawn before scroll ${drawnBefore}/150, after ${drawnAfter}/150; frame ms p50 ${stats.p50.toFixed(1)} p95 ${stats.p95.toFixed(1)} max ${stats.max.toFixed(1)}, ${stats.over50} frames > 50 ms of ${stats.frames}`);
-  check('thumbnails are lazy (not all drawn up front)', drawnBefore < 60, drawnBefore);
-  check('scrolling draws more thumbnails', drawnAfter > drawnBefore, `${drawnBefore} → ${drawnAfter}`);
+  const drawnAfter = await pg.evaluate(v => [...document.querySelectorAll(v + ' canvas')].filter(c => c.style.visibility !== 'hidden').length, view);
+  console.log(`  step ${step}, 150 pages: load ${loadMs} ms; thumbnails drawn before scroll ${drawnBefore}/150, after ${drawnAfter}/150; frame ms p50 ${stats.p50.toFixed(1)} p95 ${stats.p95.toFixed(1)} max ${stats.max.toFixed(1)}, ${stats.over50} frames > 50 ms of ${stats.frames}`);
+  check(`step ${step}: thumbnails are lazy (not all drawn up front)`, drawnBefore < 60, drawnBefore);
+  check(`step ${step}: scrolling draws more thumbnails`, drawnAfter > drawnBefore, `${drawnBefore} → ${drawnAfter}`);
   // a loose bound so a busy machine does not flake; the real numbers are logged above
-  check('scroll p95 frame < 100 ms', stats.p95 < 100, stats.p95);
-  fs.writeFileSync(path.join(OUT, 'scroll-stats.json'), JSON.stringify({ loadMs, drawnBefore, drawnAfter, ...stats, cpus: os.cpus().length }, null, 2));
+  check(`step ${step}: scroll p95 frame < 100 ms`, stats.p95 < 100, stats.p95);
+  fs.writeFileSync(path.join(OUT, `scroll-stats-step${step}.json`), JSON.stringify({ loadMs, drawnBefore, drawnAfter, ...stats, cpus: os.cpus().length }, null, 2));
   await pg.close();
 }
 

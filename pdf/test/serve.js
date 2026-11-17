@@ -1,10 +1,23 @@
 // Static server for the browser tests: serves the repo root like CF Pages
-// would (JS MIME for .js, nosniff), so module/worker loading is exercised.
+// would — JS MIME for .js, and the headers from the repo's _headers file
+// (nosniff, the /pdf/* CSP) — so module/worker loading runs under the same
+// rules as production.
 'use strict';
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '../..');
+// _headers: "/path/*" lines followed by indented "Name: value" lines.
+function readHeaders() {
+  const rules = [];
+  let cur = null;
+  for (const line of fs.readFileSync(path.join(ROOT, '_headers'), 'utf8').split('\n')) {
+    if (/^\S/.test(line) && !line.startsWith('#')) { cur = { prefix: line.trim().replace(/\*$/, ''), h: {} }; rules.push(cur); }
+    else if (cur && /^\s+\S+:/.test(line)) { const i = line.indexOf(':'); cur.h[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim(); }
+  }
+  return p => Object.assign({}, ...rules.filter(r => p.startsWith(r.prefix)).map(r => r.h));
+}
+const headersFor = readHeaders();
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.wasm': 'application/wasm', '.pdf': 'application/pdf', '.json': 'application/json', '.png': 'image/png' };
 function serve(overrides = {}) {
   const srv = http.createServer((req, res) => {
@@ -12,9 +25,9 @@ function serve(overrides = {}) {
     if (p.endsWith('/')) p += 'index.html';
     let f = overrides[p] || path.join(ROOT, p);
     if (!overrides[p] && (!f.startsWith(ROOT) || !fs.existsSync(f) || fs.statSync(f).isDirectory())) { res.writeHead(404); return res.end(); }
-    res.writeHead(200, { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream', 'x-content-type-options': 'nosniff' });
+    res.writeHead(200, Object.assign(headersFor(p), { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream' }));
     fs.createReadStream(f).pipe(res);
   });
   return new Promise(r => srv.listen(0, '127.0.0.1', () => r(srv)));
 }
-module.exports = { serve, ROOT };
+module.exports = { serve, ROOT, headersFor };

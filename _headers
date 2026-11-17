@@ -18,5 +18,10 @@
 # /pdf/ (PDF 頁面整理): same always-revalidate policy as /coverage/.
 # vendor/ is ~5.6 MB (pdf.js worker, cmaps, fonts, wasm); after the first
 # visit each file costs a 304 round-trip, not a re-download.
+# The CSP backs the "files never leave this tab" promise: no third-party
+# origin can be contacted (connect-src self = only the tool's own vendor
+# files), no inline script, no framing. wasm-unsafe-eval is for pdf.js's
+# image decoders. test/serve.js serves these headers to the browser tests.
 /pdf/*
   Cache-Control: no-cache
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'

@@ -45,6 +45,7 @@ function commit(label, before = null) {
   S.dirty = true;
 }
 function undo() {
+  if (press || ctx.editorGesture()) return; // mid-drag: the gesture commits on release
   const u = S.undo.pop();
   if (!u) return;
   S.pages = u.pages;
@@ -78,7 +79,6 @@ $('errors-close').onclick = () => { $('errors').hidden = true; $('errors').query
 async function addFiles(files) {
   const errs = [];
   const added = [];
-  let before = null;
   for (const f of files) {
     if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') { errs.push(`${f.name}：不是 PDF 檔`); continue; }
     const loading = loadingCard(f.name);
@@ -96,16 +96,20 @@ async function addFiles(files) {
         continue;
       }
       const id = 's' + (nextId++);
-      S.sources.set(id, { id, name: f.name, bytes, doc: r.doc });
-      if (!before) before = snapshot();
+      const fresh = [];
       for (let i = 0; i < r.doc.numPages; i++) {
         const pg = await r.doc.getPage(i + 1);
         const [x1, y1, x2, y2] = pg.view;
         const g = A.geom(pg.rotate, { x: x1, y: y1, w: x2 - x1, h: y2 - y1 });
-        const p = { uid: uid(), src: id, index: i, w: g.w, h: g.h, rotate: g.rotate, shapes: [] };
-        S.pages.push(p);
-        added.push(p.uid);
+        fresh.push({ uid: uid(), src: id, index: i, w: g.w, h: g.h, rotate: g.rotate, shapes: [] });
       }
+      // one synchronous step per file, so edits made while it loaded and the
+      // undo stack stay consistent
+      S.sources.set(id, { id, name: f.name, bytes, doc: r.doc });
+      commit('加入 ' + f.name);
+      S.pages.push(...fresh);
+      added.push(...fresh.map(p => p.uid));
+      render();
     } catch (e) {
       console.error(f.name, e);
       errs.push(`${f.name}：無法讀取這個檔案（可以把檔案寄給 Yves 看看）`);
@@ -114,7 +118,6 @@ async function addFiles(files) {
     }
   }
   if (added.length) {
-    commit('加入 PDF', before);
     S.sel = new Set(added);
     S.anchor = added[0];
     render();
@@ -464,6 +467,7 @@ export const ctx = {
   S, pdfjsLib, A, snapshot, commit, undo, render, toast, drawShapesSvg, shapeEl, outlineEl, newId: () => 'h' + (nextId++),
   editorAvailable: false,
   editorOpen: () => false,
+  editorGesture: () => false,
   openEditor: () => {},
   onUndo: () => {},
 };

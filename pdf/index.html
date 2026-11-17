@@ -9,6 +9,7 @@
   <script src="assemble.js" defer></script>
   <script type="module" src="app.js"></script>
   <script type="module" src="editor.js"></script>
+  <script src="boot-check.js" defer></script>
 </head>
 <body>
   <header id="toolbar">
@@ -69,8 +70,8 @@
       <span id="ed-pos"></span>
       <button class="btn" id="ed-next" title="PageDown">下一頁</button>
       <button class="btn primary" id="ed-done" title="Esc">完成</button>
+      <p id="ed-hint" hidden>白色只是蓋住，底下文字仍可被選取複製。</p>
     </div>
-    <p id="ed-hint" hidden>白色只是蓋住，底下文字仍可被選取複製。</p>
     <div id="ed-stage">
       <div id="ed-page">
         <canvas id="ed-canvas"></canvas>
@@ -78,11 +79,5 @@
       </div>
     </div>
   </section>
-  <script>
-    // app.js is a module: if it (or pdf.js) fails to load, nothing else would say so.
-    window.addEventListener("load", function () {
-      setTimeout(function () { if (!window.__pdfTool) document.getElementById("load-failed").hidden = false; }, 1500);
-    });
-  </script>
 </body>
 </html>

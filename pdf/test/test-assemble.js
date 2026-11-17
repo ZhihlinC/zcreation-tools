@@ -7,10 +7,11 @@ const fs = require('fs');
 const path = require('path');
 const PDFLib = require('../vendor/pdf-lib.min.js');
 const A = require(process.env.ASSEMBLE_JS || '../assemble.js');
+const { drawnPaths } = require('./oracle');
 
 const FIX = path.join(__dirname, 'fixtures');
 const read = f => new Uint8Array(fs.readFileSync(path.join(FIX, f)));
-let pdfjs, OPS_NAME;
+let pdfjs;
 let failed = 0, passed = 0;
 function check(name, ok, detail) {
   if (ok) { passed++; return; }
@@ -20,36 +21,6 @@ function check(name, ok, detail) {
 const near = (a, b, eps = 0.02) => Math.abs(a - b) <= eps;
 const nearArr = (a, b, eps) => a.length === b.length && a.every((v, i) => near(v, b[i], eps));
 const open = data => pdfjs.getDocument({ data, verbosity: 0 }).promise;
-
-// Walk an operator list tracking the CTM; return every path drawn after the
-// page's original (q…Q-wrapped) content, with its bbox in user space and the
-// colors / line width in effect.
-function drawnPaths(ol) {
-  const out = [];
-  let ctm = [1, 0, 0, 1, 0, 0], depth = 0, originalDone = false;
-  let st = { fill: null, stroke: null, lw: 1 };
-  const stack = [];
-  const mul = (m, n) => [m[0] * n[0] + m[1] * n[2], m[0] * n[1] + m[1] * n[3], m[2] * n[0] + m[3] * n[2], m[2] * n[1] + m[3] * n[3], m[4] * n[0] + m[5] * n[2] + n[4], m[4] * n[1] + m[5] * n[3] + n[5]];
-  const ap = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
-  ol.fnArray.forEach((fn, i) => {
-    const op = OPS_NAME[fn], a = ol.argsArray[i];
-    if (op === 'save') { stack.push([ctm, Object.assign({}, st)]); depth++; }
-    else if (op === 'restore') { [ctm, st] = stack.pop(); depth--; if (depth === 0) originalDone = true; }
-    else if (op === 'transform') ctm = mul(a, ctm);
-    else if (op === 'setFillRGBColor') st.fill = a[0];
-    else if (op === 'setStrokeRGBColor') st.stroke = a[0];
-    else if (op === 'setLineWidth') st.lw = a[0];
-    else if (op === 'constructPath' && originalDone) {
-      const mm = Array.from(a[2]);
-      const pts = [ap(ctm, mm[0], mm[1]), ap(ctm, mm[2], mm[3]), ap(ctm, mm[0], mm[3]), ap(ctm, mm[2], mm[1])];
-      const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
-      const kind = pdfjs.OPS.fill === a[0] || pdfjs.OPS.eoFill === a[0] ? 'fill'
-        : pdfjs.OPS.stroke === a[0] || pdfjs.OPS.closeStroke === a[0] ? 'stroke' : 'fillStroke';
-      out.push({ bbox: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], kind, fill: st.fill, stroke: st.stroke, lw: st.lw });
-    }
-  });
-  return out;
-}
 
 const HEX = { black: '#000000', white: '#ffffff', red: '#db2626', blue: '#2663eb', green: '#179945', yellow: '#ffd100' };
 const SHAPES = [
@@ -65,7 +36,7 @@ function expectedBBox(vp, s) {
 }
 
 async function testDisplayToPdf() {
-  for (const f of ['a4-portrait.pdf', 'a4-landscape.pdf', 'b4.pdf', 'odd.pdf']) {
+  for (const f of ['a4-portrait.pdf', 'a4-landscape.pdf', 'b4.pdf', 'odd.pdf', 'geometry.pdf']) {
     const d = await open(read(f));
     for (let n = 1; n <= d.numPages; n++) {
       const p = await d.getPage(n);
@@ -83,13 +54,15 @@ async function testDisplayToPdf() {
 
 async function testPageGeom() {
   // pageGeom reads the pdf-lib page; must agree with pdf.js on every odd page
-  const lib = await PDFLib.PDFDocument.load(read('odd.pdf'));
-  const d = await open(read('odd.pdf'));
+  for (const f of ['odd.pdf', 'geometry.pdf']) {
+  const lib = await PDFLib.PDFDocument.load(read(f));
+  const d = await open(read(f));
   for (let n = 1; n <= d.numPages; n++) {
     const p = await d.getPage(n);
     const g = A.pageGeom(lib.getPage(n - 1));
     const [x1, y1, x2, y2] = p.view;
-    check(`pageGeom odd p${n}`, g.rotate === p.rotate && nearArr([g.box.x, g.box.y, g.box.w, g.box.h], [x1, y1, x2 - x1, y2 - y1]), JSON.stringify(g));
+    check(`pageGeom ${f} p${n}`, g.rotate === p.rotate && nearArr([g.box.x, g.box.y, g.box.w, g.box.h], [x1, y1, x2 - x1, y2 - y1]), JSON.stringify(g));
+  }
   }
 }
 
@@ -110,11 +83,23 @@ const PLAN = [
   { src: 'D', index: 4, mark: 'D5', shapes: SHAPES },          // /Rotate 180
 ];
 
-async function testAssemble() {
+// Pages whose geometry two parsers could read differently, and two pages
+// sharing one Contents array (a shape on G5 must not show on G6).
+const GEO_SOURCES = { G: 'geometry.pdf' };
+const GEO_PLAN = [
+  { src: 'G', index: 0, mark: 'G1', shapes: SHAPES },      // inherited Rotate 90 + MediaBox
+  { src: 'G', index: 1, mark: 'G2', shapes: SHAPES },      // /Rotate -90
+  { src: 'G', index: 2, mark: 'G3', shapes: SHAPES },      // /Rotate 45 → 0
+  { src: 'G', index: 3, mark: 'G4', shapes: SHAPES },      // inverted MediaBox
+  { src: 'G', index: 4, mark: 'G5', shapes: [SHAPES[0]] }, // shares Contents with the next
+  { src: 'G', index: 5, mark: 'G5', shapes: [] },
+];
+
+async function testAssemble(SOURCES, PLAN, outName) {
   const sources = Object.entries(SOURCES).map(([id, f]) => ({ id, bytes: read(f) }));
   const outBytes = await A.assemble(PDFLib, sources, PLAN.map(p => ({ src: p.src, index: p.index, shapes: p.shapes })));
   fs.mkdirSync(path.join(__dirname, 'out'), { recursive: true });
-  fs.writeFileSync(path.join(__dirname, 'out', 'assembled.pdf'), outBytes);
+  fs.writeFileSync(path.join(__dirname, 'out', outName), outBytes);
   const out = await open(outBytes.slice());
   check('page count', out.numPages === PLAN.length, out.numPages);
   const srcDocs = {};
@@ -128,7 +113,7 @@ async function testAssemble() {
     check(`page ${i + 1} keeps rotation`, p.rotate === sp.rotate, `${p.rotate} vs ${sp.rotate}`);
     check(`page ${i + 1} keeps view box`, nearArr(p.view, sp.view), `${p.view} vs ${sp.view}`);
     const vp = p.getViewport({ scale: 1 });
-    const paths = drawnPaths(await p.getOperatorList());
+    const paths = drawnPaths(pdfjs, await p.getOperatorList());
     check(`page ${i + 1} (${want.mark}) shape count`, paths.length === want.shapes.length, `${paths.length} vs ${want.shapes.length}`);
     want.shapes.forEach((s, k) => {
       const got = paths[k];
@@ -166,6 +151,37 @@ async function testOpenSource() {
   if (ok.task) ok.task.destroy();
 }
 
+// Deleted pages must not ride along via links / annotation back-pointers.
+async function testNoOrphanPages() {
+  const toc = read('toc-links.pdf');
+  const one = await A.assemble(PDFLib, [{ id: 'T', bytes: toc }], [{ src: 'T', index: 0, shapes: [] }, { src: 'T', index: 1, shapes: [] }]);
+  const lib = await PDFLib.PDFDocument.load(one);
+  const pageObjs = lib.context.enumerateIndirectObjects().filter(([, o]) => o instanceof PDFLib.PDFDict && String(o.get(PDFLib.PDFName.of('Type'))) === '/Page');
+  check('no orphan pages from TOC links', pageObjs.length === 2, `${pageObjs.length} page objects for 2 pages`);
+  const d = await open(one.slice());
+  const texts = [];
+  for (let i = 1; i <= d.numPages; i++) texts.push((await (await d.getPage(i)).getTextContent()).items.map(t => t.str).join(''));
+  check('TOC output keeps T1,T2', texts.join() === 'T1,T2', texts.join());
+  const ann = await (await d.getPage(1)).getAnnotations();
+  check('web link kept, internal links dropped', ann.length === 1 && ann[0].url === 'https://example.com/', JSON.stringify(ann.map(a => a.url || a.dest)));
+  // positive control: copying the same page without stripping drags all 20 in
+  const raw = await PDFLib.PDFDocument.load(toc), out = await PDFLib.PDFDocument.create();
+  out.addPage((await out.copyPages(raw, [0]))[0]);
+  const rawCount = out.context.enumerateIndirectObjects().filter(([, o]) => o instanceof PDFLib.PDFDict && String(o.get(PDFLib.PDFName.of('Type'))) === '/Page').length;
+  check('positive control: unstripped copy has orphans', rawCount > 2, rawCount);
+}
+
+async function testGeometryGuard() {
+  let threw = null;
+  try { await A.assemble(PDFLib, [{ id: 'A', bytes: read('a4-portrait.pdf') }], [{ src: 'A', index: 0, w: 500, h: 841.89, rotate: 0, shapes: [] }]); }
+  catch (e) { threw = e.message; }
+  check('geometry mismatch is refused', threw && threw.includes('geometry mismatch'), threw);
+  let ok = true;
+  try { await A.assemble(PDFLib, [{ id: 'A', bytes: read('a4-portrait.pdf') }], [{ src: 'A', index: 0, w: 595.28, h: 841.89, rotate: 0, shapes: [] }]); }
+  catch (e) { ok = false; }
+  check('matching geometry accepted', ok);
+}
+
 async function testValidation() {
   const src = [{ id: 'A', bytes: read('a4-portrait.pdf') }];
   for (const [name, s] of [
@@ -181,10 +197,12 @@ async function testValidation() {
 
 (async () => {
   pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  OPS_NAME = Object.fromEntries(Object.entries(pdfjs.OPS).map(([k, v]) => [v, k]));
   await testDisplayToPdf();
   await testPageGeom();
-  await testAssemble();
+  await testAssemble(SOURCES, PLAN, 'assembled.pdf');
+  await testAssemble(GEO_SOURCES, GEO_PLAN, 'geometry-out.pdf');
+  await testNoOrphanPages();
+  await testGeometryGuard();
   await testOpenSource();
   await testValidation();
   console.log(`${passed} passed, ${failed} failed`);

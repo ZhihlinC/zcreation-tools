@@ -19,9 +19,11 @@
   const RRECT_RADIUS = 10; // pt; capped at half the short side
 
   // Geometry of a page as displayed. box = CropBox ∩ MediaBox in user space,
-  // same as pdf.js's page.view.
+  // same as pdf.js's page.view. Like pdf.js, a /Rotate that is not a
+  // multiple of 90 counts as 0.
   function geom(rotate, box) {
-    const r = ((rotate % 360) + 360) % 360;
+    let r = ((rotate % 360) + 360) % 360;
+    if (r % 90 !== 0) r = 0;
     const turned = r === 90 || r === 270;
     return { rotate: r, box, w: turned ? box.h : box.w, h: turned ? box.w : box.h };
   }
@@ -86,11 +88,42 @@
   function pt(a) { return { x: a[0], y: a[1] }; }
 
   // Display geometry of a pdf-lib page (used when drawing into the output).
+  // Boxes are normalised (an inverted MediaBox is legal) and intersected,
+  // falling back to the MediaBox when they do not overlap — as pdf.js does.
   function pageGeom(page) {
-    const m = page.getMediaBox(), c = page.getCropBox();
-    const x1 = Math.max(m.x, c.x), y1 = Math.max(m.y, c.y);
-    const x2 = Math.min(m.x + m.width, c.x + c.width), y2 = Math.min(m.y + m.height, c.y + c.height);
+    const norm = b => [Math.min(b.x, b.x + b.width), Math.min(b.y, b.y + b.height), Math.max(b.x, b.x + b.width), Math.max(b.y, b.y + b.height)];
+    const m = norm(page.getMediaBox()), c = norm(page.getCropBox());
+    let x1 = Math.max(m[0], c[0]), y1 = Math.max(m[1], c[1]), x2 = Math.min(m[2], c[2]), y2 = Math.min(m[3], c[3]);
+    if (x2 <= x1 || y2 <= y1) [x1, y1, x2, y2] = m;
     return geom(page.getRotation().angle, { x: x1, y: y1, w: x2 - x1, h: y2 - y1 });
+  }
+
+  // copyPages copies everything a page references. Link annotations (and the
+  // /P back-pointer every annotation may carry) point at other pages, so
+  // without this, pages the user deleted would ride along into the output as
+  // unlisted but extractable objects. Runs on the freshly loaded source.
+  function stripPageRefs(PDFLib, doc) {
+    const { PDFName, PDFDict, PDFArray } = PDFLib;
+    const N = n => PDFName.of(n);
+    for (const page of doc.getPages()) {
+      page.node.delete(N('B')); // article beads → threads → other pages
+      const annots = page.node.lookup(N('Annots'));
+      if (!(annots instanceof PDFArray)) continue;
+      const keep = [];
+      for (let i = 0; i < annots.size(); i++) {
+        const a = annots.lookup(i);
+        if (!(a instanceof PDFDict)) continue;
+        const action = a.lookup(N('A'));
+        const actionType = action instanceof PDFDict ? String(action.get(N('S'))) : null;
+        const isLink = String(a.get(N('Subtype'))) === '/Link';
+        if (isLink && actionType !== '/URI') continue; // internal link: drop it
+        a.delete(N('P'));
+        a.delete(N('AA'));
+        if (actionType && actionType !== '/URI') a.delete(N('A'));
+        keep.push(annots.get(i));
+      }
+      page.node.set(N('Annots'), doc.context.obj(keep));
+    }
   }
 
   // sources: [{ id, bytes }]; pages: [{ src, index, shapes }] in output order.
@@ -98,7 +131,10 @@
     const out = await PDFLib.PDFDocument.create();
     const docs = new Map();
     for (const s of sources) {
-      if (pages.some(p => p.src === s.id)) docs.set(s.id, await PDFLib.PDFDocument.load(s.bytes));
+      if (!pages.some(p => p.src === s.id)) continue;
+      const doc = await PDFLib.PDFDocument.load(s.bytes);
+      stripPageRefs(PDFLib, doc);
+      docs.set(s.id, doc);
     }
     // Pages copied in one copyPages call share resources (fonts are written
     // once). A source page used twice must be copied in a separate call, or
@@ -126,8 +162,21 @@
     }
     pages.forEach((p, i) => {
       const page = out.addPage(copied.get(p.src + ':' + p.index + '#' + occ[i]));
+      const g = pageGeom(page);
+      // the preview used pdf.js's geometry; drawing with a different one would
+      // put a covering box in the wrong place without any error
+      if (p.w != null && (Math.abs(g.w - p.w) > 0.5 || Math.abs(g.h - p.h) > 0.5 || g.rotate !== p.rotate)) {
+        throw new Error(`page ${i + 1}: geometry mismatch (${g.w}x${g.h} rot ${g.rotate} vs ${p.w}x${p.h} rot ${p.rotate})`);
+      }
       if (p.shapes && p.shapes.length) {
-        const g = pageGeom(page);
+        // two different source pages may share one indirect Contents array;
+        // drawing appends to it, so give this page its own
+        const C = PDFLib.PDFName.of('Contents');
+        const contents = page.node.get(C);
+        if (contents instanceof PDFLib.PDFRef) {
+          const v = out.context.lookup(contents);
+          if (v instanceof PDFLib.PDFArray) page.node.set(C, v.clone(out.context));
+        }
         for (const s of p.shapes) drawShape(PDFLib, page, s, g);
       }
     });
@@ -158,7 +207,7 @@
     return { status: 'ok', doc, task };
   }
 
-  const api = { COLORS, RRECT_RADIUS, geom, displayToPdf, rectToPdf, pageGeom, roundedRectPath, assemble, openSource };
+  const api = { COLORS, RRECT_RADIUS, geom, displayToPdf, rectToPdf, pageGeom, stripPageRefs, roundedRectPath, assemble, openSource };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PdfAssemble = api;
 })(typeof self !== 'undefined' ? self : this);

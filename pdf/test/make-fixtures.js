@@ -53,6 +53,47 @@ async function cjkDoc() {
   return d;
 }
 
+// Pages whose geometry pdf.js and pdf-lib could read differently:
+// inherited /Rotate + /MediaBox, /Rotate -90, /Rotate 45, inverted MediaBox;
+// plus two pages that share one indirect Contents array.
+async function geometryDoc() {
+  const d = await doc([
+    { size: [500, 700], mark: 'G1' },          // inherits Rotate 90 + MediaBox from /Pages
+    { size: A4, mark: 'G2' },                  // /Rotate -90
+    { size: A4, mark: 'G3' },                  // /Rotate 45 (readers treat as 0)
+    { size: A4, mark: 'G4' },                  // inverted MediaBox
+    { size: A4, mark: 'G5' },                  // shares Contents with G6
+    { size: A4, mark: 'G6' },
+  ]);
+  const ctx = d.context, N = n => PDFName.of(n);
+  const pages = d.getPages();
+  const tree = d.catalog.lookup(N('Pages'));
+  tree.set(N('Rotate'), PDFNumber.of(90));
+  tree.set(N('MediaBox'), ctx.obj([0, 0, 500, 700]));
+  pages[0].node.delete(N('MediaBox'));
+  for (const p of pages.slice(1)) if (!p.node.get(N('Rotate'))) p.node.set(N('Rotate'), PDFNumber.of(0));
+  pages[1].node.set(N('Rotate'), PDFNumber.of(-90));
+  pages[2].node.set(N('Rotate'), PDFNumber.of(45));
+  pages[3].node.set(N('MediaBox'), ctx.obj([A4[0], A4[1], 0, 0]));
+  const shared = ctx.register(ctx.obj([...pages[4].node.Contents().asArray ? pages[4].node.Contents().asArray() : [pages[4].node.get(N('Contents'))]]));
+  pages[4].node.set(N('Contents'), shared);
+  pages[5].node.set(N('Contents'), shared);
+  return d;
+}
+
+// 20 pages; page 1 is a table of contents with internal links to every page
+// (plus one web link), page 2 has a note whose /P points back at it.
+async function tocDoc() {
+  const d = await doc(Array.from({ length: 20 }, (_, i) => ({ size: A4, mark: 'T' + (i + 1) })));
+  const ctx = d.context, pages = d.getPages();
+  const annots = pages.map((p, i) => ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Link', Rect: [40, 700 - i * 20, 200, 715 - i * 20], Border: [0, 0, 0], Dest: [p.ref, 'Fit'] })));
+  annots.push(ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Link', Rect: [40, 200, 200, 215], A: { S: 'URI', URI: PDFString.of('https://example.com/') } })));
+  pages[0].node.set(PDFName.of('Annots'), ctx.obj(annots));
+  const note = ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Text', Rect: [300, 700, 320, 720], Contents: PDFString.of('note'), P: pages[1].ref }));
+  pages[1].node.set(PDFName.of('Annots'), ctx.obj([note]));
+  return d;
+}
+
 async function save(name, d) {
   fs.writeFileSync(path.join(OUT, name), await d.save({ useObjectStreams: false }));
   console.log('wrote', name);
@@ -80,6 +121,8 @@ async function encrypted(name, opts) {
   ]));
   await save('big-150.pdf', await doc(Array.from({ length: 150 }, (_, i) => ({ size: A4, mark: 'P' + (i + 1) }))));
   await save('cjk-nonembedded.pdf', await cjkDoc());
+  await save('geometry.pdf', await geometryDoc());
+  await save('toc-links.pdf', await tocDoc());
   await encrypted('encrypted-user.pdf', { userPassword: 'open', ownerPassword: 'owner' });
   await encrypted('encrypted-owner-only.pdf', { userPassword: '', ownerPassword: 'owner', permissions: { modifying: false } });
 })().catch(e => { console.error(e); process.exit(1); });

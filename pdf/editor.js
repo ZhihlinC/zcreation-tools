@@ -132,7 +132,9 @@ async function showPage() {
   refresh();
   const uidAtStart = p.uid;
   const pdfPage = await S.sources.get(p.src).doc.getPage(p.index + 1);
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  // cap the bitmap (~16 MP) so large pages on hi-dpi screens never exceed
+  // the browser's canvas limit and render blank
+  const dpr = Math.min(window.devicePixelRatio || 1, 2, Math.sqrt(16e6 / (p.w * k * p.h * k)));
   const vp = pdfPage.getViewport({ scale: k * dpr });
   const off = document.createElement('canvas');
   off.width = Math.round(vp.width); off.height = Math.round(vp.height);
@@ -149,6 +151,14 @@ function refresh() {
   const p = page();
   if (!p) return;
   ctx.drawShapesSvg(svg, p, { outlines: true });
+  // thin lines are hard to hit: add a wide transparent stroke on top
+  for (const s of p.shapes) if (s.type === 'line') {
+    const hit = document.createElementNS(SVGNS, 'line');
+    for (const k of ['x1', 'y1', 'x2', 'y2']) hit.setAttribute(k, s[k]);
+    hit.setAttribute('class', 'hit');
+    hit.dataset.id = s.id;
+    svg.appendChild(hit);
+  }
   const s = selShape();
   if (s) drawSelection(s);
   refreshBar();
@@ -225,6 +235,7 @@ svg.addEventListener('pointermove', e => {
   }
   void p;
 });
+svg.addEventListener('lostpointercapture', () => { if (act && act.mode !== 'create' && act.moved) svg.dispatchEvent(new PointerEvent('pointerup')); act = null; });
 svg.addEventListener('pointerup', () => {
   if (!act) return;
   const a = act;
@@ -299,6 +310,7 @@ window.addEventListener('resize', () => { if (E.open) showPage(); });
 buildBar();
 ctx.editorAvailable = true;
 ctx.editorOpen = () => E.open;
+ctx.editorGesture = () => act !== null;
 ctx.openEditor = open;
 // Undo can remove the page being edited (e.g. undoing a duplicate).
 ctx.onUndo = () => {

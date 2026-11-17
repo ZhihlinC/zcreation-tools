@@ -20,3 +20,10 @@ VIDEO_SCRIPT.md
 
 # Logs
 *.log
+
+# Handoff briefs from Cowork (local only)
+handoffs/
+
+# /pdf/ dev-only test deps
+pdf/test/node_modules/
+pdf/test/out/

@@ -88,7 +88,7 @@ ok   dropped file added
 ok   non-embedded CJK text renders in the thumbnail
 ok   annotations are not drawn in the preview (output drops them)
 ok   load-failure banner when worker is missing
-  150 pages: load 46 ms; thumbnails drawn before scroll 40/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
+  150 pages: load 48 ms; thumbnails drawn before scroll 40/150, after 150/150; frame ms p50 16.7 p95 16.8 max 16.8, 0 frames > 50 ms of 388
 ok   thumbnails are lazy (not all drawn up front)
 ok   scrolling draws more thumbnails
 ok   scroll p95 frame < 100 ms

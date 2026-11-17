@@ -98,6 +98,55 @@
     return geom(page.getRotation().angle, { x: x1, y: y1, w: x2 - x1, h: y2 - y1 });
   }
 
+  const PAGE_KEYS = new Set(['Type', 'Parent', 'MediaBox', 'CropBox', 'BleedBox', 'TrimBox', 'ArtBox', 'Rotate', 'Resources', 'Contents', 'Group', 'UserUnit']);
+  const NAMED_CATEGORIES = ['XObject', 'Font', 'ExtGState', 'Pattern', 'Shading', 'ColorSpace', 'Properties'];
+  const DEFAULT_SPACES = ['DefaultRGB', 'DefaultGray', 'DefaultCMYK']; // used implicitly, never named in content
+  const GROUP_KEYS = ['Type', 'S', 'CS', 'I', 'K'];
+  const STREAM_KEYS = ['Length', 'Filter', 'DecodeParms'];
+  // app-private or cross-object keys that kept forms / images / fonts may carry
+  const PRIVATE_KEYS = ['PieceInfo', 'LastModified', 'Metadata', 'Alternates', 'OPI', 'Thumb', 'StructParent', 'StructParents'];
+
+  // Every name token in PDF content, per the PDF lexer: strings, hex strings,
+  // comments and inline image data are skipped, whitespace is PDF's
+  // (NUL TAB LF FF CR SP), and #xx escapes are decoded.
+  const WS = '\x00\t\n\f\r ', DELIM = '()<>[]{}/%';
+  function contentNames(text) {
+    const names = new Set();
+    const n = text.length;
+    let i = 0;
+    const isWs = c => WS.indexOf(c) >= 0;
+    while (i < n) {
+      const c = text[i];
+      if (c === '%') { while (i < n && text[i] !== '\n' && text[i] !== '\r') i++; continue; }
+      if (c === '(') { // literal string, balanced parens, backslash escapes
+        let depth = 0;
+        for (; i < n; i++) {
+          if (text[i] === '\\') { i++; continue; }
+          if (text[i] === '(') depth++;
+          else if (text[i] === ')' && --depth === 0) { i++; break; }
+        }
+        continue;
+      }
+      if (c === '<' && text[i + 1] !== '<') { const e = text.indexOf('>', i); i = e < 0 ? n : e + 1; continue; }
+      if (c === '/') {
+        let j = i + 1;
+        while (j < n && !isWs(text[j]) && DELIM.indexOf(text[j]) < 0) j++;
+        names.add(text.slice(i + 1, j).replace(/#([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))));
+        i = j;
+        continue;
+      }
+      if (c === 'I' && text[i + 1] === 'D' && (i === 0 || isWs(text[i - 1])) && isWs(text[i + 2] || ' ')) {
+        // inline image data: skip to a whitespace-delimited EI
+        let j = i + 3;
+        while (j < n && !(text[j] === 'E' && text[j + 1] === 'I' && isWs(text[j - 1]) && (j + 2 >= n || isWs(text[j + 2]))) ) j++;
+        i = j + 2;
+        continue;
+      }
+      i++;
+    }
+    return names;
+  }
+
   // copyPages copies everything a page can reach. Anything reachable from a
   // kept page that belongs to a page the user deleted — a link target, a page
   // action, a form field's sibling on another page, an image in a Resources
@@ -107,107 +156,108 @@
   // - a page keeps only geometry, Resources, Contents and transparency /Group;
   // - annotations are dropped except web links, which are rebuilt from scratch
   //   (the preview renders without annotations too, so it matches the output);
-  // - each page gets its own Resources holding only the names its content (and
-  //   the forms / patterns / Type3 glyphs it uses) actually mention.
+  // - each Resources dict (page, form, pattern, Type3 font, soft mask) is
+  //   rebuilt holding only the names its own content mentions — plus the names
+  //   of anything it draws that has no Resources of its own;
+  // - content that cannot be decoded (so cannot be checked) refuses the file.
   // assemble() then refuses to write a file containing any page object it was
   // not asked for.
-  const PAGE_KEYS = new Set(['Type', 'Parent', 'MediaBox', 'CropBox', 'BleedBox', 'TrimBox', 'ArtBox', 'Rotate', 'Resources', 'Contents', 'Group', 'UserUnit']);
-  const NAMED_CATEGORIES = ['XObject', 'Font', 'ExtGState', 'Pattern', 'Shading', 'ColorSpace', 'Properties'];
-
   function sanitizeSource(PDFLib, doc) {
     const { PDFName, PDFDict, PDFArray, PDFRawStream, PDFStream, PDFString, PDFHexString } = PDFLib;
     const N = n => PDFName.of(n);
     const ctx = doc.context;
     const nameOf = x => (x instanceof PDFName ? x.decodeText() : null);
+    const keepOnly = (dict, keys) => { for (const k of dict.keys()) if (!keys.includes(k.decodeText())) dict.delete(k); };
 
-    // Content bytes of a stream, or null when it cannot be decoded (then the
-    // caller keeps that resource dict whole rather than guess).
-    function bytesOf(stream) {
+    function textOf(stream, where) {
+      let b;
       try {
-        if (stream instanceof PDFRawStream) return PDFLib.decodePDFRawStream(stream).decode();
-        if (stream.getUnencodedContents) return stream.getUnencodedContents();
-      } catch (e) { /* fall through */ }
-      return null;
+        b = stream instanceof PDFRawStream ? PDFLib.decodePDFRawStream(stream).decode() : stream.getUnencodedContents();
+      } catch (e) { b = null; }
+      if (!b) throw new Error(`${where}: content cannot be checked (unsupported or damaged stream)`);
+      let t = '';
+      for (let i = 0; i < b.length; i += 8192) t += String.fromCharCode.apply(null, b.subarray(i, i + 8192));
+      return t;
     }
-    // Every /Name token in some content (raw and #xx-decoded spellings).
-    function namesIn(streams) {
-      const names = new Set();
-      for (const st of streams) {
-        const b = bytesOf(st);
-        if (!b) return null;
-        let text = '';
-        for (let i = 0; i < b.length; i += 8192) text += String.fromCharCode.apply(null, b.subarray(i, i + 8192));
-        const re = /\/([^\s\/\[\]()<>{}%]+)/g;
-        let m;
-        while ((m = re.exec(text))) {
-          names.add(m[1]);
-          names.add(m[1].replace(/#([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))));
-        }
-      }
-      return names;
-    }
-    const streamsOf = contents => {
-      const c = ctx.lookup(contents);
-      if (c instanceof PDFArray) return c.asArray().map(r => ctx.lookup(r)).filter(x => x instanceof PDFStream);
-      return c instanceof PDFStream ? [c] : [];
+    const namesOf = (streams, where) => {
+      const all = new Set();
+      for (const s of streams) for (const n of contentNames(textOf(s, where))) all.add(n);
+      return all;
     };
 
-    const done = new Set(); // streams/fonts whose own Resources were already pruned
-    // Prune a Resources dict to `used` names; recurse into what it keeps.
-    // Returns a new direct dict (never mutates a dict other pages may share).
-    function prune(res, used) {
+    // Things a Resources dict names that draw with resources: their content
+    // streams and their own Resources (undefined → they use the parent's).
+    function drawer(cat, obj) {
+      if ((cat === 'XObject' || cat === 'Pattern') && obj instanceof PDFStream) {
+        const sub = nameOf(obj.dict.lookup(N('Subtype')));
+        if (cat === 'XObject' && sub !== 'Form') return null; // images: never inflate
+        return { holder: obj.dict, streams: [obj] };
+      }
+      if (cat === 'Font' && obj instanceof PDFDict && nameOf(obj.lookup(N('Subtype'))) === 'Type3') {
+        const procs = obj.lookup(N('CharProcs'));
+        const streams = procs instanceof PDFDict ? procs.values().map(p => ctx.lookup(p)).filter(p => p instanceof PDFStream) : [];
+        return { holder: obj, streams };
+      }
+      if (cat === 'ExtGState' && obj instanceof PDFDict) {
+        const sm = obj.lookup(N('SMask'));
+        const g = sm instanceof PDFDict ? sm.lookup(N('G')) : null;
+        if (g instanceof PDFStream) return { holder: g.dict, streams: [g] };
+      }
+      return null;
+    }
+
+    const pruned = new Map(); // holder dict → done
+    // Rebuild `res` for content naming `used`; returns a new direct dict.
+    function prune(res, used, where) {
       if (!(res instanceof PDFDict)) return res;
-      if (!used) return res; // undecodable content: keep everything
-      // forms without their own Resources draw with ours, so their names count too
-      const xo = res.lookup(N('XObject'));
-      if (xo instanceof PDFDict) {
-        let grew = true;
-        while (grew) {
-          grew = false;
-          for (const [k, ref] of xo.entries()) {
+      // fixpoint: drawers without their own Resources draw with this one
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const cat of ['XObject', 'Pattern', 'Font', 'ExtGState']) {
+          const sub = res.lookup(N(cat));
+          if (!(sub instanceof PDFDict)) continue;
+          for (const [k, ref] of sub.entries()) {
             if (!used.has(k.decodeText())) continue;
-            const f = ctx.lookup(ref);
-            if (!(f instanceof PDFStream) || nameOf(f.dict.lookup(N('Subtype'))) !== 'Form' || f.dict.get(N('Resources'))) continue;
-            const inner = namesIn([f]);
-            if (!inner) return res;
-            for (const n of inner) if (!used.has(n)) { used.add(n); grew = true; }
+            const d = drawer(cat, ctx.lookup(ref));
+            if (!d || d.holder.lookup(N('Resources')) instanceof PDFDict) continue;
+            for (const n of namesOf(d.streams, where)) if (!used.has(n)) { used.add(n); grew = true; }
           }
         }
       }
       const out = ctx.obj({});
-      for (const [k, v] of res.entries()) {
-        const cat = k.decodeText();
-        const sub = res.lookup(k);
-        if (!NAMED_CATEGORIES.includes(cat) || !(sub instanceof PDFDict)) { out.set(k, v); continue; }
+      for (const cat of NAMED_CATEGORIES) {
+        const sub = res.lookup(N(cat));
+        if (!(sub instanceof PDFDict)) continue;
         const kept = ctx.obj({});
         for (const [name, ref] of sub.entries()) {
-          if (!used.has(name.decodeText())) continue;
+          const nm = name.decodeText();
+          if (!used.has(nm) && !(cat === 'ColorSpace' && DEFAULT_SPACES.includes(nm))) continue;
           kept.set(name, ref);
-          pruneOwn(ctx.lookup(ref));
+          const obj = ctx.lookup(ref);
+          scrub(obj);
+          const d = drawer(cat, obj);
+          if (d) pruneOwn(d, where);
         }
-        out.set(k, kept);
+        out.set(N(cat), kept);
       }
+      const procSet = res.lookup(N('ProcSet'));
+      if (procSet instanceof PDFArray) out.set(N('ProcSet'), ctx.obj(procSet.asArray().filter(x => x instanceof PDFName)));
       return out;
     }
-    // Forms, tiling patterns and Type3 fonts carry their own Resources.
-    function pruneOwn(obj) {
-      if (done.has(obj)) return;
-      done.add(obj);
-      if (obj instanceof PDFStream) {
-        const d = obj.dict;
-        if (nameOf(d.lookup(N('Subtype'))) === 'Image') return; // never inflate scans
-        const r = d.lookup(N('Resources'));
-        if (r instanceof PDFDict) d.set(N('Resources'), prune(r, namesIn([obj])));
-      } else if (obj instanceof PDFDict && nameOf(obj.lookup(N('Subtype'))) === 'Type3') {
-        const r = obj.lookup(N('Resources'));
-        const procs = obj.lookup(N('CharProcs'));
-        if (r instanceof PDFDict && procs instanceof PDFDict) {
-          obj.set(N('Resources'), prune(r, namesIn(procs.values().map(p => ctx.lookup(p)).filter(p => p instanceof PDFStream))));
-        }
-      }
+    function pruneOwn(d, where) {
+      if (pruned.has(d.holder)) return;
+      pruned.set(d.holder, true);
+      const r = d.holder.lookup(N('Resources'));
+      if (r instanceof PDFDict) d.holder.set(N('Resources'), prune(r, namesOf(d.streams, where), where));
+    }
+    function scrub(obj) {
+      const dict = obj instanceof PDFStream ? obj.dict : obj instanceof PDFDict ? obj : null;
+      if (dict) for (const k of PRIVATE_KEYS) dict.delete(N(k));
     }
 
-    for (const page of doc.getPages()) {
+    doc.getPages().forEach((page, pi) => {
+      const where = `page ${pi + 1}`;
       const node = page.node;
       for (const k of ['Resources', 'MediaBox', 'CropBox', 'Rotate']) {
         if (node.get(N(k)) === undefined) {
@@ -232,9 +282,47 @@
       }
       for (const k of node.keys()) if (!PAGE_KEYS.has(k.decodeText())) node.delete(k);
       if (links.length) node.set(N('Annots'), ctx.obj(links));
+      const group = node.lookup(N('Group'));
+      if (group instanceof PDFDict) { const g = ctx.obj({}); for (const k of GROUP_KEYS) if (group.get(N(k)) !== undefined) g.set(N(k), group.get(N(k))); node.set(N('Group'), g); }
+      const c = node.lookup(N('Contents'));
+      const streams = c instanceof PDFArray ? c.asArray().map(r => ctx.lookup(r)).filter(x => x instanceof PDFStream) : c instanceof PDFStream ? [c] : [];
+      for (const s of streams) keepOnly(s.dict, STREAM_KEYS);
       const res = node.lookup(N('Resources'));
-      if (res instanceof PDFDict) node.set(N('Resources'), prune(res, namesIn(streamsOf(node.get(N('Contents'))))));
+      if (res instanceof PDFDict) node.set(N('Resources'), prune(res, namesOf(streams, where), where));
+    });
+  }
+
+  // Layers (optional content) hidden by default in a source stay hidden in
+  // the output: the preview uses the source's default visibility, and an
+  // output without /OCProperties would show every layer. OCGs are tagged in
+  // the source before copying and collected from the output afterwards.
+  const OFF_TAG = 'ZcPdfToolOff';
+  function tagHiddenLayers(PDFLib, doc) {
+    const { PDFName, PDFDict, PDFArray } = PDFLib;
+    const N = n => PDFName.of(n);
+    const ocp = doc.catalog.lookup(N('OCProperties'));
+    if (!(ocp instanceof PDFDict)) return;
+    const all = ocp.lookup(N('OCGs')), d = ocp.lookup(N('D'));
+    if (!(all instanceof PDFArray) || !(d instanceof PDFDict)) return;
+    const ids = arr => (arr instanceof PDFArray ? arr.asArray().map(String) : []);
+    const on = new Set(ids(d.lookup(N('ON')))), off = new Set(ids(d.lookup(N('OFF'))));
+    const baseOff = String(d.get(N('BaseState'))) === '/OFF';
+    for (const ref of all.asArray()) {
+      const g = doc.context.lookup(ref);
+      const hidden = off.has(String(ref)) || (baseOff && !on.has(String(ref)));
+      if (g instanceof PDFDict && hidden) g.set(N(OFF_TAG), PDFLib.PDFBool.True);
     }
+  }
+  function restoreLayers(PDFLib, out) {
+    const { PDFName, PDFDict } = PDFLib;
+    const N = n => PDFName.of(n);
+    const ocgs = [], off = [];
+    for (const [ref, o] of out.context.enumerateIndirectObjects()) {
+      if (!(o instanceof PDFDict) || String(o.get(N('Type'))) !== '/OCG') continue;
+      ocgs.push(ref);
+      if (o.get(N(OFF_TAG))) { off.push(ref); o.delete(N(OFF_TAG)); }
+    }
+    if (ocgs.length) out.catalog.set(N('OCProperties'), out.context.obj({ OCGs: ocgs, D: { OFF: off } }));
   }
 
   function countPageObjects(PDFLib, doc) {
@@ -250,6 +338,7 @@
     for (const s of sources) {
       if (!pages.some(p => p.src === s.id)) continue;
       const doc = await PDFLib.PDFDocument.load(s.bytes);
+      tagHiddenLayers(PDFLib, doc);
       sanitize(PDFLib, doc);
       docs.set(s.id, doc);
     }
@@ -297,6 +386,7 @@
         for (const s of p.shapes) drawShape(PDFLib, page, s, g);
       }
     });
+    restoreLayers(PDFLib, out);
     // fail closed: never write a file holding page objects nobody chose
     const n = countPageObjects(PDFLib, out);
     if (n !== pages.length) throw new Error(`output would contain ${n - pages.length} page(s) that were not chosen`);
@@ -332,7 +422,7 @@
     return { status: 'ok', doc, task };
   }
 
-  const api = { COLORS, RRECT_RADIUS, geom, displayToPdf, rectToPdf, pageGeom, sanitizeSource, countPageObjects, roundedRectPath, assemble, openSource };
+  const api = { COLORS, RRECT_RADIUS, geom, displayToPdf, rectToPdf, pageGeom, sanitizeSource, contentNames, countPageObjects, roundedRectPath, assemble, openSource };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PdfAssemble = api;
 })(typeof self !== 'undefined' ? self : this);

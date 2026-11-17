@@ -29,8 +29,8 @@ const M = [
   { file: 'assemble.js', what: 'shared Contents array not cloned', find: 'if (v instanceof PDFLib.PDFArray) page.node.set(C, v.clone(out.context));', replace: '' },
   { file: 'assemble.js', what: 'source sanitising removed', find: '      sanitize(PDFLib, doc);\n', replace: '' },
   { file: 'assemble.js', what: 'page key allow-list removed', find: 'for (const k of node.keys()) if (!PAGE_KEYS.has(k.decodeText())) node.delete(k);', replace: '' },
-  { file: 'assemble.js', what: 'Resources not pruned', find: 'node.set(N(\'Resources\'), prune(res, namesIn(streamsOf(node.get(N(\'Contents\'))))));', replace: '' },
-  { file: 'assemble.js', what: 'forms without own Resources not followed', find: 'for (const n of inner) if (!used.has(n)) { used.add(n); grew = true; }', replace: '' },
+  { file: 'assemble.js', what: 'Resources not pruned', find: "if (res instanceof PDFDict) node.set(N('Resources'), prune(res, namesOf(streams, where), where));", replace: '' },
+  { file: 'assemble.js', what: 'drawers without own Resources not followed', find: 'for (const n of namesOf(d.streams, where)) if (!used.has(n)) { used.add(n); grew = true; }', replace: '' },
   { file: 'assemble.js', what: 'all annotations kept', find: "if (!(a instanceof PDFDict) || nameOf(a.lookup(N('Subtype'))) !== 'Link') continue;", replace: 'if (!(a instanceof PDFDict)) continue; links.push(annots.get(i)); continue;' },
   { file: 'assemble.js', what: 'fail-closed page count removed', find: 'if (n !== pages.length) throw', replace: 'if (false) throw' },
   { file: 'assemble.js', what: 'pdf.js/pdf-lib page count disagreement accepted', find: 'if (lib.getPageCount() !== doc.numPages) throw', replace: 'if (false) throw' },
@@ -39,6 +39,14 @@ const M = [
   { file: 'assemble.js', what: 'geometry guard removed', find: 'if (p.w != null && !(', replace: 'if (false && !(' },
   { file: 'assemble.js', what: 'owner-password-only PDFs accepted', find: 'if ((await doc.getPermissions()) !== null)', replace: 'if (false)' },
   { file: 'assemble.js', what: "caller's buffer handed to pdf.js (detached)", find: '{ data: bytes.slice() }', replace: '{ data: bytes }' },
+  { file: 'assemble.js', what: 'lexer does not skip strings', find: "if (c === '(') { // literal string", replace: 'if (false) { // literal string' },
+  { file: 'assemble.js', what: 'lexer uses JS whitespace', find: "const WS = '\\x00\\t\\n\\f\\r '", replace: "const WS = '\\t\\n\\f\\r \\xa0\\x0b'" },
+  { file: 'assemble.js', what: 'soft-mask forms not followed', find: 'if (g instanceof PDFStream) return { holder: g.dict, streams: [g] };', replace: '' },
+  { file: 'assemble.js', what: 'undecodable content kept instead of refused', find: 'if (!b) throw new Error(', replace: "if (!b) return ''; if (0) throw new Error(" },
+  { file: 'assemble.js', what: 'private keys on kept objects not scrubbed', find: 'if (dict) for (const k of PRIVATE_KEYS) dict.delete(N(k));', replace: '' },
+  { file: 'assemble.js', what: 'Default colour spaces pruned', find: "&& !(cat === 'ColorSpace' && DEFAULT_SPACES.includes(nm))", replace: '' },
+  { file: 'assemble.js', what: 'hidden layers not restored', find: '    restoreLayers(PDFLib, out);\n', replace: '' },
+  { file: 'assemble.js', what: 'content stream dict not allow-listed', find: 'for (const s of streams) keepOnly(s.dict, STREAM_KEYS);', replace: '' },
   // ---- app.js / editor.js, browser suite
   { file: 'app.js', suite: 'browser', what: 'window drop guard removed', find: "window.addEventListener('dragover', e => { e.preventDefault();", replace: "window.addEventListener('dragover', e => {" },
   { file: 'app.js', suite: 'browser', what: 'cmaps not configured', find: "  cMapUrl: new URL('./vendor/cmaps/', import.meta.url).href,\n", replace: '' },
@@ -71,7 +79,7 @@ function run(cmd, args, env) {
     fs.writeFileSync(f, mutated);
     const r = m.suite === 'browser'
       ? await run('node', ['test-browser.js'], { ['OVERRIDE_' + m.file.replace('.js', '_JS').toUpperCase()]: f })
-      : await run('node', ['test-assemble.js'], { ASSEMBLE_JS: f });
+      : await run('node', ['test-assemble.js'], { ASSEMBLE_JS: f }).then(r => (r.code ? r : run('node', ['test-sanitize.js'], { ASSEMBLE_JS: f })));
     const fails = r.out.split('\n').filter(l => l.startsWith('FAIL') || /Error/.test(l));
     if (r.code === 0) { survived++; console.log(`SURVIVED  [${m.suite || 'node'}] ${m.file}: ${m.what}`); }
     else console.log(`killed    [${m.suite || 'node'}] ${m.file}: ${m.what}  (exit ${r.code}; ${fails.length} failing lines, first: ${(fails[0] || '').slice(0, 110)})`);

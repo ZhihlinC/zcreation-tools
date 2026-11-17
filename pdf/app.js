@@ -450,7 +450,12 @@ async function download() {
     toast('已下載：' + name);
   } catch (e) {
     console.error(e);
-    showErrors([`產生 PDF 失敗（頁面都還在，可以再按一次下載；還是失敗請截圖給 Yves）　${e && e.message ? e.message : ''}`]);
+    const msg = (e && e.message) || '';
+    // refusals that protect what the user deleted get their own wording
+    const why = /cannot be checked/.test(msg) ? '這份 PDF 有頁面的內容格式沒辦法檢查，為了不把刪掉的頁面一起帶出去，先不產生檔案。可以把檔案寄給 Yves 看看。'
+      : /not chosen/.test(msg) ? '輸出檔會帶到沒選的頁面，已停止。可以把檔案寄給 Yves 看看。'
+        : '頁面都還在，可以再按一次下載；還是失敗請截圖給 Yves。';
+    showErrors([`產生 PDF 失敗：${why}　${msg}`]);
   } finally {
     S.busy = false;
     btn.textContent = '下載 PDF';

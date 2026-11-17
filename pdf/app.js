@@ -247,6 +247,7 @@ function render() {
   renderGrid();
   renderPicker();
   renderChrome();
+  renderPreview();
 }
 
 function renderGrid() {
@@ -284,7 +285,8 @@ function renderChrome() {
   const n = S.pages.length, k = S.sel.size;
   const loading = document.querySelector('.card.loading') !== null;
   $('empty').hidden = S.sources.size > 0 || loading;
-  $('picker').hidden = S.step !== 1 || (S.sources.size === 0 && !loading);
+  $('picker').hidden = S.sources.size === 0 && !loading;
+  $('groups').hidden = S.step !== 1;
   $('grid').hidden = S.step !== 2;
   $('grid-empty').hidden = S.step !== 2 || n > 0 || S.sources.size === 0;
   $('step1-tab').setAttribute('aria-pressed', S.step === 1);
@@ -303,8 +305,9 @@ function renderChrome() {
   $('delete-btn').disabled = !k;
   $('rotate-btn').disabled = !k;
   $('adjust-btn').disabled = !k;
-  if (S.step !== 2) $('adjust').hidden = true;
-  if (!$('adjust').hidden) syncAdjustPanel();
+  $('adjust').hidden = S.step !== 2;
+  if (S.step === 2) syncAdjustPanel();
+  $('pv-hint').textContent = S.step === 1 ? '←→ 換頁，空白鍵勾選／取消' : '顯示最後點的那一頁輸出時的樣子；雙擊頁面加圖形';
   $('dup-btn').disabled = !k;
   $('edit-btn').disabled = !n || !ctx.editorAvailable;
   $('undo-btn').disabled = !S.undo.length;
@@ -528,7 +531,6 @@ function renderPicker() {
     g.el.querySelector('.fold').setAttribute('aria-label', folded ? '展開' : '收合');
     g.el.querySelector('.gcount').textContent = `已選 ${picked} / ${n} 頁`;
   }
-  renderPreview();
 }
 
 // a shift-press would otherwise start extending the text selection
@@ -566,34 +568,57 @@ $('groups').addEventListener('click', e => {
 
 // The big preview: the focused page drawn to fit the panel.
 let pvTask = null, pvShown = null;
+// Step 1 shows the focused source page; step 2 shows the last clicked page
+// as it will be output (rotation, 縮放, 白邊, shapes), so adjustments too
+// small to see on a thumbnail can be judged — zoomed in if needed.
+let pvZoom = 1; // 1 = fit the panel; 2, 4 = 200 %, 400 %
+function previewTarget() {
+  if (S.step === 1) {
+    if (!S.focus) return null;
+    const [src, si] = S.focus.split(':');
+    const source = S.sources.get(src);
+    if (!source) return null;
+    const i = Number(si), geo = source.geoms[i];
+    const entry = S.pages.find(p => p.src === src && p.index === i);
+    // the source page as it is; an entry's shapes only if it is not turned or adjusted
+    const plain = entry && !entry.rot && !entry.zoom && !entry.margin;
+    return {
+      p: { src, index: i, w: geo.w, h: geo.h, rotate: geo.rotate, shapes: plain ? entry.shapes : [] },
+      key: S.focus,
+      label: `${source.name} · 第 ${i + 1} 頁${isPicked(src, i) ? '' : '（未選）'}`,
+    };
+  }
+  const at = S.pages.findIndex(q => q.uid === S.anchor && S.sel.has(q.uid));
+  const k = at >= 0 ? at : S.pages.findIndex(q => S.sel.has(q.uid));
+  const p = S.pages[k >= 0 ? k : 0];
+  if (!p) return null;
+  const src = S.sources.get(p.src);
+  return { p, key: p.uid + '|' + thumbKey(p), label: `第 ${S.pages.indexOf(p) + 1} 頁 · ${src.name} 第 ${p.index + 1} 頁` };
+}
 async function renderPreview() {
-  if (S.step !== 1 || !S.pvOpen || !S.focus) return;
-  const [src, si] = S.focus.split(':');
-  const source = S.sources.get(src);
-  if (!source) return;
-  const i = Number(si);
-  const geo = source.geoms[i];
-  const entry = S.pages.find(p => p.src === src && p.index === i);
-  const shown = { w: geo.w, h: geo.h, shapes: entry ? entry.shapes : [] };
-  $('pv-label').textContent = `${source.name} · 第 ${i + 1} 頁${isPicked(src, i) ? '' : '（未選）'}`;
-  drawShapesSvg($('pv-svg'), shown, { outlines: true });
-  const stage = $('pv-stage').getBoundingClientRect();
-  const k = Math.min((stage.width - 24) / geo.w, (stage.height - 24) / geo.h);
-  if (!(k > 0)) return;
-  $('pv-page').style.width = Math.round(geo.w * k) + 'px';
-  $('pv-page').style.height = Math.round(geo.h * k) + 'px';
-  const want = `${S.focus}@${Math.round(k * 100)}`;
+  if (!S.pvOpen) return;
+  const t = previewTarget();
+  if (!t) { $('pv-label').textContent = ''; $('pv-svg').textContent = ''; $('pv-canvas').width = 0; pvShown = null; return; }
+  const { p } = t;
+  $('pv-label').textContent = t.label;
+  drawShapesSvg($('pv-svg'), p, { outlines: true });
+  const stage = $('pv-stage');
+  const fit = Math.min((stage.clientWidth - 24) / p.w, (stage.clientHeight - 24) / p.h);
+  if (!(fit > 0)) return;
+  const k = fit * pvZoom;
+  $('pv-page').style.width = Math.round(p.w * k) + 'px';
+  $('pv-page').style.height = Math.round(p.h * k) + 'px';
+  stage.classList.toggle('zoomed', pvZoom > 1);
+  const want = `${t.key}@${Math.round(k * 100)}`;
   if (pvShown === want) return;
   pvShown = want;
   if (pvTask) { pvTask.cancel(); pvTask = null; }
-  const page = await source.doc.getPage(i + 1);
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const vp = page.getViewport({ scale: k * dpr });
+  const page = await S.sources.get(p.src).doc.getPage(p.index + 1);
+  // cap the bitmap (~16 MP): 400 % of a big page would exceed canvas limits
+  const scale = Math.min(k * Math.min(window.devicePixelRatio || 1, 2), Math.sqrt(16e6 / (p.w * p.h)));
   const off = document.createElement('canvas');
-  off.width = Math.round(vp.width); off.height = Math.round(vp.height);
-  pvTask = page.render({ canvas: off, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.DISABLE });
   try {
-    await pvTask.promise;
+    await renderPage(page, p, scale, off, task => { pvTask = task; });
   } catch (e) {
     if (e?.name !== 'RenderingCancelledException') { console.error(e); pvShown = null; }
     return;
@@ -604,8 +629,32 @@ async function renderPreview() {
   const cv = $('pv-canvas');
   cv.width = off.width; cv.height = off.height;
   cv.getContext('2d').drawImage(off, 0, 0);
-  cv.dataset.key = S.focus;
+  cv.dataset.key = t.key;
 }
+for (const b of document.querySelectorAll('.pv-zoom button')) {
+  b.onclick = () => {
+    pvZoom = Number(b.dataset.z);
+    for (const o of document.querySelectorAll('.pv-zoom button')) o.setAttribute('aria-pressed', o === b);
+    pvShown = null;
+    renderPreview();
+  };
+}
+// drag to move around a zoomed page
+let pan = null;
+$('pv-stage').addEventListener('pointerdown', e => {
+  if (pvZoom === 1 || e.button !== 0) return;
+  pan = { x: e.clientX, y: e.clientY, l: $('pv-stage').scrollLeft, t: $('pv-stage').scrollTop };
+  $('pv-stage').setPointerCapture(e.pointerId);
+  $('pv-stage').classList.add('panning');
+});
+$('pv-stage').addEventListener('pointermove', e => {
+  if (!pan) return;
+  $('pv-stage').scrollLeft = pan.l - (e.clientX - pan.x);
+  $('pv-stage').scrollTop = pan.t - (e.clientY - pan.y);
+});
+const endPan = () => { pan = null; $('pv-stage').classList.remove('panning'); };
+$('pv-stage').addEventListener('pointerup', endPan);
+$('pv-stage').addEventListener('pointercancel', endPan);
 // one handle on the right edge, in the same place whether open or closed
 $('pv-toggle').onclick = () => { S.pvOpen = !S.pvOpen; pvShown = null; render(); };
 window.addEventListener('resize', () => { pvShown = null; renderPreview(); });
@@ -672,7 +721,7 @@ $('grid').addEventListener('dblclick', e => {
   if (el && ctx.editorAvailable) ctx.openEditor(el.dataset.uid);
 });
 $('grid-wrap').addEventListener('pointerdown', e => {
-  if (e.target === $('grid-wrap') || e.target === $('grid')) { S.sel.clear(); render(); }
+  if (S.step === 2 && [$('grid-wrap'), $('grid'), $('main-col'), $('picker')].includes(e.target)) { S.sel.clear(); render(); }
 });
 
 function clickSelect(id, e) {
@@ -768,7 +817,9 @@ let adjBefore = null; // snapshot taken when a slider drag starts; committed on 
 function adjustTargets() { return S.pages.filter(p => S.sel.has(p.uid)); }
 function syncAdjustPanel() {
   const t = adjustTargets();
-  if (!t.length) { $('adjust').hidden = true; return; }
+  $('adjust').classList.toggle('off', !t.length);
+  $('adj-zoom').disabled = $('adj-margin').disabled = $('adj-reset').disabled = !t.length;
+  if (!t.length) { $('adj-for').textContent = '先在左邊點選要調整的頁面'; return; }
   if (adjBefore) return; // mid-drag: the slider owns its value
   const z = t[0].zoom || 0, m = t[0].margin || 0;
   $('adj-zoom').value = z; $('adj-margin').value = m;
@@ -782,6 +833,7 @@ function applyAdjust(field, value) {
   $('adj-zoom-out').textContent = `${Number($('adj-zoom').value) > 0 ? '+' : ''}${$('adj-zoom').value}%`;
   $('adj-margin-out').textContent = `${$('adj-margin').value}%`;
   renderGrid(); // live thumbnails
+  renderPreview(); // and the big preview
 }
 function commitAdjust() {
   if (!adjBefore) return;
@@ -802,22 +854,11 @@ $('adj-reset').onclick = () => {
   for (const p of t) { p.zoom = 0; p.margin = 0; }
   render();
 };
-function openAdjust() {
-  if (!S.sel.size) return;
-  const r = $('adjust-btn').getBoundingClientRect();
-  $('adjust').style.left = Math.min(r.left, window.innerWidth - 340) + 'px';
-  $('adjust').style.top = (r.bottom + 8) + 'px';
-  $('adjust').hidden = false;
-  syncAdjustPanel();
+// 頁面調整 opens the side preview (if closed) and puts the focus on the sliders
+$('adjust-btn').onclick = () => {
+  if (!S.pvOpen) { S.pvOpen = true; pvShown = null; render(); }
   $('adj-zoom').focus();
-}
-const closeAdjust = () => { commitAdjust(); $('adjust').hidden = true; };
-$('adjust-btn').onclick = () => ($('adjust').hidden ? openAdjust() : closeAdjust());
-$('adj-close').onclick = closeAdjust;
-$('adjust').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeAdjust(); $('adjust-btn').focus(); } });
-document.addEventListener('pointerdown', e => {
-  if (!$('adjust').hidden && !e.target.closest('#adjust, #adjust-btn')) closeAdjust();
-}, true);
+};
 
 function rotateSelected() {
   if (!S.sel.size) return;

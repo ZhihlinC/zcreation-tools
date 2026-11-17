@@ -1,6 +1,6 @@
 {
-  "loadMs": 64,
-  "drawnBefore": 40,
+  "loadMs": 68,
+  "drawnBefore": 20,
   "drawnAfter": 150,
   "frames": 388,
   "p50": 16.699999999999818,

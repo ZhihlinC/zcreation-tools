@@ -58,6 +58,8 @@ const M = [
   { file: 'assemble.js', what: 'user rotation ignored in the output', find: '      if (p.rot) page.setRotation(', replace: '      if (false) page.setRotation(' },
   { file: 'app.js', suite: 'browser', what: 'rotating does not turn the shapes', find: 'const n = { x1: H - s.y1, y1: s.x1, x2: H - s.y2, y2: s.x2 };', replace: 'const n = { x1: s.x1, y1: s.y1, x2: s.x2, y2: s.y2 };' },
   { file: 'app.js', suite: 'browser', what: 'image version ignores the rotation', find: 'const vp = page.getViewport({ scale, rotation: (page.rotate + (p.rot || 0)) % 360 });', replace: 'const vp = page.getViewport({ scale });' },
+  { file: 'app.js', suite: 'browser', what: 'side preview not live while a slider moves', find: '  renderPreview(); // and the big preview\n', replace: '' },
+  { file: 'app.js', suite: 'browser', what: 'side preview zoom ignored', find: '  const k = fit * pvZoom;', replace: '  const k = fit;' },
   { file: 'app.js', suite: 'browser', what: 'step 1: shift+click ignored (single toggle)', find: 'if (e.shiftKey && psrc === src) {', replace: 'if (false && e.shiftKey && psrc === src) {' },
   { file: 'app.js', suite: 'browser', what: 'step 1: re-ticked page goes to the end, not back in file order', find: '  S.pages.splice(at, 0, ...back);', replace: '  S.pages.push(...back);' },
   { file: 'app.js', suite: 'browser', what: 'step 1: un-ticking forgets the shapes', find: '    S.parked.set(key, gone);\n', replace: '' },

@@ -118,6 +118,7 @@ async function main() {
     await rotatedTest(browser, base, pdfjs);
     await rotationTest(browser, base, pdfjs);
     await adjustTest(browser, base, pdfjs);
+    await sidePreviewTest(browser, base);
     await errorsTest(browser, base);
     await dropGuardTest(browser, base);
     await cjkTest(browser, base);
@@ -508,20 +509,18 @@ async function adjustTest(browser, base, pdfjs) {
   const set = (id, v) => pg.evaluate(([id, v]) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, [id, v]);
   await cardAt(pg, 0).click();
   await pg.click('#adjust-btn');
-  check('adjust panel opens for the selection', await pg.isVisible('#adjust') && (await pg.textContent('#adj-for')).includes('1 頁'));
+  check('adjust sliders sit under the side preview', await pg.isVisible('#preview #adjust') && (await pg.textContent('#adj-for')).includes('1 頁'));
   await set('adj-zoom', -10);
   await set('adj-margin', 8);
   const st = await pg.evaluate(() => window.__pdfTool.S.pages.map(p => [p.zoom || 0, p.margin || 0]).join('|'));
   check('values land on the selected page only', st === '-10,8|0,0|0,0', st);
   check('card shows the adjustment', (await cardAt(pg, 0).locator('.adj').textContent()) === '縮放 -10%・白邊 8%');
-  await pg.click('#adj-close');
-  check('panel closes', await pg.isHidden('#adjust'));
+  await pg.click('#pv-label'); // move focus off the slider
   await pg.keyboard.press('Control+z');
   check('undo one slider change', await pg.evaluate(() => window.__pdfTool.S.pages[0].margin || 0) === 0 && await pg.evaluate(() => window.__pdfTool.S.pages[0].zoom) === -10);
   await cardAt(pg, 0).click();
   await pg.click('#adjust-btn');
   await set('adj-margin', 8);
-  await pg.click('#adj-close');
 
   const { file } = await download(pg, 'adjust-vector.pdf');
   const vdoc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(file)), verbosity: 0 }).promise;
@@ -543,6 +542,60 @@ async function adjustTest(browser, base, pdfjs) {
     check('image output: unadjusted page keeps its edge (control)', !close(kit[n - 1].rgb, RGB.white, 3), kit[n - 1].rgb);
   }
   check('no page errors (adjust)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
+}
+
+// Step 2's side preview: the last clicked page as it will be output, live
+// while a slider moves, with shapes, and zoomable (fit / 200 % / 400 %,
+// drag to move). 頁面調整 opens it when collapsed.
+async function sidePreviewTest(browser, base) {
+  const pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf'), fx('a4-landscape.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 5);
+  await waitThumbs(pg);
+  await cardAt(pg, 1).click();
+  const uid1 = await pg.evaluate(() => window.__pdfTool.S.pages[1].uid);
+  await pg.waitForFunction(u => (document.getElementById('pv-canvas').dataset.key || '').startsWith(u), uid1);
+  check('side preview shows the clicked page', (await pg.textContent('#pv-label')) === '第 2 頁 · a4-portrait.pdf 第 2 頁', await pg.textContent('#pv-label'));
+  // a pixel of the preview at the frame line (x = 10.5 pt, mid height)
+  const edge = () => pg.evaluate(() => { const c = document.getElementById('pv-canvas'); return Array.from(c.getContext('2d').getImageData(Math.round(c.width * 10.5 / 595.28), Math.round(c.height / 2), 1, 1).data.slice(0, 3)); });
+  check('control: the frame line shows before any adjustment', !close(await edge(), RGB.white, 3), await edge());
+  // live: input events only (slider still held)
+  await pg.click('#adjust-btn');
+  await pg.evaluate(() => { const e = document.getElementById('adj-margin'); e.value = 8; e.dispatchEvent(new Event('input', { bubbles: true })); });
+  await pg.waitForFunction(() => (document.getElementById('pv-canvas').dataset.key || '').endsWith(':0:8'));
+  check('preview follows the slider before it is released (白邊 covers the edge)', close(await edge(), RGB.white, 3), await edge());
+  await pg.evaluate(() => document.getElementById('adj-margin').dispatchEvent(new Event('change', { bubbles: true })));
+  // shapes appear in the preview
+  await cardAt(pg, 1).dblclick();
+  await editorReady(pg);
+  await dragPts(pg, 100, 300, 300, 400);
+  await pg.keyboard.press('Escape');
+  check('preview shows the shapes', await pg.locator('#pv-svg rect').count() >= 1);
+  // zoom
+  const pageW = () => pg.evaluate(() => document.getElementById('pv-page').getBoundingClientRect().width);
+  const fitW = await pageW();
+  await pg.click('.pv-zoom button[data-z="2"]');
+  check('200% doubles the page', Math.abs(await pageW() - 2 * fitW) < 3, `${await pageW()} vs ${2 * fitW}`);
+  check('zoomed page scrolls', await pg.evaluate(() => { const s = document.getElementById('pv-stage'); return s.scrollWidth > s.clientWidth && s.scrollHeight > s.clientHeight; }));
+  const box = await pg.locator('#pv-stage').boundingBox();
+  const before = await pg.evaluate(() => [document.getElementById('pv-stage').scrollLeft, document.getElementById('pv-stage').scrollTop]);
+  await pg.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await pg.mouse.down();
+  await pg.mouse.move(box.x + box.width / 2 - 80, box.y + box.height / 2 - 60, { steps: 5 });
+  await pg.mouse.up();
+  const after = await pg.evaluate(() => [document.getElementById('pv-stage').scrollLeft, document.getElementById('pv-stage').scrollTop]);
+  check('drag moves a zoomed page', after[0] > before[0] && after[1] > before[1], `${before} → ${after}`);
+  await pg.click('.pv-zoom button[data-z="4"]');
+  check('400% quadruples the page', Math.abs(await pageW() - 4 * fitW) < 5, `${await pageW()} vs ${4 * fitW}`);
+  await pg.click('.pv-zoom button[data-z="1"]');
+  check('符合 fits again', Math.abs(await pageW() - fitW) < 2 && await pg.evaluate(() => { const s = document.getElementById('pv-stage'); return s.scrollWidth <= s.clientWidth + 1; }));
+  // collapsed: 頁面調整 brings it back
+  await pg.click('#pv-toggle');
+  check('step 2 preview collapses', !(await pg.isVisible('#preview')));
+  await pg.click('#adjust-btn');
+  check('頁面調整 reopens the side preview', await pg.isVisible('#preview #adjust'));
+  check('no page errors (side preview)', pg.errors.length === 0, pg.errors.join(' | '));
   await pg.close();
 }
 

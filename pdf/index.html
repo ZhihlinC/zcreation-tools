@@ -22,7 +22,7 @@
     <span class="tsep" aria-hidden="true"></span>
     <input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
     <button class="btn step2" id="rotate-btn" disabled title="選取的頁面向右轉 90°（R）">向右轉</button>
-    <button class="btn step2" id="adjust-btn" disabled title="選取頁面的縮放與白邊">頁面調整</button>
+    <button class="btn step2" id="adjust-btn" disabled title="在右側預覽調整選取頁面的縮放與白邊">頁面調整</button>
     <button class="btn step2" id="delete-btn" disabled>刪除</button>
     <button class="btn step2" id="dup-btn" disabled>複製</button>
     <button class="btn step2" id="edit-btn" disabled>加圖形</button>
@@ -57,25 +57,28 @@
       </details>
     </div>
     <div id="picker">
-      <div id="groups" aria-label="依檔案選頁"></div>
+      <div id="main-col">
+        <div id="groups" aria-label="依檔案選頁"></div>
+        <p id="grid-empty" hidden>還沒有選任何頁面。回「1 選頁」勾選要的頁面。</p>
+        <div id="grid" role="listbox" aria-multiselectable="true" aria-label="頁面" hidden></div>
+      </div>
       <aside id="preview" aria-label="大預覽">
-        <div class="pv-bar"><span id="pv-label"></span></div>
+        <div class="pv-bar"><span id="pv-label"></span>
+          <div class="pv-zoom" role="group" aria-label="預覽大小"><button data-z="1" aria-pressed="true">符合</button><button data-z="2" aria-pressed="false">200%</button><button data-z="4" aria-pressed="false">400%</button></div>
+        </div>
         <div id="pv-stage"><div id="pv-page"><canvas id="pv-canvas"></canvas><svg id="pv-svg"></svg></div></div>
-        <p class="pv-hint">←→ 換頁，空白鍵勾選／取消</p>
+        <div id="adjust" aria-label="頁面調整" hidden>
+          <label class="adj-row"><span>縮放</span><input type="range" id="adj-zoom" min="-10" max="10" step="0.5" value="0"><output id="adj-zoom-out">0%</output></label>
+          <p class="adj-help">以頁面中心為準：正值放大（邊緣推出頁外，可收掉掃描黑邊），負值縮小（四周留白）。</p>
+          <label class="adj-row"><span>白邊</span><input type="range" id="adj-margin" min="0" max="10" step="0.5" value="0"><output id="adj-margin-out">0%</output></label>
+          <p class="adj-help">內容大小不變，把四周蓋白；寬度是各邊長的百分比。</p>
+          <div class="adj-foot"><span id="adj-for"></span><button class="btn small" id="adj-reset">重設</button></div>
+        </div>
+        <p class="pv-hint" id="pv-hint"></p>
       </aside>
       <div id="pv-rail"><button id="pv-toggle" aria-controls="preview" aria-expanded="true"><span>收起</span></button></div>
     </div>
-    <p id="grid-empty" hidden>還沒有選任何頁面。回「1 選頁」勾選要的頁面。</p>
-    <div id="grid" role="listbox" aria-multiselectable="true" aria-label="頁面" hidden></div>
   </main>
-
-  <div id="adjust" role="dialog" aria-label="頁面調整" hidden>
-    <label class="adj-row"><span>縮放</span><input type="range" id="adj-zoom" min="-10" max="10" step="0.5" value="0"><output id="adj-zoom-out">0%</output></label>
-    <p class="adj-help">以頁面中心為準：正值放大（邊緣推出頁外，可收掉掃描黑邊），負值縮小（四周留白）。</p>
-    <label class="adj-row"><span>白邊</span><input type="range" id="adj-margin" min="0" max="10" step="0.5" value="0"><output id="adj-margin-out">0%</output></label>
-    <p class="adj-help">內容大小不變，把四周蓋白；寬度是各邊長的百分比。</p>
-    <div class="adj-foot"><span id="adj-for"></span><button class="btn small" id="adj-reset">重設</button><button class="btn small primary" id="adj-close">完成</button></div>
-  </div>
 
   <dialog id="dl-dialog" aria-labelledby="dl-title">
     <form method="dialog">

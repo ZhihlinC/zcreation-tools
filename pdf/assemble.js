@@ -416,11 +416,43 @@
         if (hasShapes) for (const s of p.shapes) drawShape(PDFLib, page, s, g);
       }
     });
-    restoreLayers(PDFLib, out);
+    const doc = opts.paper ? await fitToPaper(PDFLib, out, opts.paper) : out;
+    restoreLayers(PDFLib, doc);
     // fail closed: never write a file holding page objects nobody chose
-    const n = countPageObjects(PDFLib, out);
+    const n = countPageObjects(PDFLib, doc);
     if (n !== pages.length) throw new Error(`output would contain ${n - pages.length} page(s) that were not chosen`);
-    return out.save();
+    return doc.save();
+  }
+
+  // Paper sizes in mm (portrait). B sizes are JIS — the ones Taiwanese and
+  // Japanese copiers and exam papers use (ISO B4 would be 250 × 353).
+  const PAPERS = { A5: [148, 210], B5: [182, 257], A4: [210, 297], B4: [257, 364], A3: [297, 420] };
+  const paperPt = name => PAPERS[name] && { w: PAPERS[name][0] * 72 / 25.4, h: PAPERS[name][1] * 72 / 25.4 };
+  // The paper as the page is seen: portrait or landscape like the page (a
+  // square page counts as portrait), and the uniform scale that fits it.
+  function paperFit(paper, w, h) {
+    const lo = Math.min(paper.w, paper.h), hi = Math.max(paper.w, paper.h);
+    const D = w > h ? { w: hi, h: lo } : { w: lo, h: hi };
+    const s = Math.min(D.w / w, D.h / h);
+    return { D, s, ox: (D.w - w * s) / 2, oy: (D.h - h * s) / 2 };
+  }
+  // 縮放至紙張: each page (as shown — rotation, adjustments, shapes already
+  // in it) is embedded whole and drawn scaled to fit and centred on a new
+  // page of that paper size; the new page keeps the rotation, so the
+  // content stays vector and nothing else of the old page comes along.
+  async function fitToPaper(PDFLib, out, paper) {
+    const fin = await PDFLib.PDFDocument.create();
+    for (const page of out.getPages()) {
+      const g = pageGeom(page);
+      const { D, s } = paperFit(paper, g.w, g.h);
+      const turned = g.rotate === 90 || g.rotate === 270;
+      const U = turned ? { w: D.h, h: D.w } : D; // the paper before /Rotate
+      const emb = await fin.embedPage(page, { left: g.box.x, bottom: g.box.y, right: g.box.x + g.box.w, top: g.box.y + g.box.h });
+      const np = fin.addPage([U.w, U.h]);
+      if (g.rotate) np.setRotation(PDFLib.degrees(g.rotate));
+      np.drawPage(emb, { x: (U.w - g.box.w * s) / 2, y: (U.h - g.box.h * s) / 2, xScale: s, yScale: s });
+    }
+    return fin;
   }
 
   // Input gate, run at upload. Any /Encrypt (even owner-password-only files
@@ -454,7 +486,7 @@
     return { status: 'ok', doc, task };
   }
 
-  const api = { COLORS, RRECT_RADIUS, geom, displayToPdf, rectToPdf, pageGeom, sanitizeSource, contentNames, countPageObjects, roundedRectPath, assemble, openSource };
+  const api = { PAPERS, paperPt, paperFit, COLORS, RRECT_RADIUS, geom, displayToPdf, rectToPdf, pageGeom, sanitizeSource, contentNames, countPageObjects, roundedRectPath, assemble, openSource };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PdfAssemble = api;
 })(typeof self !== 'undefined' ? self : this);

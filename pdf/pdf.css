@@ -390,3 +390,6 @@ html, body {
 #adjust .adj-row.mixed output { color: #9a5b00; }
 #adjust .adj-row.mixed input[type=range] { opacity: 0.45; }
 #adj-mixed { margin: -0.3rem 0 0.7rem; padding: 0.4rem 0.6rem; border-radius: 6px; background: #fff7e6; color: #7a4a00; font-size: 0.8rem; line-height: 1.45; }
+#dl-dialog .dl-paper { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.9rem; padding: 0 0.6rem; }
+#dl-dialog .dl-paper b { font-weight: 600; white-space: nowrap; }
+#dl-dialog .dl-paper select { flex: 1; font: inherit; padding: 0.35rem 0.5rem; border: 1px solid var(--panel-border); border-radius: 6px; background: #fff; }

@@ -121,6 +121,7 @@ async function main() {
     await sidePreviewTest(browser, base);
     await mixedAdjustTest(browser, base);
     await fileOrderTest(browser, base);
+    await paperTest(browser, base, pdfjs);
     await errorsTest(browser, base);
     await dropGuardTest(browser, base);
     await cjkTest(browser, base);
@@ -666,6 +667,53 @@ async function fileOrderTest(browser, base) {
   await pg.keyboard.press('Control+z');
   check('undoing the add removes its group', (await names()) === 'a4-landscape.pdf,a4-portrait.pdf' && (await pg.textContent('#status')).startsWith('共 2 份檔案'), await names());
   check('no page errors (file order)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
+}
+
+// 紙張大小 in the download dialog: original and image version both put each
+// page on the chosen paper (orientation per page), scaled to fit, centred;
+// shapes come along. The dialog resets to 原始大小 each time.
+async function paperTest(browser, base, pdfjs) {
+  const pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf'), fx('a4-landscape.pdf'), fx('b4.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 6);
+  await waitThumbs(pg);
+  await cardAt(pg, 5).dblclick(); // C1 (ISO B4)
+  await editorReady(pg);
+  await setStyle(pg, { tool: 'rect', stroke: 'black', fill: 'red', width: '2' });
+  await dragPts(pg, 100, 200, 300, 320);
+  await pg.keyboard.press('Escape');
+  const shape = (await shapesOf(pg, 5))[0];
+  const dl = async (name, dpi, paperName) => {
+    await pg.click('#download-btn');
+    await pg.waitForSelector('#dl-dialog[open]');
+    check(`${name}: dialog opens on 原始大小`, await pg.inputValue('#dl-paper') === '');
+    if (dpi) await pg.check(`#dl-dialog input[value="${dpi}"]`);
+    await pg.selectOption('#dl-paper', paperName);
+    const [d] = await Promise.all([pg.waitForEvent('download', { timeout: 120000 }), pg.click('#dl-ok')]);
+    const file = path.join(OUT, name);
+    await d.saveAs(file);
+    return { file, suggested: d.suggestedFilename() };
+  };
+  const B4 = [257 * 72 / 25.4, 364 * 72 / 25.4], A4 = [595.28, 841.89];
+  const { file: vec, suggested } = await dl('paper-a4.pdf', 0, 'A4');
+  check('file name says the paper', suggested === 'a4-portrait-合併-A4.pdf', suggested);
+  const vdoc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(vec)), verbosity: 0 }).promise;
+  const sizes = [];
+  for (let n = 1; n <= vdoc.numPages; n++) { const v = (await vdoc.getPage(n)).getViewport({ scale: 1 }); sizes.push(`${Math.round(v.width)}x${Math.round(v.height)}`); }
+  check('A4: every page A4, portrait or landscape like the page', sizes.join() === '595x842,595x842,595x842,842x595,842x595,595x842', sizes.join());
+  const { file: img } = await dl('paper-b4-300.pdf', 300, 'B4');
+  const idoc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(img)), verbosity: 0 }).promise;
+  const ip = await idoc.getPage(6), iv = ip.getViewport({ scale: 1 });
+  check('image B4: JIS size', near(iv.width, B4[0], 0.1) && near(iv.height, B4[1], 0.1), `${iv.width}x${iv.height}`);
+  const fit = await pg.evaluate(([w, h, pw, ph]) => window.__pdfTool.A.paperFit({ w: pw, h: ph }, w, h), [708.66, 1000.63, ...B4]);
+  const cx = fit.ox + fit.s * (shape.x1 + shape.x2) / 2, cy = fit.oy + fit.s * (shape.y1 + shape.y2) / 2;
+  const kit = pdfkitColors(img, [{ page: 6, x: cx / B4[0], y: cy / B4[1] }, { page: 6, x: (fit.ox + fit.s * (shape.x2 + 30)) / B4[0], y: cy / B4[1] }]);
+  if (kit) {
+    check('image B4: the box scaled and centred with its page', close(kit[0].rgb, RGB.red), kit[0].rgb);
+    check('image B4: nothing red beside it', !close(kit[1].rgb, RGB.red, 40), kit[1].rgb);
+  }
+  check('no page errors (paper)', pg.errors.length === 0, pg.errors.join(' | '));
   await pg.close();
 }
 

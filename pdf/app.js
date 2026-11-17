@@ -923,7 +923,7 @@ const MAX_CANVAS_SIDE = 16384; // browsers refuse larger canvases
 // with the very SVG the preview shows, then one JPEG per page in a fresh PDF.
 // Nothing but pixels is carried over: the print matches the preview, and no
 // object of a deleted page (or text under a white box) can come along.
-async function rasterize(pages, dpi, onProgress) {
+async function rasterize(pages, dpi, onProgress, paper) {
   const out = await window.PDFLib.PDFDocument.create();
   for (let i = 0; i < pages.length; i++) {
     onProgress(i + 1, pages.length);
@@ -932,15 +932,30 @@ async function rasterize(pages, dpi, onProgress) {
     const canvas = document.createElement('canvas');
     const g = canvas.getContext('2d');
     try {
-      await renderPage(page, p, Math.min(dpi / 72, MAX_CANVAS_SIDE / Math.max(p.w, p.h)), canvas);
+      // on a chosen paper the page prints scaled by fit.s: render it at that size
+      await renderPage(page, p, Math.min((paper ? A.paperFit(paper, p.w, p.h).s : 1) * dpi / 72, MAX_CANVAS_SIDE / Math.max(p.w, p.h)), canvas);
     } finally {
       page.cleanup();
     }
     if (p.shapes.length) await burnShapes(g, p, canvas.width, canvas.height);
-    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', RASTER_JPEG_QUALITY));
-    canvas.width = canvas.height = 0; // free the bitmap before the next page
+    // 縮放至紙張: the page image, scaled to fit, centred on white paper
+    const fit = paper && A.paperFit(paper, p.w, p.h);
+    let sheet = canvas, pw = p.w, ph = p.h;
+    if (fit) {
+      pw = fit.D.w; ph = fit.D.h;
+      sheet = document.createElement('canvas');
+      sheet.width = Math.round(Math.min(pw * dpi / 72, MAX_CANVAS_SIDE));
+      sheet.height = Math.round(sheet.width * ph / pw);
+      const k = sheet.width / pw, sg = sheet.getContext('2d');
+      sg.fillStyle = '#fff';
+      sg.fillRect(0, 0, sheet.width, sheet.height);
+      sg.drawImage(canvas, fit.ox * k, fit.oy * k, p.w * fit.s * k, p.h * fit.s * k);
+      canvas.width = canvas.height = 0;
+    }
+    const blob = await new Promise(r => sheet.toBlob(r, 'image/jpeg', RASTER_JPEG_QUALITY));
+    sheet.width = sheet.height = 0; // free the bitmap before the next page
     const img = await out.embedJpg(new Uint8Array(await blob.arrayBuffer()));
-    out.addPage([p.w, p.h]).drawImage(img, { x: 0, y: 0, width: p.w, height: p.h });
+    out.addPage([pw, ph]).drawImage(img, { x: 0, y: 0, width: pw, height: ph });
   }
   return out.save();
 }
@@ -963,7 +978,8 @@ async function burnShapes(g, p, w, h) {
 }
 
 // dpi 0 = original (vector) output; 300 / 600 = image version
-async function download(dpi = 0) {
+async function download(dpi = 0, paperName = '') {
+  const paper = A.paperPt(paperName);
   if (!S.pages.length || S.busy) return;
   S.busy = true;
   const btn = $('download-btn');
@@ -977,13 +993,14 @@ async function download(dpi = 0) {
     const used = new Set(pages.map(p => p.src));
     let bytes;
     if (dpi) {
-      bytes = await rasterize(pages, dpi, (i, n) => { btn.textContent = `產生中… ${i}/${n}`; });
+      // page images at the dpi they will print at on the chosen paper
+      bytes = await rasterize(pages, dpi, (i, n) => { btn.textContent = `產生中… ${i}/${n}`; }, paper);
     } else {
       const sources = [...S.sources.values()].filter(s => used.has(s.id)).map(s => ({ id: s.id, bytes: s.bytes.slice() }));
-      bytes = (await inWorker({ op: 'assemble', sources, pages }, sources.map(s => s.bytes.buffer))).bytes;
+      bytes = (await inWorker({ op: 'assemble', sources, pages, paper }, sources.map(s => s.bytes.buffer))).bytes;
     }
     const first = S.sources.get(pages[0].src).name.replace(/\.pdf$/i, '');
-    const name = `${first}-${used.size > 1 ? '合併' : '整理'}${dpi ? `-圖片${dpi}dpi` : ''}.pdf`;
+    const name = `${first}-${used.size > 1 ? '合併' : '整理'}${paper ? `-${paperName}` : ''}${dpi ? `-圖片${dpi}dpi` : ''}.pdf`;
     const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: name });
     document.body.appendChild(a); a.click(); a.remove();
@@ -1012,11 +1029,12 @@ $('undo-btn').onclick = undo;
 $('download-btn').onclick = () => {
   if (!S.pages.length || S.busy) return;
   $('dl-dialog').querySelector('input[value="0"]').checked = true; // default: original
+  $('dl-paper').value = ''; // default: each page keeps its size
   $('dl-dialog').showModal();
 };
 $('dl-dialog').addEventListener('close', () => {
   if ($('dl-dialog').returnValue !== 'ok') return;
-  download(Number($('dl-dialog').querySelector('input[name="q"]:checked').value));
+  download(Number($('dl-dialog').querySelector('input[name="q"]:checked').value), $('dl-paper').value);
 });
 $('edit-btn').onclick = () => {
   const id = [...S.sel][0] || S.pages[0]?.uid;

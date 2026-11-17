@@ -90,6 +90,17 @@
         <span><b>圖片版・300 dpi（標準）</b><small>每頁轉成圖片，印出來和預覽完全一樣。</small></span></label>
       <label class="opt"><input type="radio" name="q" value="600">
         <span><b>圖片版・600 dpi（高品質）</b><small>同上，字更銳利；下載較慢、檔案較大。</small></span></label>
+      <label class="dl-paper"><b>紙張大小</b>
+        <select id="dl-paper">
+          <option value="">原始大小（每頁維持原尺寸）</option>
+          <option value="A5">A5（148×210 mm）</option>
+          <option value="B5">B5（182×257 mm）</option>
+          <option value="A4">A4（210×297 mm）</option>
+          <option value="B4">B4（257×364 mm）</option>
+          <option value="A3">A3（297×420 mm）</option>
+        </select>
+      </label>
+      <p class="dl-note">選了紙張大小時，每頁依自己的方向放進直式或橫式紙，等比例縮放、置中留白，不會變形或裁切。B5、B4 是影印機常用的 JIS 尺寸。</p>
       <p class="dl-note">圖片版不會提升原檔的畫質：原本就模糊的掃描頁，轉出來一樣模糊。轉成圖片後文字不能再選取，也不會帶出刪掉頁面的任何內容。</p>
       <div class="dl-actions">
         <button class="btn" value="cancel">取消</button>

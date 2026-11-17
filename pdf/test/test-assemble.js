@@ -275,6 +275,57 @@ async function testAdjust() {
   }
 }
 
+// 縮放至紙張: every output page is the chosen paper (JIS B), portrait or
+// landscape like the page; its content is scaled uniformly and centred. The
+// oracle is display space: a source text's on-screen position (pdf.js
+// viewport) times the fit scale plus the centring offset must equal the
+// output text's on-screen position — rotation and CropBox offsets included.
+async function testPaper() {
+  check('JIS B4 is 257×364 mm', near(A.paperPt('B4').w, 257 * 72 / 25.4) && near(A.paperPt('B4').h, 364 * 72 / 25.4));
+  const files = { A: 'a4-portrait.pdf', B: 'a4-landscape.pdf', C: 'b4.pdf', D: 'odd.pdf', G: 'geometry.pdf' };
+  const sources = Object.entries(files).map(([id, f]) => ({ id, bytes: read(f) }));
+  const plan = [
+    { src: 'B', index: 0, mark: 'B1' },            // landscape → landscape paper
+    { src: 'C', index: 0, mark: 'C1' },            // ISO B4 → shrink
+    { src: 'D', index: 0, mark: 'D1' },            // /Rotate 90, shown landscape
+    { src: 'D', index: 1, mark: 'D2' },            // CropBox 50,60 500×700 → enlarge
+    { src: 'D', index: 3, mark: 'D4' },            // /Rotate 270 + CropBox offset
+    { src: 'A', index: 0, mark: 'A1', rot: 90 },   // user rotation
+    { src: 'A', index: 1, mark: 'A2', zoom: -10, margin: 5 },
+    { src: 'G', index: 0, mark: 'G1' },            // inherited Rotate 90
+  ];
+  const srcDocs = {};
+  for (const [id, f] of Object.entries(files)) srcDocs[id] = await open(read(f));
+  for (const name of ['A4', 'B4', 'A5']) {
+    const paper = A.paperPt(name);
+    const out = await A.assemble(PDFLib, sources, plan.map(p => ({ src: p.src, index: p.index, rot: p.rot, zoom: p.zoom, margin: p.margin, shapes: [] })), { paper });
+    const odoc = await open(out.slice());
+    check(`${name}: page count`, odoc.numPages === plan.length, odoc.numPages);
+    // the expected layout comes from the unpapered output (same pages, own size)
+    const plain = await open((await A.assemble(PDFLib, sources, plan.map(p => ({ src: p.src, index: p.index, rot: p.rot, zoom: p.zoom, margin: p.margin, shapes: [] })))).slice());
+    for (let i = 0; i < plan.length; i++) {
+      const pp = await plain.getPage(i + 1), op = await odoc.getPage(i + 1);
+      const pv = pp.getViewport({ scale: 1 }), ov = op.getViewport({ scale: 1 });
+      // expected layout computed here, not with A.paperFit (that is under test)
+      const lo = Math.min(paper.w, paper.h), hi = Math.max(paper.w, paper.h);
+      const D = pv.width > pv.height ? { w: hi, h: lo } : { w: lo, h: hi };
+      const sc = Math.min(D.w / pv.width, D.h / pv.height);
+      const fit = { D, s: sc, ox: (D.w - pv.width * sc) / 2, oy: (D.h - pv.height * sc) / 2 };
+      check(`${name} p${i + 1} (${plan[i].mark}): paper size, page's orientation`, near(ov.width, fit.D.w, 0.05) && near(ov.height, fit.D.h, 0.05), `${ov.width.toFixed(1)}×${ov.height.toFixed(1)} vs ${fit.D.w.toFixed(1)}×${fit.D.h.toFixed(1)}`);
+      const pt = (await pp.getTextContent()).items.find(t => t.str === plan[i].mark);
+      const ot = (await op.getTextContent()).items.find(t => t.str === plan[i].mark);
+      const [sx, sy] = pv.convertToViewportPoint(pt.transform[4], pt.transform[5]);
+      const [ox, oy] = ov.convertToViewportPoint(ot.transform[4], ot.transform[5]);
+      const ex = fit.ox + fit.s * sx, ey = fit.oy + fit.s * sy;
+      check(`${name} p${i + 1} (${plan[i].mark}): content scaled ${fit.s.toFixed(3)} and centred`, near(ox, ex, 0.1) && near(oy, ey, 0.1), `${ox.toFixed(2)},${oy.toFixed(2)} vs ${ex.toFixed(2)},${ey.toFixed(2)}`);
+    }
+  }
+  // nothing from unchosen pages through the paper path either
+  const leak = await A.assemble(PDFLib, [{ id: 'L', bytes: read('leaks.pdf') }], [{ src: 'L', index: 0, shapes: [] }, { src: 'L', index: 2, shapes: [] }], { paper: A.paperPt('A4') });
+  const found = allText(await PDFLib.PDFDocument.load(leak)).match(/SECRET_\w+/g) || [];
+  check('paper output: no SECRET_ marker', found.length === 0, [...new Set(found)].join());
+}
+
 async function testGeometryGuard() {
   let threw = null;
   try { await A.assemble(PDFLib, [{ id: 'A', bytes: read('a4-portrait.pdf') }], [{ src: 'A', index: 0, w: 500, h: 841.89, rotate: 0, shapes: [SHAPES[0]] }]); }
@@ -314,6 +365,7 @@ async function testValidation() {
   await testNoLeaks();
   await testFidelity();
   await testAdjust();
+  await testPaper();
   await testGeometryGuard();
   await testOpenSource();
   await testValidation();

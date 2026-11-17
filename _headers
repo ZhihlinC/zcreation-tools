@@ -14,3 +14,9 @@
 # "Cloudflare 快取策略" — future tools must add their own /<tool>/* block.
 /coverage/*
   Cache-Control: no-cache
+
+# /pdf/ (PDF 頁面整理): same always-revalidate policy as /coverage/.
+# vendor/ is ~5.6 MB (pdf.js worker, cmaps, fonts, wasm); after the first
+# visit each file costs a 304 round-trip, not a re-download.
+/pdf/*
+  Cache-Control: no-cache

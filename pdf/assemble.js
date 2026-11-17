@@ -137,18 +137,24 @@
   // Input gate, run at upload. Any /Encrypt (even owner-password-only files
   // that readers open without asking) is refused: pdf-lib 1.17.1 cannot read
   // them reliably (AES-256 fails with a generic parse error).
-  // Returns { status: 'ok', doc, task } | { status: 'encrypted' } | { status: 'broken' }.
+  // Returns { status: 'ok', doc, task } | { status: 'encrypted', kind: 'open'|'perms' }
+  // | { status: 'notpdf' } | { status: 'broken', error }.
+  // Known gap: an Encrypt dict without /P reads as 'broken', not 'encrypted'.
   async function openSource(pdfjsLib, PDFLib, bytes, params) {
+    const head = String.fromCharCode.apply(null, bytes.subarray(0, 1024));
+    if (head.indexOf('%PDF-') < 0) return { status: 'notpdf' };
     // pdf.js transfers the buffer to its worker; keep ours for pdf-lib
     const task = pdfjsLib.getDocument(Object.assign({}, params, { data: bytes.slice() }));
     let doc;
     try {
       doc = await task.promise;
     } catch (e) {
-      return { status: e && e.name === 'PasswordException' ? 'encrypted' : 'broken' };
+      task.destroy();
+      if (e && e.name === 'PasswordException') return { status: 'encrypted', kind: 'open' };
+      return { status: 'broken', error: e };
     }
-    if ((await doc.getPermissions()) !== null) { task.destroy(); return { status: 'encrypted' }; }
-    try { await PDFLib.PDFDocument.load(bytes); } catch (e) { task.destroy(); return { status: 'broken' }; }
+    if ((await doc.getPermissions()) !== null) { task.destroy(); return { status: 'encrypted', kind: 'perms' }; }
+    try { await PDFLib.PDFDocument.load(bytes); } catch (e) { task.destroy(); return { status: 'broken', error: e }; }
     return { status: 'ok', doc, task };
   }
 

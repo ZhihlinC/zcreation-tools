@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF 頁面整理</title>
+  <link rel="stylesheet" href="pdf.css">
+  <script src="vendor/pdf-lib.min.js" defer></script>
+  <script src="assemble.js" defer></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header id="toolbar">
+    <label class="btn" id="add-btn">加入 PDF<input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden></label>
+    <button class="btn" id="delete-btn" disabled>刪除</button>
+    <button class="btn" id="dup-btn" disabled>複製</button>
+    <button class="btn" id="edit-btn" disabled>加圖形</button>
+    <button class="btn" id="undo-btn" disabled title="Ctrl+Z">復原</button>
+    <span id="status" aria-live="polite"></span>
+    <button class="btn primary" id="download-btn" disabled>下載 PDF</button>
+  </header>
+
+  <div id="load-failed" role="alert" hidden>工具載入失敗，請重新整理。</div>
+  <div id="narrow-banner">這個工具要在電腦上使用，請用電腦開啟。</div>
+
+  <div id="errors" role="alert" hidden>
+    <ul></ul>
+    <button class="btn" id="errors-close">關閉</button>
+  </div>
+
+  <main id="grid-wrap">
+    <div id="empty">
+      <p class="big">把 PDF 拖進來，或按「加入 PDF」</p>
+      <p>檔案只在你的電腦上處理，不會上傳。</p>
+      <details id="notes">
+        <summary>注意事項</summary>
+        <ul>
+          <li>檔案不會上傳，關掉分頁前記得先下載。</li>
+          <li>不支援有密碼保護的 PDF。</li>
+          <li>原檔的書籤和頁面之間的連結可能會遺失。</li>
+          <li>下載後，圖形會固定在頁面上，不能再拖動修改。</li>
+          <li>白色方塊只是蓋住，底下的文字仍可被選取複製。</li>
+        </ul>
+      </details>
+    </div>
+    <div id="grid" role="listbox" aria-multiselectable="true" aria-label="頁面"></div>
+  </main>
+
+  <div id="drop-overlay" hidden><p>放開以加入 PDF</p></div>
+  <div id="drag-ghost" hidden></div>
+  <div id="insert-bar" hidden></div>
+  <div id="toast" role="status" hidden></div>
+
+  <section id="editor" hidden aria-label="加圖形">
+    <div id="ed-bar">
+      <div class="group" id="ed-tools" role="radiogroup" aria-label="工具">
+        <button data-tool="select" title="選取">選取</button>
+        <button data-tool="rect" title="方塊"><svg viewBox="0 0 20 20"><rect x="3" y="5" width="14" height="10"/></svg></button>
+        <button data-tool="rrect" title="圓角方塊"><svg viewBox="0 0 20 20"><rect x="3" y="5" width="14" height="10" rx="3"/></svg></button>
+        <button data-tool="ellipse" title="圓形"><svg viewBox="0 0 20 20"><ellipse cx="10" cy="10" rx="7" ry="6"/></svg></button>
+        <button data-tool="line" title="直線"><svg viewBox="0 0 20 20"><line x1="3" y1="16" x2="17" y2="4"/></svg></button>
+      </div>
+      <div class="group" id="ed-fill" aria-label="填色"><span class="lbl">填色</span></div>
+      <div class="group" id="ed-stroke" aria-label="框線"><span class="lbl">框線</span></div>
+      <div class="group" id="ed-width" aria-label="框線粗細"><span class="lbl">粗細</span></div>
+      <span class="spacer"></span>
+      <button class="btn" id="ed-prev" title="PageUp">上一頁</button>
+      <span id="ed-pos"></span>
+      <button class="btn" id="ed-next" title="PageDown">下一頁</button>
+      <button class="btn primary" id="ed-done" title="Esc">完成</button>
+    </div>
+    <p id="ed-hint" hidden>白色只是蓋住，底下文字仍可被選取複製。</p>
+    <div id="ed-stage">
+      <div id="ed-page">
+        <canvas id="ed-canvas"></canvas>
+        <svg id="ed-svg"></svg>
+      </div>
+    </div>
+  </section>
+  <script>
+    // app.js is a module: if it (or pdf.js) fails to load, nothing else would say so.
+    window.addEventListener("load", function () {
+      setTimeout(function () { if (!window.__pdfTool) document.getElementById("load-failed").hidden = false; }, 1500);
+    });
+  </script>
+</body>
+</html>

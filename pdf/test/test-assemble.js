@@ -149,14 +149,16 @@ async function testAssemble() {
 
 async function testOpenSource() {
   const params = { verbosity: 0 };
-  for (const [f, want] of [['encrypted-user.pdf', 'encrypted'], ['encrypted-owner-only.pdf', 'encrypted'], ['a4-portrait.pdf', 'ok'], ['odd.pdf', 'ok']]) {
+  for (const [f, want, kind] of [['encrypted-user.pdf', 'encrypted', 'open'], ['encrypted-owner-only.pdf', 'encrypted', 'perms'], ['a4-portrait.pdf', 'ok'], ['odd.pdf', 'ok']]) {
     const r = await A.openSource(pdfjs, PDFLib, read(f), params);
-    check(`openSource ${f}`, r.status === want, r.status);
+    check(`openSource ${f}`, r.status === want && r.kind === kind, `${r.status}/${r.kind}`);
     if (r.task) r.task.destroy();
   }
   const junk = new TextEncoder().encode('%PDF-1.7\nnot really a pdf');
   const r = await A.openSource(pdfjs, PDFLib, junk, params);
-  check('openSource junk → broken', r.status === 'broken', r.status);
+  check('openSource junk → broken', r.status === 'broken' && r.error, r.status);
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10, 0, 0]);
+  check('openSource non-PDF → notpdf', (await A.openSource(pdfjs, PDFLib, png, params)).status === 'notpdf');
   // the caller's bytes must survive (pdf.js transfers what it is given)
   const b = read('a4-portrait.pdf'), len = b.length;
   const ok = await A.openSource(pdfjs, PDFLib, b, params);

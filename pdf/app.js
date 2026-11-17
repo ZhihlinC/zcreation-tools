@@ -289,7 +289,7 @@ function renderChrome() {
   for (const b of document.querySelectorAll('#toolbar .step2')) b.hidden = S.step !== 2 || b.dataset.off === '1';
   $('preview').hidden = !S.pvOpen;
   $('picker').classList.toggle('pv-closed', !S.pvOpen);
-  $('pv-open').hidden = S.pvOpen || S.sources.size === 0;
+  $('pv-open').hidden = S.step !== 1 || S.pvOpen || S.sources.size === 0;
   if (S.step === 1) {
     $('status').textContent = S.sources.size ? `共 ${S.sources.size} 份檔案，已選 ${n} 頁` : '';
   } else {

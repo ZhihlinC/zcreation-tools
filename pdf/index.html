@@ -25,6 +25,7 @@
     <button class="btn step2" id="dup-btn" disabled>複製</button>
     <button class="btn step2" id="edit-btn" disabled>加圖形</button>
     <button class="btn" id="undo-btn" disabled title="Ctrl+Z">復原</button>
+    <button class="btn" id="pv-open" hidden>展開預覽</button>
     <span id="status" aria-live="polite"></span>
     <button class="btn primary" id="download-btn" disabled>下載 PDF</button>
   </header>
@@ -60,7 +61,6 @@
         <div id="pv-stage"><div id="pv-page"><canvas id="pv-canvas"></canvas><svg id="pv-svg"></svg></div></div>
         <p class="pv-hint">←→ 換頁，空白鍵勾選／取消</p>
       </aside>
-      <button class="btn" id="pv-open" hidden>展開預覽</button>
     </div>
     <p id="grid-empty" hidden>還沒有選任何頁面。回「1 選頁」勾選要的頁面。</p>
     <div id="grid" role="listbox" aria-multiselectable="true" aria-label="頁面" hidden></div>

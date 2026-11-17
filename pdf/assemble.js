@@ -329,9 +329,33 @@
     return doc.context.enumerateIndirectObjects().filter(([, o]) => o instanceof PDFLib.PDFDict && String(o.get(PDFLib.PDFName.of('Type'))) === '/Page').length;
   }
 
-  // sources: [{ id, bytes }]; pages: [{ src, index, shapes, rot? }] in output
-  // order. rot = extra clockwise rotation the user asked for (0/90/180/270);
-  // shapes are in the display space of the rotated page.
+  // 縮放: the page's own content scaled by (1 + pct/100) about the centre of
+  // its visible box, page size unchanged (a negative pct shrinks it). The
+  // content stays vector; what is pushed past the edge is simply cut.
+  function zoomContent(PDFLib, out, page, g, pct) {
+    const k = 1 + pct / 100;
+    const cx = g.box.x + g.box.w / 2, cy = g.box.y + g.box.h / 2;
+    const n = v => Number(v.toFixed(6));
+    const start = out.context.register(out.context.flateStream(`q ${n(k)} 0 0 ${n(k)} ${n(cx * (1 - k))} ${n(cy * (1 - k))} cm`));
+    const end = out.context.register(out.context.flateStream('Q'));
+    page.node.wrapContentStreams(start, end);
+  }
+  // 白邊: white bands over the outer edge, pct of the page's width on the
+  // left and right and of its height at top and bottom (so the same on
+  // screen whatever the rotation). Drawn over the content, under the shapes.
+  function whiteMargin(PDFLib, page, g, pct) {
+    const { x, y, w, h } = g.box;
+    const bx = w * pct / 100, by = h * pct / 100;
+    const white = PDFLib.rgb(1, 1, 1);
+    for (const [rx, ry, rw, rh] of [[x, y, bx, h], [x + w - bx, y, bx, h], [x, y, w, by], [x, y + h - by, w, by]]) {
+      page.drawRectangle({ x: rx, y: ry, width: rw, height: rh, color: white, borderWidth: 0 });
+    }
+  }
+
+  // sources: [{ id, bytes }]; pages: [{ src, index, shapes, rot?, zoom?, margin? }]
+  // in output order. rot = extra clockwise rotation the user asked for
+  // (0/90/180/270); zoom / margin in percent; shapes are in the display space
+  // of the rotated, adjusted page.
   // opts.sanitize exists only so the tests can prove the fail-closed check.
   async function assemble(PDFLib, sources, pages, opts = {}) {
     const sanitize = opts.sanitize || sanitizeSource;
@@ -371,7 +395,8 @@
     pages.forEach((p, i) => {
       const page = out.addPage(copied.get(p.src + ':' + p.index + '#' + occ[i]));
       if (p.rot) page.setRotation(PDFLib.degrees((pageGeom(page).rotate + p.rot) % 360));
-      if (p.shapes && p.shapes.length) {
+      const hasShapes = p.shapes && p.shapes.length;
+      if (hasShapes || p.zoom || p.margin) {
         const g = pageGeom(page);
         // the preview used pdf.js's geometry; drawing with a different one would
         // put a covering box in the wrong place without any error (NaN-safe)
@@ -379,14 +404,16 @@
           throw new Error(`page ${i + 1}: geometry mismatch (${g.w}x${g.h} rot ${g.rotate} vs ${p.w}x${p.h} rot ${p.rotate})`);
         }
         // two different source pages may share one indirect Contents array;
-        // drawing appends to it, so give this page its own
+        // drawing (and the zoom wrap) changes it, so give this page its own
         const C = PDFLib.PDFName.of('Contents');
         const contents = page.node.get(C);
         if (contents instanceof PDFLib.PDFRef) {
           const v = out.context.lookup(contents);
           if (v instanceof PDFLib.PDFArray) page.node.set(C, v.clone(out.context));
         }
-        for (const s of p.shapes) drawShape(PDFLib, page, s, g);
+        if (p.zoom) zoomContent(PDFLib, out, page, g, p.zoom);
+        if (p.margin) whiteMargin(PDFLib, page, g, p.margin);
+        if (hasShapes) for (const s of p.shapes) drawShape(PDFLib, page, s, g);
       }
     });
     restoreLayers(PDFLib, out);

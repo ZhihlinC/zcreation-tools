@@ -235,6 +235,46 @@ async function testFidelity() {
   }
 }
 
+// 縮放 / 白邊 (page adjustments): the page's own content is scaled about the
+// centre of its visible box (text read back by pdf.js lands where the source
+// text would after that scaling), white bands cover pct of the width/height
+// at each edge, and shapes stay unscaled on top. Holds with a CropBox offset
+// and under the user's rotation.
+async function testAdjust() {
+  const sources = [{ id: 'A', bytes: read('a4-portrait.pdf') }, { id: 'D', bytes: read('odd.pdf') }];
+  const plan = [
+    { src: 'A', index: 0, zoom: 10, shapes: [] },
+    { src: 'A', index: 1, zoom: -10, margin: 5, shapes: [] },
+    { src: 'A', index: 2, margin: 5, rot: 90, shapes: [SHAPES[0]] },
+    { src: 'D', index: 1, zoom: 10, margin: 2, shapes: [SHAPES[2]] }, // CropBox 50,60 500x700
+  ];
+  const out = await A.assemble(PDFLib, sources, plan);
+  const odoc = await open(out.slice());
+  const srcDocs = { A: await open(read('a4-portrait.pdf')), D: await open(read('odd.pdf')) };
+  for (let i = 0; i < plan.length; i++) {
+    const want = plan[i];
+    const sp = await srcDocs[want.src].getPage(want.index + 1), op = await odoc.getPage(i + 1);
+    const [x1, y1, x2, y2] = sp.view, cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, k = 1 + (want.zoom || 0) / 100;
+    const st = (await sp.getTextContent()).items[0], ot = (await op.getTextContent()).items[0];
+    const ex = cx + k * (st.transform[4] - cx), ey = cy + k * (st.transform[5] - cy);
+    check(`adjust p${i + 1}: text scaled about the centre (zoom ${want.zoom || 0}%)`, near(ot.transform[4], ex, 0.05) && near(ot.transform[5], ey, 0.05), `${ot.transform[4].toFixed(2)},${ot.transform[5].toFixed(2)} vs ${ex.toFixed(2)},${ey.toFixed(2)}`);
+    check(`adjust p${i + 1}: glyph size scaled`, near(Math.abs(ot.transform[0]), k * Math.abs(st.transform[0]), 0.05), `${ot.transform[0]} vs ${k * st.transform[0]}`);
+    const paths = drawnPaths(pdfjs, await op.getOperatorList());
+    const m = want.margin || 0, bw = (x2 - x1) * m / 100, bh = (y2 - y1) * m / 100;
+    const bands = m ? [[x1, y1, x1 + bw, y2], [x2 - bw, y1, x2, y2], [x1, y1, x2, y1 + bh], [x1, y2 - bh, x2, y2]] : [];
+    check(`adjust p${i + 1}: ${bands.length} white bands then ${want.shapes.length} shapes`, paths.length === bands.length + want.shapes.length, paths.length);
+    bands.forEach((b, j) => {
+      const got = paths[j];
+      check(`adjust p${i + 1}: band ${j} white at the edge`, got && got.fill === '#ffffff' && got.kind === 'fill' && nearArr(got.bbox, b, 0.05), got && `${got.fill} ${got.bbox.map(v => v.toFixed(2))} vs ${b.map(v => v.toFixed(2))}`);
+    });
+    const vp = op.getViewport({ scale: 1 });
+    want.shapes.forEach((s, j) => {
+      const got = paths[bands.length + j];
+      check(`adjust p${i + 1}: shape unscaled, on top`, got && nearArr(got.bbox, expectedBBox(vp, s), 0.05), got && got.bbox.join());
+    });
+  }
+}
+
 async function testGeometryGuard() {
   let threw = null;
   try { await A.assemble(PDFLib, [{ id: 'A', bytes: read('a4-portrait.pdf') }], [{ src: 'A', index: 0, w: 500, h: 841.89, rotate: 0, shapes: [SHAPES[0]] }]); }
@@ -273,6 +313,7 @@ async function testValidation() {
   await testNoOrphanPages();
   await testNoLeaks();
   await testFidelity();
+  await testAdjust();
   await testGeometryGuard();
   await testOpenSource();
   await testValidation();

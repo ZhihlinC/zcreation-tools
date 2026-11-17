@@ -13,6 +13,7 @@ ok   全不選 drops the whole file
 ok   全選 brings it back
 ok   folding hides the tiles
 ok   preview can be closed
+ok   the handle stays in the same place
 ok   and reopened
 ok   step 2 shows only picked pages
 ok   re-ticked page keeps its shapes
@@ -105,6 +106,16 @@ ok   image output page is portrait
 ok   image output: red box burned in where the editor shows it
 ok   image output: page content turned with the page
 ok   no page errors (rotation)
+ok   adjust panel opens for the selection
+ok   values land on the selected page only
+ok   card shows the adjustment
+ok   panel closes
+ok   undo one slider change
+ok   original output: text moved toward the centre (zoom −10%)
+ok   image output: marker where the original output has it
+ok   image output: white band hides the (zoomed) frame line
+ok   image output: unadjusted page keeps its edge (control)
+ok   no page errors (adjust)
 ok   user-password message
 ok   owner-only message
 ok   not-a-PDF message
@@ -128,7 +139,7 @@ ok   300 dpi: page sizes = preview sizes, no rotation left
 ok   300 dpi: one image per page at 300 dpi
 ok   300 dpi: no text left in the file
 ok   300 dpi: nothing but pages, images and their content
-  300 dpi: 11 pages in 473 ms, 820 KB
+  300 dpi: 11 pages in 495 ms, 820 KB
 ok   300 dpi: covered text is gone from the pixels
 ok   300 dpi: shape burned in where previewed
 ok   300 dpi: nothing red outside the shape
@@ -138,7 +149,7 @@ ok   600 dpi: page sizes = preview sizes, no rotation left
 ok   600 dpi: one image per page at 600 dpi
 ok   600 dpi: no text left in the file
 ok   600 dpi: nothing but pages, images and their content
-  600 dpi: 11 pages in 965 ms, 2706 KB
+  600 dpi: 11 pages in 947 ms, 2706 KB
 ok   600 dpi: covered text is gone from the pixels
 ok   600 dpi: shape burned in where previewed
 ok   600 dpi: nothing red outside the shape
@@ -149,12 +160,12 @@ ok   loading card shows the stages
 ok   loading card has a progress bar
 ok   no loading card left behind
 ok   download assembled off the page thread
-  step 1, 150 pages: load 43 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
+  step 1, 150 pages: load 47 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
 ok   step 1: thumbnails are lazy (not all drawn up front)
 ok   step 1: scrolling draws more thumbnails
 ok   step 1: scroll p95 frame < 100 ms
-  step 2, 150 pages: load 65 ms; thumbnails drawn before scroll 40/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
+  step 2, 150 pages: load 66 ms; thumbnails drawn before scroll 40/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
 ok   step 2: thumbnails are lazy (not all drawn up front)
 ok   step 2: scrolling draws more thumbnails
 ok   step 2: scroll p95 frame < 100 ms
-154 passed, 0 failed
+165 passed, 0 failed

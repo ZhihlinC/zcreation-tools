@@ -26,6 +26,7 @@ function check(name, ok, detail) {
 const MARK = { 'a4-portrait.pdf': 'A', 'a4-landscape.pdf': 'B', 'b4.pdf': 'C', 'odd.pdf': 'D', 'big-150.pdf': 'P' };
 const RGB = { white: [255, 255, 255], black: [0, 0, 0], red: [219, 38, 38], blue: [38, 99, 235], green: [23, 153, 69], yellow: [255, 209, 0] };
 const close = (a, b, tol = 40) => a.every((v, i) => Math.abs(v - b[i]) <= tol);
+const near = (a, b, eps = 0.02) => Math.abs(a - b) <= eps;
 
 // ---- page helpers ----
 const order = pg => pg.evaluate(() => {
@@ -116,6 +117,7 @@ async function main() {
     await flowTest(browser, base, pdfjs);
     await rotatedTest(browser, base, pdfjs);
     await rotationTest(browser, base, pdfjs);
+    await adjustTest(browser, base, pdfjs);
     await errorsTest(browser, base);
     await dropGuardTest(browser, base);
     await cjkTest(browser, base);
@@ -477,6 +479,56 @@ async function rotationTest(browser, base, pdfjs) {
   const k2 = pdfkitColors(img, pts);
   if (k2) check('image output: page content turned with the page', k2.some(c => c.rgb[0] + c.rgb[1] + c.rgb[2] < 300), `at display ${dx.toFixed(0)},${dy.toFixed(0)}`);
   check('no page errors (rotation)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
+}
+
+// 頁面調整 (縮放 / 白邊) from the UI through both outputs. The original
+// output's text position (checked against the maths in test-assemble.js) is
+// the oracle: the image version must show the marker at that same spot, and
+// the white band must hide what used to be at the edge.
+async function adjustTest(browser, base, pdfjs) {
+  const pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 3);
+  await waitThumbs(pg);
+  const set = (id, v) => pg.evaluate(([id, v]) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); }, [id, v]);
+  await cardAt(pg, 0).click();
+  await pg.click('#adjust-btn');
+  check('adjust panel opens for the selection', await pg.isVisible('#adjust') && (await pg.textContent('#adj-for')).includes('1 頁'));
+  await set('adj-zoom', -10);
+  await set('adj-margin', 8);
+  const st = await pg.evaluate(() => window.__pdfTool.S.pages.map(p => [p.zoom || 0, p.margin || 0]).join('|'));
+  check('values land on the selected page only', st === '-10,8|0,0|0,0', st);
+  check('card shows the adjustment', (await cardAt(pg, 0).locator('.adj').textContent()) === '縮放 -10%・白邊 8%');
+  await pg.click('#adj-close');
+  check('panel closes', await pg.isHidden('#adjust'));
+  await pg.keyboard.press('Control+z');
+  check('undo one slider change', await pg.evaluate(() => window.__pdfTool.S.pages[0].margin || 0) === 0 && await pg.evaluate(() => window.__pdfTool.S.pages[0].zoom) === -10);
+  await cardAt(pg, 0).click();
+  await pg.click('#adjust-btn');
+  await set('adj-margin', 8);
+  await pg.click('#adj-close');
+
+  const { file } = await download(pg, 'adjust-vector.pdf');
+  const vdoc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(file)), verbosity: 0 }).promise;
+  const v1 = await vdoc.getPage(1);
+  const t = (await v1.getTextContent()).items.find(i => i.str === 'A1');
+  check('original output: text moved toward the centre (zoom −10%)', near(t.transform[4], 297.64 + 0.9 * (40 - 297.64), 0.1), t.transform[4]);
+  const [dx, dy] = v1.getViewport({ scale: 1 }).convertToViewportPoint(t.transform[4], t.transform[5]);
+  const { file: img } = await download(pg, 'adjust-300.pdf', 300);
+  const pts = [];
+  for (let a = 0; a <= 16; a += 4) for (let b = -16; b <= 0; b += 4) pts.push({ page: 1, x: (dx + a) / 595.28, y: (dy + b) / 841.89 });
+  // the frame line (x=10 in the source) sits at x≈38.8 after −10%; the 8% band
+  // (47.6 pt) covers it on p1 — only the band can make that spot white
+  pts.push({ page: 1, x: (297.64 + 0.9 * (10.5 - 297.64)) / 595.28, y: 0.5 }, { page: 2, x: 10.5 / 595.28, y: 0.5 });
+  const kit = pdfkitColors(img, pts);
+  if (kit) {
+    const n = pts.length;
+    check('image output: marker where the original output has it', kit.slice(0, n - 2).some(c => c.rgb[0] + c.rgb[1] + c.rgb[2] < 300), `display ${dx.toFixed(0)},${dy.toFixed(0)}`);
+    check('image output: white band hides the (zoomed) frame line', close(kit[n - 2].rgb, RGB.white, 3), kit[n - 2].rgb);
+    check('image output: unadjusted page keeps its edge (control)', !close(kit[n - 1].rgb, RGB.white, 3), kit[n - 1].rgb);
+  }
+  check('no page errors (adjust)', pg.errors.length === 0, pg.errors.join(' | '));
   await pg.close();
 }
 

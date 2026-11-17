@@ -236,7 +236,7 @@ function makeCard(p) {
   el.className = 'card';
   el.setAttribute('role', 'option');
   el.dataset.uid = p.uid;
-  el.innerHTML = '<div class="thumb"><div class="sheet"><canvas></canvas><svg></svg></div></div><div class="num"></div><div class="src"></div>';
+  el.innerHTML = '<div class="thumb"><div class="sheet"><canvas></canvas><svg></svg></div><span class="adj"></span></div><div class="num"></div><div class="src"></div>';
   const c = makeSheet(el, p);
   cards.set(p.uid, c);
   watch(el, c, () => S.pages.find(q => q.uid === p.uid));
@@ -261,7 +261,10 @@ function renderGrid() {
       c.sheet.style.height = fs.h + 'px';
       c.canvas.style.visibility = 'hidden';
       queue.add(c.el); // redraw in the new orientation
+    } else if (c.drawnKey && c.drawnKey !== thumbKey(p)) {
+      queue.add(c.el); // 縮放 / 白邊 changed
     }
+    c.el.querySelector('.adj').textContent = adjLabel(p);
     if (grid.children[i] !== c.el) grid.insertBefore(c.el, grid.children[i] || null);
     c.el.querySelector('.num').textContent = i + 1;
     const src = S.sources.get(p.src);
@@ -299,6 +302,9 @@ function renderChrome() {
   }
   $('delete-btn').disabled = !k;
   $('rotate-btn').disabled = !k;
+  $('adjust-btn').disabled = !k;
+  if (S.step !== 2) $('adjust').hidden = true;
+  if (!$('adjust').hidden) syncAdjustPanel();
   $('dup-btn').disabled = !k;
   $('edit-btn').disabled = !n || !ctx.editorAvailable;
   $('undo-btn').disabled = !S.undo.length;
@@ -378,7 +384,34 @@ function pump() {
       .finally(() => { inFlight.delete(el); rendering--; pump(); });
   }
 }
-const thumbKey = p => `${p.src}:${p.index}:${p.rot || 0}`;
+const thumbKey = p => `${p.src}:${p.index}:${p.rot || 0}:${p.zoom || 0}:${p.margin || 0}`;
+
+// Draw page entry p as the output will show it — rotation, 縮放 (scaled
+// about the centre) and 白邊 (white bands at the edges), annotations off —
+// at `scale` into `canvas`. Thumbnails, the editor and the image version
+// all go through here, so they cannot disagree.
+async function renderPage(page, p, scale, canvas, onTask) {
+  const vp = page.getViewport({ scale, rotation: (page.rotate + (p.rot || 0)) % 360 });
+  canvas.width = Math.round(vp.width);
+  canvas.height = Math.round(vp.height);
+  const W = canvas.width, H = canvas.height, k = 1 + (p.zoom || 0) / 100;
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#fff';
+  g.fillRect(0, 0, W, H);
+  const task = page.render({
+    canvas, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.DISABLE,
+    transform: k === 1 ? undefined : [k, 0, 0, k, W * (1 - k) / 2, H * (1 - k) / 2],
+  });
+  if (onTask) onTask(task);
+  await task.promise;
+  if (p.margin) {
+    const bx = W * p.margin / 100, by = H * p.margin / 100;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, bx, H); g.fillRect(W - bx, 0, bx, H);
+    g.fillRect(0, 0, W, by); g.fillRect(0, H - by, W, by);
+  }
+}
 async function drawThumb(c, p, key) {
   const fs = fitSize(p);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -389,11 +422,8 @@ async function drawThumb(c, p, key) {
     c.canvas.getContext('2d').drawImage(ready, 0, 0);
   } else {
     const page = await S.sources.get(p.src).doc.getPage(p.index + 1);
-    const vp = page.getViewport({ scale: (fs.w / p.w) * dpr, rotation: (page.rotate + (p.rot || 0)) % 360 });
-    c.canvas.width = Math.round(vp.width);
-    c.canvas.height = Math.round(vp.height);
     // annotations are not carried into the output (assemble.js), so not shown
-    await page.render({ canvas: c.canvas, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.DISABLE }).promise;
+    await renderPage(page, p, (fs.w / p.w) * dpr, c.canvas);
     page.cleanup(); // drop decoded images; a scanned page holds tens of MB
   }
   c.drawnKey = key;
@@ -715,6 +745,63 @@ function rotateEntry(p) {
   p.rot = ((p.rot || 0) + 90) % 360;
   p.rotate = (p.rotate + 90) % 360;
 }
+// ---------- 頁面調整: 縮放 −10…+10 %, 白邊 0…10 % ----------
+const adjLabel = p => [p.zoom ? `縮放 ${p.zoom > 0 ? '+' : ''}${p.zoom}%` : '', p.margin ? `白邊 ${p.margin}%` : ''].filter(Boolean).join('・');
+let adjBefore = null; // snapshot taken when a slider drag starts; committed on release
+function adjustTargets() { return S.pages.filter(p => S.sel.has(p.uid)); }
+function syncAdjustPanel() {
+  const t = adjustTargets();
+  if (!t.length) { $('adjust').hidden = true; return; }
+  if (adjBefore) return; // mid-drag: the slider owns its value
+  const z = t[0].zoom || 0, m = t[0].margin || 0;
+  $('adj-zoom').value = z; $('adj-margin').value = m;
+  $('adj-zoom-out').textContent = `${z > 0 ? '+' : ''}${z}%`;
+  $('adj-margin-out').textContent = `${m}%`;
+  $('adj-for').textContent = `套用到選取的 ${t.length} 頁`;
+}
+function applyAdjust(field, value) {
+  if (!adjBefore) adjBefore = snapshot();
+  for (const p of adjustTargets()) p[field] = value;
+  $('adj-zoom-out').textContent = `${Number($('adj-zoom').value) > 0 ? '+' : ''}${$('adj-zoom').value}%`;
+  $('adj-margin-out').textContent = `${$('adj-margin').value}%`;
+  renderGrid(); // live thumbnails
+}
+function commitAdjust() {
+  if (!adjBefore) return;
+  const before = adjBefore;
+  adjBefore = null;
+  const changed = JSON.stringify(before) !== JSON.stringify(snapshot());
+  if (changed) commit(`調整 ${adjustTargets().length} 頁`, before);
+  render();
+}
+for (const [id, field] of [['adj-zoom', 'zoom'], ['adj-margin', 'margin']]) {
+  $(id).addEventListener('input', e => applyAdjust(field, Number(e.target.value)));
+  $(id).addEventListener('change', commitAdjust);
+}
+$('adj-reset').onclick = () => {
+  const t = adjustTargets();
+  if (!t.some(p => p.zoom || p.margin)) return;
+  commit(`重設 ${t.length} 頁的調整`);
+  for (const p of t) { p.zoom = 0; p.margin = 0; }
+  render();
+};
+function openAdjust() {
+  if (!S.sel.size) return;
+  const r = $('adjust-btn').getBoundingClientRect();
+  $('adjust').style.left = Math.min(r.left, window.innerWidth - 340) + 'px';
+  $('adjust').style.top = (r.bottom + 8) + 'px';
+  $('adjust').hidden = false;
+  syncAdjustPanel();
+  $('adj-zoom').focus();
+}
+const closeAdjust = () => { commitAdjust(); $('adjust').hidden = true; };
+$('adjust-btn').onclick = () => ($('adjust').hidden ? openAdjust() : closeAdjust());
+$('adj-close').onclick = closeAdjust;
+$('adjust').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeAdjust(); $('adjust-btn').focus(); } });
+document.addEventListener('pointerdown', e => {
+  if (!$('adjust').hidden && !e.target.closest('#adjust, #adjust-btn')) closeAdjust();
+}, true);
+
 function rotateSelected() {
   if (!S.sel.size) return;
   commit(`向右轉 ${S.sel.size} 頁`);
@@ -746,15 +833,10 @@ async function rasterize(pages, dpi, onProgress) {
     onProgress(i + 1, pages.length);
     const p = pages[i];
     const page = await S.sources.get(p.src).doc.getPage(p.index + 1);
-    const vp = page.getViewport({ scale: Math.min(dpi / 72, MAX_CANVAS_SIDE / Math.max(p.w, p.h)), rotation: (page.rotate + (p.rot || 0)) % 360 });
     const canvas = document.createElement('canvas');
-    canvas.width = Math.round(vp.width);
-    canvas.height = Math.round(vp.height);
     const g = canvas.getContext('2d');
-    g.fillStyle = '#fff';
-    g.fillRect(0, 0, canvas.width, canvas.height);
     try {
-      await page.render({ canvas, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.DISABLE }).promise;
+      await renderPage(page, p, Math.min(dpi / 72, MAX_CANVAS_SIDE / Math.max(p.w, p.h)), canvas);
     } finally {
       page.cleanup();
     }
@@ -865,7 +947,7 @@ document.addEventListener('keydown', e => {
 
 // Shared with the shape editor (editor.js).
 export const ctx = {
-  S, pdfjsLib, A, setStep, snapshot, commit, undo, render, toast, drawShapesSvg, shapeEl, outlineEl, newId: () => 'h' + (nextId++),
+  S, pdfjsLib, A, setStep, renderPage, snapshot, commit, undo, render, toast, drawShapesSvg, shapeEl, outlineEl, newId: () => 'h' + (nextId++),
   editorAvailable: false,
   editorOpen: () => false,
   editorGesture: () => false,

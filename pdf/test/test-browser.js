@@ -93,8 +93,12 @@ function pdfkitColors(file, samples) {
   fs.writeFileSync(sj, JSON.stringify(samples));
   return JSON.parse(execFileSync('swift', [path.join(__dirname, 'render-pdfkit.swift'), file, sj], { encoding: 'utf8' }));
 }
-async function download(pg, name) {
-  const [dl] = await Promise.all([pg.waitForEvent('download'), pg.click('#download-btn')]);
+// dpi 0 = 原始 (the dialog's default), 300 / 600 = 圖片版
+async function download(pg, name, dpi = 0, timeout = 30000) {
+  await pg.click('#download-btn');
+  await pg.waitForSelector('#dl-dialog[open]');
+  if (dpi) await pg.check(`#dl-dialog input[value="${dpi}"]`);
+  const [dl] = await Promise.all([pg.waitForEvent('download', { timeout }), pg.click('#dl-ok')]);
   const file = path.join(OUT, name);
   await dl.saveAs(file);
   return { file, suggested: dl.suggestedFilename() };
@@ -114,6 +118,7 @@ async function main() {
     await dropGuardTest(browser, base);
     await cjkTest(browser, base);
     await loadFailureTest(browser, base);
+    await rasterTest(browser, base, pdfjs);
     await bigScrollTest(browser, base);
   } finally {
     await browser.close();
@@ -358,6 +363,20 @@ async function errorsTest(browser, base) {
   await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 4);
   await pg.keyboard.press('Control+z');
   check('undo add file', (await order(pg)).join() === 'A1,A2,A3' && (await toastText(pg)).includes('加入 b4.pdf'), (await order(pg)).join());
+  // a duplicate's shapes are its own: no undo in between (undo restores
+  // deep copies, which would hide a shared array)
+  await cardAt(pg, 0).dblclick();
+  await editorReady(pg);
+  await dragPts(pg, 50, 50, 150, 120);
+  await pg.keyboard.press('Escape');
+  await cardAt(pg, 0).click();
+  await pg.click('#dup-btn');
+  await cardAt(pg, 1).dblclick();
+  await editorReady(pg);
+  await dragPts(pg, 200, 200, 300, 300);
+  await pg.keyboard.press('Escape');
+  const counts = await pg.evaluate(() => window.__pdfTool.S.pages.slice(0, 2).map(p => p.shapes.length).join());
+  check('shapes added to a duplicate stay off the original', counts === '1,2', counts);
   check('tool still works after errors', suggested === 'a4-portrait-整理.pdf', suggested);
   check('no page errors (errors)', pg.errors.length === 0, pg.errors.join(' | '));
   await pg.close();
@@ -423,6 +442,86 @@ async function loadFailureTest(browser, base) {
   await pg.goto(base);
   await pg.waitForSelector('#load-failed:not([hidden])', { timeout: 8000 }).catch(() => {});
   check('load-failure banner when worker is missing', await pg.isVisible('#load-failed'));
+  await pg.close();
+}
+
+// 圖片版 (image version): one image per page at the chosen dpi, page size =
+// what the preview showed (rotation applied), shapes burned into the pixels,
+// no text and nothing else carried over. The default stays the vector output.
+async function rasterTest(browser, base, pdfjs) {
+  const pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-landscape.pdf'), fx('odd.pdf'), fx('leaks.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 11);
+  // B1: white borderless box over its "B1" marker (40..110, 40..90 display pt);
+  // D1 (/Rotate 90): a red box
+  await cardAt(pg, 0).dblclick();
+  await editorReady(pg);
+  await setStyle(pg, { tool: 'rect', fill: 'white', stroke: null });
+  await dragPts(pg, 30, 40, 120, 100);
+  await pg.keyboard.press('PageDown'); await pg.keyboard.press('PageDown');
+  await editorReady(pg);
+  await setStyle(pg, { tool: 'rect', stroke: 'black', fill: 'red', width: '2' });
+  await dragPts(pg, 100, 150, 300, 260);
+  const d1 = await curPage(pg);
+  await pg.keyboard.press('Escape');
+
+  // the dialog opens with 原始 selected
+  await pg.click('#download-btn');
+  check('download dialog defaults to the original', await pg.isChecked('#dl-dialog input[value="0"]'));
+  await pg.click('#dl-dialog button[value="cancel"]');
+
+  const { file: vec } = await download(pg, 'raster-vector.pdf');
+  const vdoc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(vec)), verbosity: 0 }).promise;
+  check('original output keeps text', (await (await vdoc.getPage(1)).getTextContent()).items.length > 0);
+
+  for (const dpi of [300, 600]) {
+    const t0 = Date.now();
+    const { file, suggested } = await download(pg, `raster-${dpi}.pdf`, dpi, 120000);
+    const ms = Date.now() - t0;
+    check(`${dpi} dpi file name`, suggested === `a4-landscape-合併-圖片${dpi}dpi.pdf`, suggested);
+    const bytes = new Uint8Array(fs.readFileSync(file));
+    const doc = await pdfjs.getDocument({ data: bytes.slice(), verbosity: 0 }).promise;
+    check(`${dpi} dpi page count`, doc.numPages === 11, doc.numPages);
+    const S = await pg.evaluate(() => window.__pdfTool.S.pages.map(p => [p.w, p.h]));
+    let text = 0, okSize = true, okImg = true;
+    for (let n = 1; n <= doc.numPages; n++) {
+      const p = await doc.getPage(n);
+      const [w, h] = S[n - 1];
+      if (p.rotate !== 0 || Math.abs(p.view[2] - w) > 0.5 || Math.abs(p.view[3] - h) > 0.5) okSize = false;
+      text += (await p.getTextContent()).items.length;
+      const ol = await p.getOperatorList();
+      const k = ol.fnArray.indexOf(pdfjs.OPS.paintImageXObject);
+      if (k < 0) { okImg = false; continue; }
+      const id = ol.argsArray[k][0];
+      const im = await new Promise(r => p.objs.get(id, r));
+      if (Math.abs(im.width - Math.round(w / 72 * dpi)) > 2 || Math.abs(im.height - Math.round(h / 72 * dpi)) > 2) okImg = false;
+    }
+    check(`${dpi} dpi: page sizes = preview sizes, no rotation left`, okSize);
+    check(`${dpi} dpi: one image per page at ${dpi} dpi`, okImg);
+    check(`${dpi} dpi: no text left in the file`, text === 0, text);
+    const lib = await (require('../vendor/pdf-lib.min.js')).PDFDocument.load(bytes);
+    const P = require('../vendor/pdf-lib.min.js');
+    const raw = lib.context.enumerateIndirectObjects().map(([, o]) => (o instanceof P.PDFRawStream ? o.dict.toString() : o.toString())).join('\n');
+    const kinds = lib.context.enumerateIndirectObjects().map(([, o]) => (o instanceof P.PDFRawStream ? String(o.dict.get(P.PDFName.of('Subtype')) || 'content') : String(o.get && o.get(P.PDFName.of('Type'))))).sort();
+    check(`${dpi} dpi: nothing but pages, images and their content`, !/SECRET_|\/Subtype \/(Link|Widget|Stamp|Form)|PieceInfo/.test(raw) && kinds.every(k => /^(\/Image|content|\/Page|\/Pages|\/Catalog|undefined)$/.test(k)), [...new Set(kinds)].join());
+    const sizeKB = Math.round(bytes.length / 1024);
+    console.log(`  ${dpi} dpi: 11 pages in ${ms} ms, ${sizeKB} KB`);
+    // PDFKit: the white box hides B1's marker; D1's red box is where the preview had it
+    const kit = pdfkitColors(file, [
+      { page: 1, x: 55 / 841.89, y: 70 / 595.28 }, // inside the white box, where "B1" was
+      { page: 3, x: 200 / d1.w, y: 205 / d1.h },    // inside the red box
+      { page: 3, x: 200 / d1.w, y: 290 / d1.h },    // below it
+    ]);
+    if (kit) {
+      check(`${dpi} dpi: covered text is gone from the pixels`, close(kit[0].rgb, RGB.white, 20), kit[0].rgb);
+      check(`${dpi} dpi: shape burned in where previewed`, close(kit[1].rgb, RGB.red), kit[1].rgb);
+      check(`${dpi} dpi: nothing red outside the shape`, !close(kit[2].rgb, RGB.red, 40), kit[2].rgb);
+    }
+  }
+  // positive control: in the original output the covered marker is still text
+  const vkit = pdfkitColors(vec, [{ page: 1, x: 47 / 841.89, y: 70 / 595.28 }]);
+  if (vkit) console.log(`  (original output keeps B1 under the white box as text: ${(await (await vdoc.getPage(1)).getTextContent()).items.map(t => t.str).join('')})`);
+  check('no page errors (raster)', pg.errors.length === 0, pg.errors.join(' | '));
   await pg.close();
 }
 

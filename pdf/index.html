@@ -51,6 +51,23 @@
     <div id="grid" role="listbox" aria-multiselectable="true" aria-label="頁面"></div>
   </main>
 
+  <dialog id="dl-dialog" aria-labelledby="dl-title">
+    <form method="dialog">
+      <h2 id="dl-title">下載 PDF</h2>
+      <label class="opt"><input type="radio" name="q" value="0" checked>
+        <span><b>原始（建議）</b><small>保留原檔的文字與線條，印刷最清楚，檔案最小。</small></span></label>
+      <label class="opt"><input type="radio" name="q" value="300">
+        <span><b>圖片版・300 dpi（標準）</b><small>每頁轉成圖片，印出來和預覽完全一樣。</small></span></label>
+      <label class="opt"><input type="radio" name="q" value="600">
+        <span><b>圖片版・600 dpi（高品質）</b><small>同上，字更銳利；下載較慢、檔案較大。</small></span></label>
+      <p class="dl-note">圖片版不會提升原檔的畫質：原本就模糊的掃描頁，轉出來一樣模糊。轉成圖片後文字不能再選取，也不會帶出刪掉頁面的任何內容。</p>
+      <div class="dl-actions">
+        <button class="btn" value="cancel">取消</button>
+        <button class="btn primary" value="ok" id="dl-ok">下載</button>
+      </div>
+    </form>
+  </dialog>
+
   <div id="drop-overlay" hidden><p>放開以加入 PDF</p></div>
   <div id="drag-ghost" hidden></div>
   <div id="insert-bar" hidden></div>

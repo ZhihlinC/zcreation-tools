@@ -280,3 +280,29 @@ html, body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* ---- download dialog ---- */
+#dl-dialog {
+  width: min(460px, calc(100vw - 32px));
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+  color: var(--fg);
+}
+#dl-dialog::backdrop { background: rgba(0, 0, 0, 0.25); }
+#dl-dialog h2 { margin: 0 0 0.75rem; font-size: 1.1rem; }
+#dl-dialog .opt {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.55rem 0.6rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+#dl-dialog .opt:hover { background: #f3f3f6; }
+#dl-dialog .opt input { margin-top: 0.25rem; }
+#dl-dialog .opt b { display: block; font-weight: 600; }
+#dl-dialog .opt small { color: var(--muted); font-size: 0.85rem; }
+#dl-dialog .dl-note { margin: 0.75rem 0 0; font-size: 0.85rem; color: var(--muted); line-height: 1.5; }
+#dl-dialog .dl-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }

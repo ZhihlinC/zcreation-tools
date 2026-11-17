@@ -426,7 +426,60 @@ function duplicateSelected() {
   S.anchor = copies[0].uid;
   render();
 }
-async function download() {
+// ---------- image-version output ----------
+const RASTER_JPEG_QUALITY = 0.92;
+const MAX_CANVAS_SIDE = 16384; // browsers refuse larger canvases
+
+// Each page drawn by pdf.js at `dpi` (rotation applied), the shapes burned in
+// with the very SVG the preview shows, then one JPEG per page in a fresh PDF.
+// Nothing but pixels is carried over: the print matches the preview, and no
+// object of a deleted page (or text under a white box) can come along.
+async function rasterize(pages, dpi, onProgress) {
+  const out = await window.PDFLib.PDFDocument.create();
+  for (let i = 0; i < pages.length; i++) {
+    onProgress(i + 1, pages.length);
+    const p = pages[i];
+    const page = await S.sources.get(p.src).doc.getPage(p.index + 1);
+    const vp = page.getViewport({ scale: Math.min(dpi / 72, MAX_CANVAS_SIDE / Math.max(p.w, p.h)) });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(vp.width);
+    canvas.height = Math.round(vp.height);
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#fff';
+    g.fillRect(0, 0, canvas.width, canvas.height);
+    try {
+      await page.render({ canvas, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.DISABLE }).promise;
+    } finally {
+      page.cleanup();
+    }
+    if (p.shapes.length) await burnShapes(g, p, canvas.width, canvas.height);
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', RASTER_JPEG_QUALITY));
+    canvas.width = canvas.height = 0; // free the bitmap before the next page
+    const img = await out.embedJpg(new Uint8Array(await blob.arrayBuffer()));
+    out.addPage([p.w, p.h]).drawImage(img, { x: 0, y: 0, width: p.w, height: p.h });
+  }
+  return out.save();
+}
+async function burnShapes(g, p, w, h) {
+  const svg = document.createElementNS(SVGNS, 'svg');
+  drawShapesSvg(svg, p, { outlines: false }); // dashed outlines are screen-only
+  svg.setAttribute('xmlns', SVGNS);
+  svg.setAttribute('width', w);
+  svg.setAttribute('height', h);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' }));
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    g.drawImage(img, 0, 0, w, h);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// dpi 0 = original (vector) output; 300 / 600 = image version
+async function download(dpi = 0) {
   if (!S.pages.length || S.busy) return;
   S.busy = true;
   const btn = $('download-btn');
@@ -438,10 +491,15 @@ async function download() {
     const pages = snapshot(); // edits made while assembling must not leak into this file
     const rev = S.rev;
     const used = new Set(pages.map(p => p.src));
-    const sources = [...S.sources.values()].filter(s => used.has(s.id)).map(s => ({ id: s.id, bytes: s.bytes }));
-    const bytes = await A.assemble(window.PDFLib, sources, pages);
+    let bytes;
+    if (dpi) {
+      bytes = await rasterize(pages, dpi, (i, n) => { btn.textContent = `產生中… ${i}/${n}`; });
+    } else {
+      const sources = [...S.sources.values()].filter(s => used.has(s.id)).map(s => ({ id: s.id, bytes: s.bytes }));
+      bytes = await A.assemble(window.PDFLib, sources, pages);
+    }
     const first = S.sources.get(pages[0].src).name.replace(/\.pdf$/i, '');
-    const name = used.size > 1 ? `${first}-合併.pdf` : `${first}-整理.pdf`;
+    const name = `${first}-${used.size > 1 ? '合併' : '整理'}${dpi ? `-圖片${dpi}dpi` : ''}.pdf`;
     const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: name });
     document.body.appendChild(a); a.click(); a.remove();
@@ -466,14 +524,22 @@ $('delete-btn').onclick = deleteSelected;
 $('dup-btn').onclick = duplicateSelected;
 $('add-btn').onclick = () => $('file-input').click();
 $('undo-btn').onclick = undo;
-$('download-btn').onclick = download;
+$('download-btn').onclick = () => {
+  if (!S.pages.length || S.busy) return;
+  $('dl-dialog').querySelector('input[value="0"]').checked = true; // default: original
+  $('dl-dialog').showModal();
+};
+$('dl-dialog').addEventListener('close', () => {
+  if ($('dl-dialog').returnValue !== 'ok') return;
+  download(Number($('dl-dialog').querySelector('input[name="q"]:checked').value));
+});
 $('edit-btn').onclick = () => {
   const id = [...S.sel][0] || S.pages[0]?.uid;
   if (id && ctx.editorAvailable) ctx.openEditor(id);
 };
 
 document.addEventListener('keydown', e => {
-  if (ctx.editorOpen()) return; // the editor has its own keys
+  if (ctx.editorOpen() || $('dl-dialog').open) return; // those have their own keys
   if (e.target.closest && e.target.closest('input, textarea')) return;
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }

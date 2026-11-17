@@ -25,6 +25,7 @@ html, body {
 
 .btn {
   display: inline-flex;
+  white-space: nowrap;
   align-items: center;
   gap: 0.3em;
   font: inherit;
@@ -55,6 +56,7 @@ html, body {
   background: var(--panel-bg);
   border-bottom: 1px solid var(--panel-border);
   box-shadow: var(--shadow);
+  flex-wrap: wrap; /* narrow windows: wrap whole buttons, never split a label */
 }
 .tsep { width: 1px; height: 22px; margin: 0 0.25rem; background: var(--panel-border); }
 #status { margin-left: 0.5rem; color: var(--muted); font-size: 0.9rem; }
@@ -310,7 +312,7 @@ html, body {
 #dl-dialog .dl-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem; }
 
 /* ---- steps ---- */
-#steps { display: flex; margin-right: 0.5rem; border: 1px solid var(--panel-border); border-radius: 8px; overflow: hidden; }
+#steps { display: flex; white-space: nowrap; margin-right: 0.5rem; border: 1px solid var(--panel-border); border-radius: 8px; overflow: hidden; }
 #steps button { font: inherit; padding: 0.4rem 0.9rem; border: 0; background: #fff; color: var(--fg); cursor: pointer; transition: background-color 120ms ease-out; }
 #steps button:hover:not([aria-pressed="true"]) { background: #f0f0f4; }
 #steps button + button { border-left: 1px solid var(--panel-border); }

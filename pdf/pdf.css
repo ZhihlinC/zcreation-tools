@@ -115,7 +115,7 @@ html, body {
   border-radius: var(--radius);
   background: transparent;
   user-select: none;
-  touch-action: none;
+  touch-action: pan-y; /* fingers scroll; reorder is mouse/pen only */
   cursor: grab;
   transition: background-color 120ms ease-out, opacity 150ms ease-out;
 }
@@ -238,11 +238,12 @@ html, body {
   background: #fff;
   cursor: pointer;
 }
+#ed-bar .group button:hover:not(:disabled) { background: #f0f0f4; }
 #ed-bar .group button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 #ed-bar .group button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: #eef3ff; }
 #ed-bar .group button:disabled { opacity: 0.35; cursor: default; }
-#ed-bar .swatch { width: 26px; min-width: 26px !important; height: 26px !important; padding: 0 !important; border-radius: 50% !important; }
-#ed-bar .swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent) !important; }
+#ed-bar .group button.swatch { width: 26px; min-width: 26px; height: 26px; padding: 0; border-radius: 50%; }
+#ed-bar .group button.swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--accent); }
 #ed-pos { font-size: 0.9rem; color: var(--muted); min-width: 4em; text-align: center; }
 /* overlays the stage so showing/hiding it never shifts the page under the pointer */
 #ed-hint {

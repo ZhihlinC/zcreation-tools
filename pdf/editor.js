@@ -75,7 +75,10 @@ function setStyle(kind, val) {
   const isLine = s ? s.type === 'line' : E.tool === 'line';
   const target = isLine ? E.lineStyle : E.shapeStyle;
   if (kind === 'fill' && isLine) return;
+  if (s && s[kind] === val) return; // re-clicking the current style is not an edit
   target[kind] = val;
+  // defaults must never become fill none + stroke none (an invisible shape)
+  if (!isLine && target.fill == null && target.stroke == null) target[kind === 'fill' ? 'stroke' : 'fill'] = 'black';
   if (s) {
     const before = ctx.snapshot();
     s[kind] = val;
@@ -138,11 +141,19 @@ async function showPage() {
   const vp = pdfPage.getViewport({ scale: k * dpr });
   const off = document.createElement('canvas');
   off.width = Math.round(vp.width); off.height = Math.round(vp.height);
-  E.renderTask = pdfPage.render({ canvas: off, viewport: vp });
-  try { await E.renderTask.promise; } catch (e) { if (e?.name === 'RenderingCancelledException') return; throw e; }
+  E.renderTask = pdfPage.render({ canvas: off, viewport: vp, annotationMode: ctx.pdfjsLib.AnnotationMode.DISABLE });
+  try {
+    await E.renderTask.promise;
+  } catch (e) {
+    if (e?.name === 'RenderingCancelledException') return;
+    console.error(e);
+    ctx.toast('這一頁的清晰預覽畫不出來，先用縮圖編輯');
+    off.width = 0; // keep the thumbnail; editing still works on it
+  } finally {
+    pdfPage.cleanup();
+  }
   if (!E.open || E.uid !== uidAtStart) return;
-  canvas.width = off.width; canvas.height = off.height;
-  canvas.getContext('2d').drawImage(off, 0, 0);
+  if (off.width) { canvas.width = off.width; canvas.height = off.height; canvas.getContext('2d').drawImage(off, 0, 0); }
   E.ready = true;
   svg.dataset.ready = '1';
 }
@@ -191,11 +202,11 @@ svg.addEventListener('pointerdown', e => {
   const hitId = e.target.dataset?.id;
   svg.setPointerCapture(e.pointerId);
   if (handle && selShape()) {
-    act = { mode: 'resize', handle, before: ctx.snapshot(), moved: false };
+    act = { mode: 'resize', handle, orig: { ...selShape() }, moved: false };
   } else if (hitId) {
     E.selId = hitId;
     const s = selShape();
-    act = { mode: 'move', x, y, orig: { ...s }, before: ctx.snapshot(), moved: false };
+    act = { mode: 'move', x, y, orig: { ...s }, moved: false };
     refresh();
   } else if (E.tool === 'select') {
     E.selId = null;
@@ -210,7 +221,6 @@ svg.addEventListener('pointerdown', e => {
 svg.addEventListener('pointermove', e => {
   if (!act) return;
   const [x, y] = toPage(e);
-  const p = page();
   if (act.mode === 'create') {
     Object.assign(act.shape, { x2: x, y2: y });
     refresh();
@@ -233,7 +243,6 @@ svg.addEventListener('pointermove', e => {
     act.moved = true;
     refresh();
   }
-  void p;
 });
 svg.addEventListener('lostpointercapture', () => { if (act && act.mode !== 'create' && act.moved) svg.dispatchEvent(new PointerEvent('pointerup')); act = null; });
 svg.addEventListener('pointerup', () => {
@@ -251,8 +260,13 @@ svg.addEventListener('pointerup', () => {
     }
   } else if (a.moved) {
     const s = selShape();
-    Object.assign(s, normalize(s));
-    ctx.commit(a.mode === 'move' ? '移動圖形' : '縮放圖形', a.before);
+    // the undo snapshot is taken now (not at pointerdown) so changes made
+    // meanwhile elsewhere — e.g. a file finishing loading — are not undone
+    const now = { ...s };
+    Object.assign(s, a.orig);
+    const before = ctx.snapshot();
+    Object.assign(s, normalize(now));
+    ctx.commit(a.mode === 'move' ? '移動圖形' : '縮放圖形', before);
     ctx.render();
   }
   refresh();
@@ -270,6 +284,10 @@ function open(uid) {
   E.selId = null;
   svg.dataset.ready = '';
   $('editor').hidden = false;
+  // the grid behind must not take focus or clicks (its buttons would change
+  // pages under the editor)
+  $('toolbar').inert = true; $('grid-wrap').inert = true;
+  $('ed-done').focus();
   showPage();
 }
 function close() {
@@ -277,6 +295,8 @@ function close() {
   E.selId = null;
   if (E.renderTask) E.renderTask.cancel();
   $('editor').hidden = true;
+  $('toolbar').inert = false; $('grid-wrap').inert = false;
+  $('edit-btn').focus();
   ctx.render();
 }
 function go(d) {
@@ -289,7 +309,7 @@ function go(d) {
 }
 
 document.addEventListener('keydown', e => {
-  if (!E.open) return;
+  if (!E.open || act) return; // mid-gesture: no undo, delete or page change
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.key.toLowerCase() === 'z' && !e.shiftKey) { e.preventDefault(); ctx.undo(); }
   else if (e.key === 'Escape') { e.preventDefault(); close(); }

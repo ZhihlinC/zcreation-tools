@@ -30,6 +30,7 @@ const S = {
   undo: [],             // { label, pages }
   dirty: false,
   busy: false,
+  rev: 0,               // bumps on every change; download clears dirty only if unchanged
 };
 let nextId = 1;
 const uid = () => 'p' + (nextId++);
@@ -43,12 +44,14 @@ function commit(label, before = null) {
   S.undo.push({ label, pages: before || snapshot() });
   if (S.undo.length > UNDO_LIMIT) S.undo.shift();
   S.dirty = true;
+  S.rev++;
 }
 function undo() {
   if (press || ctx.editorGesture()) return; // mid-drag: the gesture commits on release
   const u = S.undo.pop();
   if (!u) return;
   S.pages = u.pages;
+  S.rev++;
   const alive = new Set(S.pages.map(p => p.uid));
   for (const id of [...S.sel]) if (!alive.has(id)) S.sel.delete(id);
   S.dirty = true;
@@ -117,11 +120,12 @@ async function addFiles(files) {
       loading.remove();
     }
   }
-  if (added.length) {
-    S.sel = new Set(added);
-    S.anchor = added[0];
+  const alive = added.filter(id => S.pages.some(p => p.uid === id)); // some may be undone/deleted meanwhile
+  if (alive.length) {
+    S.sel = new Set(alive);
+    S.anchor = alive[0];
     render();
-    cards.get(added[0])?.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    cards.get(alive[0])?.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
   showErrors(errs);
 }
@@ -255,6 +259,7 @@ function drawShapesSvg(svg, p, { outlines }) {
 
 // ---------- lazy thumbnails ----------
 const queue = new Set();
+const inFlight = new Set(); // a canvas must never get two concurrent renders
 let rendering = 0;
 const observer = new IntersectionObserver(entries => {
   for (const e of entries) {
@@ -271,9 +276,13 @@ function pump() {
     const c = cards.get(id), p = S.pages.find(q => q.uid === id);
     if (!c || !p) continue;
     const key = p.src + ':' + p.index;
-    if (c.drawnKey === key) continue;
+    if (c.drawnKey === key || inFlight.has(id)) continue;
     rendering++;
-    drawThumb(c, p, key).catch(e => { console.error(e); c.sheet.dataset.failed = '無法顯示縮圖'; }).finally(() => { rendering--; pump(); });
+    inFlight.add(id);
+    drawThumb(c, p, key)
+      .then(() => { delete c.sheet.dataset.failed; })
+      .catch(e => { console.error(e); c.sheet.dataset.failed = '無法顯示縮圖'; })
+      .finally(() => { inFlight.delete(id); rendering--; pump(); });
   }
 }
 async function drawThumb(c, p, key) {
@@ -283,25 +292,28 @@ async function drawThumb(c, p, key) {
   const vp = page.getViewport({ scale: (fs.w / p.w) * dpr });
   c.canvas.width = Math.round(vp.width);
   c.canvas.height = Math.round(vp.height);
-  await page.render({ canvas: c.canvas, viewport: vp }).promise;
+  // annotations are not carried into the output (assemble.js), so not shown
+  await page.render({ canvas: c.canvas, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.DISABLE }).promise;
+  page.cleanup(); // drop decoded images; a scanned page holds tens of MB
   c.drawnKey = key;
   c.canvas.style.visibility = '';
 }
 
 // ---------- selection & drag-reorder ----------
 const indexOf = id => S.pages.findIndex(p => p.uid === id);
-let press = null; // { id, x, y, dragging, before, mods }
+let press = null; // { id, x, y, dragging, touch, cx, cy }
 
 $('grid').addEventListener('pointerdown', e => {
   const el = e.target.closest('.card[data-uid]');
   if (!el || e.button !== 0) return;
-  press = { id: el.dataset.uid, x: e.clientX, y: e.clientY, dragging: false, pointer: e.pointerId };
-  el.setPointerCapture(e.pointerId);
+  press = { id: el.dataset.uid, x: e.clientX, y: e.clientY, dragging: false, touch: e.pointerType === 'touch' };
+  if (!press.touch) el.setPointerCapture(e.pointerId);
 });
 $('grid').addEventListener('pointermove', e => {
   if (!press) return;
   if (!press.dragging) {
     if (Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_THRESHOLD) return;
+    if (press.touch) { press = null; return; } // a finger moving is a scroll, not a reorder
     if (!S.sel.has(press.id)) { S.sel = new Set([press.id]); S.anchor = press.id; render(); }
     press.dragging = true;
     for (const id of S.sel) cards.get(id)?.el.classList.add('dragging');
@@ -321,7 +333,7 @@ $('grid').addEventListener('pointerup', e => {
   if (p.dragging) return finishDrag(p);
   clickSelect(p.id, e);
 });
-$('grid').addEventListener('pointercancel', () => { if (press?.dragging) endDragUi(); press = null; });
+$('grid').addEventListener('pointercancel', () => { if (press?.dragging) endDragUi(); press = null; insertAt = null; });
 $('grid').addEventListener('dblclick', e => {
   const el = e.target.closest('.card[data-uid]');
   if (el && ctx.editorAvailable) ctx.openEditor(el.dataset.uid);
@@ -423,16 +435,18 @@ async function download() {
   // let "產生中…" paint before the main thread is busy assembling
   await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
   try {
-    const used = new Set(S.pages.map(p => p.src));
+    const pages = snapshot(); // edits made while assembling must not leak into this file
+    const rev = S.rev;
+    const used = new Set(pages.map(p => p.src));
     const sources = [...S.sources.values()].filter(s => used.has(s.id)).map(s => ({ id: s.id, bytes: s.bytes }));
-    const bytes = await A.assemble(window.PDFLib, sources, S.pages);
-    const first = S.sources.get(S.pages[0].src).name.replace(/\.pdf$/i, '');
+    const bytes = await A.assemble(window.PDFLib, sources, pages);
+    const first = S.sources.get(pages[0].src).name.replace(/\.pdf$/i, '');
     const name = used.size > 1 ? `${first}-合併.pdf` : `${first}-整理.pdf`;
     const url = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
     const a = Object.assign(document.createElement('a'), { href: url, download: name });
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 30000);
-    S.dirty = false;
+    if (S.rev === rev) S.dirty = false; // otherwise newer edits are not in this file
     toast('已下載：' + name);
   } catch (e) {
     console.error(e);
@@ -445,6 +459,7 @@ async function download() {
 }
 $('delete-btn').onclick = deleteSelected;
 $('dup-btn').onclick = duplicateSelected;
+$('add-btn').onclick = () => $('file-input').click();
 $('undo-btn').onclick = undo;
 $('download-btn').onclick = download;
 $('edit-btn').onclick = () => {
@@ -471,5 +486,5 @@ export const ctx = {
   openEditor: () => {},
   onUndo: () => {},
 };
-window.__pdfTool = ctx; // test hook
+window.__pdfTool = ctx; // test hook, and boot-check.js's "the tool loaded" signal
 render();

@@ -27,17 +27,24 @@ const M = [
   { file: 'assemble.js', what: 'shapes drawn on the first page', find: 'for (const s of p.shapes) drawShape(PDFLib, page, s, g);', replace: 'for (const s of p.shapes) drawShape(PDFLib, out.getPage(0), s, pageGeom(out.getPage(0)));' },
   { file: 'assemble.js', what: 'duplicates copied in one call (shared Contents)', find: "const g = p.src + '#' + occ[i];", replace: "const g = p.src + '#0';" },
   { file: 'assemble.js', what: 'shared Contents array not cloned', find: 'if (v instanceof PDFLib.PDFArray) page.node.set(C, v.clone(out.context));', replace: '' },
-  { file: 'assemble.js', what: 'link/back-pointer stripping removed', find: '      stripPageRefs(PDFLib, doc);\n', replace: '' },
+  { file: 'assemble.js', what: 'source sanitising removed', find: '      sanitize(PDFLib, doc);\n', replace: '' },
+  { file: 'assemble.js', what: 'page key allow-list removed', find: 'for (const k of node.keys()) if (!PAGE_KEYS.has(k.decodeText())) node.delete(k);', replace: '' },
+  { file: 'assemble.js', what: 'Resources not pruned', find: 'node.set(N(\'Resources\'), prune(res, namesIn(streamsOf(node.get(N(\'Contents\'))))));', replace: '' },
+  { file: 'assemble.js', what: 'forms without own Resources not followed', find: 'for (const n of inner) if (!used.has(n)) { used.add(n); grew = true; }', replace: '' },
+  { file: 'assemble.js', what: 'all annotations kept', find: "if (!(a instanceof PDFDict) || nameOf(a.lookup(N('Subtype'))) !== 'Link') continue;", replace: 'if (!(a instanceof PDFDict)) continue; links.push(annots.get(i)); continue;' },
+  { file: 'assemble.js', what: 'fail-closed page count removed', find: 'if (n !== pages.length) throw', replace: 'if (false) throw' },
+  { file: 'assemble.js', what: 'pdf.js/pdf-lib page count disagreement accepted', find: 'if (lib.getPageCount() !== doc.numPages) throw', replace: 'if (false) throw' },
   { file: 'assemble.js', what: '/Rotate 45 not treated as 0', find: '    if (r % 90 !== 0) r = 0;\n', replace: '' },
   { file: 'assemble.js', what: 'inverted MediaBox not normalised', find: 'const norm = b => [Math.min(b.x, b.x + b.width), Math.min(b.y, b.y + b.height), Math.max(b.x, b.x + b.width), Math.max(b.y, b.y + b.height)];', replace: 'const norm = b => [b.x, b.y, b.x + b.width, b.y + b.height];' },
-  { file: 'assemble.js', what: 'geometry guard removed', find: 'if (p.w != null && (', replace: 'if (false && (' },
+  { file: 'assemble.js', what: 'geometry guard removed', find: 'if (p.w != null && !(', replace: 'if (false && !(' },
   { file: 'assemble.js', what: 'owner-password-only PDFs accepted', find: 'if ((await doc.getPermissions()) !== null)', replace: 'if (false)' },
   { file: 'assemble.js', what: "caller's buffer handed to pdf.js (detached)", find: '{ data: bytes.slice() }', replace: '{ data: bytes }' },
   // ---- app.js / editor.js, browser suite
   { file: 'app.js', suite: 'browser', what: 'window drop guard removed', find: "window.addEventListener('dragover', e => { e.preventDefault();", replace: "window.addEventListener('dragover', e => {" },
   { file: 'app.js', suite: 'browser', what: 'cmaps not configured', find: "  cMapUrl: new URL('./vendor/cmaps/', import.meta.url).href,\n", replace: '' },
   { file: 'app.js', suite: 'browser', what: 'duplicate shares shapes with original', find: "shapes: p.shapes.map(s => ({ ...s, id: 'h' + (nextId++) })) }));", replace: 'shapes: p.shapes }));' },
-  { file: 'editor.js', suite: 'browser', what: 'move/resize undo snapshot taken after the drag', find: "ctx.commit(a.mode === 'move' ? '移動圖形' : '縮放圖形', a.before);", replace: "ctx.commit(a.mode === 'move' ? '移動圖形' : '縮放圖形');" },
+  { file: 'editor.js', suite: 'browser', what: 'move/resize undo snapshot taken after the drag', find: "ctx.commit(a.mode === 'move' ? '移動圖形' : '縮放圖形', before);", replace: "ctx.commit(a.mode === 'move' ? '移動圖形' : '縮放圖形');" },
+  { file: 'app.js', suite: 'browser', what: 'thumbnails render annotations (preview ≠ output)', find: 'viewport: vp, annotationMode: pdfjsLib.AnnotationMode.DISABLE })', replace: 'viewport: vp })' },
 ];
 
 function run(cmd, args, env) {

@@ -94,6 +94,63 @@ async function tocDoc() {
   return d;
 }
 
+// leaks.pdf — P1 and P3 are the pages a user keeps; every SECRET_ marker is
+// reachable from them only through a path copyPages would follow:
+//   P1/P2 inherit one Resources dict from /Pages; a form only P2 draws holds
+//   SECRET_INHERITED. P3/P4 share one indirect Resources dict; a form only P4
+//   draws holds SECRET_SHARED. P1 also has: a widget whose /Parent field lists
+//   a sibling widget on P2 with value SECRET_FIELD; a link with indirect
+//   /Subtype and /Dest to P2; a web link whose /Next is a GoTo P2 (and a /Dest);
+//   a page /AA GoTo P2; /PieceInfo SECRET_PIECEINFO; a stamp whose appearance
+//   says SECRET_STAMP. P2 and P4 draw SECRET_P2 / SECRET_P4 text.
+async function leaksDoc() {
+  const d = await PDFDocument.create();
+  const ctx = d.context, N = n => PDFName.of(n);
+  const font = await d.embedFont(StandardFonts.Helvetica);
+  const pages = [1, 2, 3, 4].map(() => d.addPage(A4));
+  const form = (text) => ctx.register(ctx.flateStream(`BT /F1 20 Tf 50 500 Td (${text}) Tj ET`, { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 595, 842] }));
+  const fontRes = () => ctx.obj({ F1: font.ref });
+  const content = (page, ops) => page.node.set(N('Contents'), ctx.register(ctx.flateStream(ops)));
+  // P1/P2: inherited
+  const inherited = ctx.obj({ Font: fontRes(), XObject: { FmKeep1: form('KEEP_P1_FORM'), FmSecret: form('SECRET_INHERITED') } });
+  d.catalog.lookup(N('Pages')).set(N('Resources'), inherited);
+  pages[0].node.delete(N('Resources')); pages[1].node.delete(N('Resources'));
+  content(pages[0], 'BT /F1 30 Tf 40 760 Td (KEEP_P1) Tj ET /FmKeep1 Do');
+  content(pages[1], 'BT /F1 30 Tf 40 760 Td (SECRET_P2) Tj ET /FmSecret Do');
+  // P3/P4: one indirect Resources shared
+  // FmKeep3 has no Resources of its own and draws FmInner from the page's:
+  // pruning must follow it or P3 loses a drawing
+  const inner = ctx.register(ctx.flateStream('0.2 0.4 0.8 rg 50 50 200 100 re f', { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 595, 842] }));
+  const keep3 = ctx.register(ctx.flateStream('BT /F1 20 Tf 50 500 Td (KEEP_P3_FORM) Tj ET /FmInner Do', { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 595, 842] }));
+  const shared = ctx.register(ctx.obj({ Font: fontRes(), XObject: { FmKeep3: keep3, FmInner: inner, FmShared: form('SECRET_SHARED') } }));
+  pages[2].node.set(N('Resources'), shared); pages[3].node.set(N('Resources'), shared);
+  content(pages[2], 'BT /F1 30 Tf 40 760 Td (KEEP_P3) Tj ET /FmKeep3 Do');
+  content(pages[3], 'BT /F1 30 Tf 40 760 Td (SECRET_P4) Tj ET /FmShared Do');
+  // P1 annotations / page keys
+  const field = ctx.register(ctx.obj({ FT: 'Tx', T: PDFString.of('name') }));
+  const w1 = ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Widget', Rect: [40, 600, 200, 620], Parent: field, P: pages[0].ref }));
+  const w2 = ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Widget', Rect: [40, 600, 200, 620], Parent: field, P: pages[1].ref, V: PDFString.of('SECRET_FIELD') }));
+  ctx.lookup(field).set(N('Kids'), ctx.obj([w1, w2]));
+  pages[1].node.set(N('Annots'), ctx.obj([w2]));
+  const subtypeRef = ctx.register(N('Link'));
+  const linkIndirect = ctx.register(ctx.obj({ Type: 'Annot', Subtype: subtypeRef, Rect: [40, 500, 200, 520], Dest: [pages[1].ref, 'Fit'] }));
+  const linkWeb = ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Link', Rect: [40, 450, 200, 470], Dest: [pages[1].ref, 'Fit'], A: { S: 'URI', URI: PDFString.of('https://example.com/kept'), Next: { S: 'GoTo', D: [pages[1].ref, 'Fit'] } } }));
+  const stampAp = ctx.register(ctx.flateStream('0 0 0 rg 0 0 100 20 re f 1 1 1 rg BT /F1 12 Tf 4 5 Td (SECRET_STAMP) Tj ET', { Type: 'XObject', Subtype: 'Form', BBox: [0, 0, 100, 20], Resources: { Font: { F1: font.ref } } }));
+  const stamp = ctx.register(ctx.obj({ Type: 'Annot', Subtype: 'Stamp', Rect: [300, 700, 400, 720], AP: { N: stampAp } }));
+  pages[0].node.set(N('Annots'), ctx.obj([w1, linkIndirect, linkWeb, stamp]));
+  pages[0].node.set(N('AA'), ctx.obj({ O: { S: 'GoTo', D: [pages[1].ref, 'Fit'] } }));
+  pages[0].node.set(N('PieceInfo'), ctx.obj({ Illustrator: { Private: ctx.register(ctx.flateStream('SECRET_PIECEINFO')) } }));
+  return d;
+}
+
+// pdf.js and pdf-lib disagree on this page tree: one /Kids entry points at a
+// missing object (pdf.js: 3 pages, the third unreadable; pdf-lib: 2).
+async function brokenTreeDoc() {
+  const d = await doc([1, 2, 3].map(i => ({ size: A4, mark: 'K' + i })));
+  d.catalog.lookup(PDFName.of('Pages')).lookup(PDFName.of('Kids')).set(2, PDFLib.PDFRef.of(999));
+  return d;
+}
+
 async function save(name, d) {
   fs.writeFileSync(path.join(OUT, name), await d.save({ useObjectStreams: false }));
   console.log('wrote', name);
@@ -123,6 +180,8 @@ async function encrypted(name, opts) {
   await save('cjk-nonembedded.pdf', await cjkDoc());
   await save('geometry.pdf', await geometryDoc());
   await save('toc-links.pdf', await tocDoc());
+  await save('leaks.pdf', await leaksDoc());
+  await save('broken-page-tree.pdf', await brokenTreeDoc());
   await encrypted('encrypted-user.pdf', { userPassword: 'open', ownerPassword: 'owner' });
   await encrypted('encrypted-owner-only.pdf', { userPassword: '', ownerPassword: 'owner', permissions: { modifying: false } });
 })().catch(e => { console.error(e); process.exit(1); });

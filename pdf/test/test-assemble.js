@@ -139,6 +139,8 @@ async function testOpenSource() {
     check(`openSource ${f}`, r.status === want && r.kind === kind, `${r.status}/${r.kind}`);
     if (r.task) r.task.destroy();
   }
+  const bt = await A.openSource(pdfjs, PDFLib, read('broken-page-tree.pdf'), params);
+  check('pdf.js/pdf-lib page-count disagreement → broken', bt.status === 'broken', bt.status);
   const junk = new TextEncoder().encode('%PDF-1.7\nnot really a pdf');
   const r = await A.openSource(pdfjs, PDFLib, junk, params);
   check('openSource junk → broken', r.status === 'broken' && r.error, r.status);
@@ -171,15 +173,68 @@ async function testNoOrphanPages() {
   check('positive control: unstripped copy has orphans', rawCount > 2, rawCount);
 }
 
+// Everything in the output, decoded: indirect objects, stream contents,
+// strings. Used to prove no marker from an unchosen page survives.
+function allText(lib) {
+  const parts = [];
+  for (const [, o] of lib.context.enumerateIndirectObjects()) {
+    if (o instanceof PDFLib.PDFRawStream) {
+      parts.push(o.dict.toString());
+      try { parts.push(Buffer.from(PDFLib.decodePDFRawStream(o).decode()).toString('latin1')); } catch (e) { parts.push(Buffer.from(o.contents).toString('latin1')); }
+    } else parts.push(o.toString());
+  }
+  return parts.join('\n');
+}
+
+// leaks.pdf: P1 and P3 are clean; everything marked SECRET_ belongs to P2/P4
+// or to structures that only reach them (see make-fixtures.js).
+async function testNoLeaks() {
+  const bytes = read('leaks.pdf');
+  const src = await PDFLib.PDFDocument.load(bytes);
+  check('positive control: source holds the markers', (allText(src).match(/SECRET_\w+/g) || []).length >= 7, (allText(src).match(/SECRET_\w+/g) || []).join());
+  const out = await A.assemble(PDFLib, [{ id: 'L', bytes }], [{ src: 'L', index: 0, shapes: [SHAPES[0]] }, { src: 'L', index: 2, shapes: [] }]);
+  const lib = await PDFLib.PDFDocument.load(out);
+  const found = allText(lib).match(/SECRET_\w+/g) || [];
+  check('no SECRET_ marker from unchosen pages in the output', found.length === 0, [...new Set(found)].join());
+  check('kept pages still carry their own content', /KEEP_P1/.test(allText(lib)) && /KEEP_P3/.test(allText(lib)));
+  // fail closed: with sanitising switched off the copy drags in other pages,
+  // and assemble must refuse rather than write them
+  let refused = null;
+  try { await A.assemble(PDFLib, [{ id: 'T', bytes: read('toc-links.pdf') }], [{ src: 'T', index: 0, shapes: [] }], { sanitize: () => {} }); }
+  catch (e) { refused = e.message; }
+  check('unchosen pages make assemble refuse', refused && /not chosen/.test(refused), refused);
+  check('web link survives sanitising', /https:\/\/example\.com\/kept/.test(allText(lib)));
+}
+
+// Sanitising must not change what a page draws: for every fixture page the
+// output's operator list (annotations off) equals the source's.
+async function testFidelity() {
+  for (const f of ['a4-portrait.pdf', 'a4-landscape.pdf', 'b4.pdf', 'odd.pdf', 'cjk-nonembedded.pdf', 'geometry.pdf', 'toc-links.pdf', 'leaks.pdf', 'big-150.pdf']) {
+    const bytes = read(f);
+    const sdoc = await open(bytes.slice());
+    const out = await A.assemble(PDFLib, [{ id: 'S', bytes }], Array.from({ length: sdoc.numPages }, (_, i) => ({ src: 'S', index: i, shapes: [] })));
+    const odoc = await open(out.slice());
+    for (let n = 1; n <= sdoc.numPages; n++) {
+      const a = await (await sdoc.getPage(n)).getOperatorList({ annotationMode: pdfjs.AnnotationMode.DISABLE });
+      const b = await (await odoc.getPage(n)).getOperatorList({ annotationMode: pdfjs.AnnotationMode.DISABLE });
+      check(`${f} p${n} draws the same after sanitising`, a.fnArray.join() === b.fnArray.join(), `${a.fnArray.length} vs ${b.fnArray.length} ops`);
+    }
+  }
+}
+
 async function testGeometryGuard() {
   let threw = null;
-  try { await A.assemble(PDFLib, [{ id: 'A', bytes: read('a4-portrait.pdf') }], [{ src: 'A', index: 0, w: 500, h: 841.89, rotate: 0, shapes: [] }]); }
+  try { await A.assemble(PDFLib, [{ id: 'A', bytes: read('a4-portrait.pdf') }], [{ src: 'A', index: 0, w: 500, h: 841.89, rotate: 0, shapes: [SHAPES[0]] }]); }
   catch (e) { threw = e.message; }
   check('geometry mismatch is refused', threw && threw.includes('geometry mismatch'), threw);
   let ok = true;
-  try { await A.assemble(PDFLib, [{ id: 'A', bytes: read('a4-portrait.pdf') }], [{ src: 'A', index: 0, w: 595.28, h: 841.89, rotate: 0, shapes: [] }]); }
+  try { await A.assemble(PDFLib, [{ id: 'A', bytes: read('a4-portrait.pdf') }], [{ src: 'A', index: 0, w: 595.28, h: 841.89, rotate: 0, shapes: [SHAPES[0]] }]); }
   catch (e) { ok = false; }
   check('matching geometry accepted', ok);
+  let reorderOnly = true;
+  try { await A.assemble(PDFLib, [{ id: 'A', bytes: read('a4-portrait.pdf') }], [{ src: 'A', index: 0, w: 1, h: 1, rotate: 0, shapes: [] }]); }
+  catch (e) { reorderOnly = false; }
+  check('pages without shapes are not blocked by geometry', reorderOnly);
 }
 
 async function testValidation() {
@@ -202,6 +257,8 @@ async function testValidation() {
   await testAssemble(SOURCES, PLAN, 'assembled.pdf');
   await testAssemble(GEO_SOURCES, GEO_PLAN, 'geometry-out.pdf');
   await testNoOrphanPages();
+  await testNoLeaks();
+  await testFidelity();
   await testGeometryGuard();
   await testOpenSource();
   await testValidation();

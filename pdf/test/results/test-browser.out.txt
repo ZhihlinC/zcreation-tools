@@ -1,0 +1,94 @@
+ok   empty state shown at start
+ok   empty state hidden with pages
+ok   loaded order
+ok   delete page
+ok   undo delete
+ok   undo toast names the action
+ok   duplicate lands right after
+ok   copy is the new selection
+ok   undo duplicate
+ok   drag reorder
+ok   undo reorder (one step)
+ok   final order
+ok   fill-none disabled while stroke is none
+ok   white hint shown
+ok   fill-none enabled once stroke set
+ok   four shapes on B2
+ok   add shape
+ok   undo add shape
+ok   move shape
+ok   undo move (one step)
+ok   resize shape
+ok   undo resize
+ok   delete shape
+ok   undo delete shape
+ok   PageDown moves to page 2
+ok   four shapes on A1
+ok   white borderless shape has a screen-only outline
+ok   Esc closes the editor
+ok   download name for two sources
+ok   output page count
+ok   output order
+ok   shape count per page (no outlines, copy isolated)
+ok   p1 rect preview inside = shape colour
+ok   p1 rect PDFKit inside = shape colour
+ok   p1 rect PDFKit outside = preview outside
+ok   p1 rrect preview inside = shape colour
+ok   p1 rrect PDFKit inside = shape colour
+ok   p1 rrect PDFKit outside = preview outside
+ok   p1 ellipse preview inside = shape colour
+ok   p1 ellipse PDFKit inside = shape colour
+ok   p1 ellipse PDFKit outside = preview outside
+ok   p1 line preview inside = shape colour
+ok   p1 line PDFKit inside = shape colour
+ok   p1 line PDFKit outside = preview outside
+ok   p2 rrect preview inside = shape colour
+ok   p2 rrect PDFKit inside = shape colour
+ok   p2 rrect PDFKit outside = preview outside
+ok   p2 ellipse preview inside = shape colour
+ok   p2 ellipse PDFKit inside = shape colour
+ok   p2 ellipse PDFKit outside = preview outside
+ok   p2 line preview inside = shape colour
+ok   p2 line PDFKit inside = shape colour
+ok   p2 line PDFKit outside = preview outside
+ok   PDFKit: copy page 3 has the blue rect
+ok   PDFKit: duplicate page 4 does not
+ok   empty state after deleting all
+ok   download disabled when empty
+ok   no leave warning when there are no pages
+ok   leave warning with pages not downloaded since the last change
+ok   no page errors (flow)
+ok   rot90 p1 rect preview = PDFKit (inside)
+ok   rot90 p1 rect PDFKit outside clean
+ok   rot90 p1 ellipse preview = PDFKit (inside)
+ok   rot90 p1 ellipse PDFKit outside clean
+ok   rot270 p4 rect preview = PDFKit (inside)
+ok   rot270 p4 rect PDFKit outside clean
+ok   rot270 p4 ellipse preview = PDFKit (inside)
+ok   rot270 p4 ellipse PDFKit outside clean
+ok   rot180 p5 rect preview = PDFKit (inside)
+ok   rot180 p5 rect PDFKit outside clean
+ok   rot180 p5 ellipse preview = PDFKit (inside)
+ok   rot180 p5 ellipse PDFKit outside clean
+ok   rot0 p6 rect preview = PDFKit (inside)
+ok   rot0 p6 rect PDFKit outside clean
+ok   rot0 p6 ellipse preview = PDFKit (inside)
+ok   rot0 p6 ellipse PDFKit outside clean
+ok   no page errors (rotated)
+ok   user-password message
+ok   owner-only message
+ok   not-a-PDF message
+ok   undo add file
+ok   tool still works after errors
+ok   no page errors (errors)
+ok   dragover default prevented anywhere
+ok   drop overlay shown while dragging
+ok   drop default prevented anywhere
+ok   dropped file added
+ok   non-embedded CJK text renders in the thumbnail
+ok   load-failure banner when worker is missing
+  150 pages: load 47 ms; thumbnails drawn before scroll 40/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
+ok   thumbnails are lazy (not all drawn up front)
+ok   scrolling draws more thumbnails
+ok   scroll p95 frame < 50 ms
+92 passed, 0 failed

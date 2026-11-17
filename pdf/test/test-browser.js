@@ -120,6 +120,7 @@ async function main() {
     await adjustTest(browser, base, pdfjs);
     await sidePreviewTest(browser, base);
     await mixedAdjustTest(browser, base);
+    await fileOrderTest(browser, base);
     await errorsTest(browser, base);
     await dropGuardTest(browser, base);
     await cjkTest(browser, base);
@@ -623,6 +624,48 @@ async function mixedAdjustTest(browser, base) {
   await pg.click('#pv-label');
   await pg.keyboard.press('Control+z');
   check('undo returns the mixed values', await pg.evaluate(() => window.__pdfTool.S.pages.map(p => p.margin || 0).join()) === '2.5,0,0' && (await pg.textContent('#adj-margin-out')) === '不一致');
+  await pg.close();
+}
+
+// Step 1: move whole files up/down. The output is regrouped by file order
+// (each file keeps its own order); a later move overrides an earlier
+// interleaving in step 2, with a toast saying so. One undo step restores
+// both the page order and the file order.
+async function fileOrderTest(browser, base) {
+  const pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf'), fx('a4-landscape.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 5);
+  await waitThumbs(pg);
+  // interleave in step 2: B2 to the front (after upload all new pages are selected; pick B2 alone)
+  await cardAt(pg, 4).click();
+  const src = await cardAt(pg, 4).boundingBox(), dst = await cardAt(pg, 0).boundingBox();
+  await pg.mouse.move(src.x + src.width / 2, src.y + src.height / 2);
+  await pg.mouse.down();
+  await pg.mouse.move(dst.x + 10, dst.y + dst.height / 2, { steps: 12 });
+  await pg.mouse.up();
+  check('interleaved in step 2', (await order(pg)).join() === 'B2,A1,A2,A3,B1', (await order(pg)).join());
+  await pg.click('#step1-tab');
+  const names = () => pg.evaluate(() => [...document.querySelectorAll('#groups .group:not([hidden]) .gname')].map(e => e.textContent).join());
+  check('first file cannot move up, last cannot move down', await pg.locator('#groups .group').nth(0).locator('[data-move="-1"]').isDisabled() && await pg.locator('#groups .group').nth(1).locator('[data-move="1"]').isDisabled());
+  await pg.locator('#groups .group').nth(1).locator('[data-move="-1"]').click(); // landscape up
+  check('groups follow the file order', (await names()) === 'a4-landscape.pdf,a4-portrait.pdf', await names());
+  check('output regrouped by file, each file keeps its order', (await order(pg)).join() === 'B2,B1,A1,A2,A3', (await order(pg)).join());
+  check('toast says the interleaving was overridden', (await toastText(pg)).includes('混排已打散'));
+  await pg.keyboard.press('Control+z');
+  check('one undo restores pages and file order', (await order(pg)).join() === 'B2,A1,A2,A3,B1' && (await names()) === 'a4-portrait.pdf,a4-landscape.pdf', `${(await order(pg)).join()} / ${await names()}`);
+  // no interleaving: a plain move message
+  await pg.click('#step2-tab');
+  await pg.keyboard.press('Control+z'); // undo the drag
+  await pg.click('#step1-tab');
+  await pg.locator('#groups .group').nth(0).locator('[data-move="1"]').click(); // portrait down
+  check('plain move', (await order(pg)).join() === 'B1,B2,A1,A2,A3' && (await toastText(pg)).includes('已把「a4-portrait.pdf」下移'), (await order(pg)).join());
+  // undoing an add removes its group
+  await pg.setInputFiles('#file-input', [fx('b4.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 6);
+  check('added file joins at the end', (await names()) === 'a4-landscape.pdf,a4-portrait.pdf,b4.pdf', await names());
+  await pg.keyboard.press('Control+z');
+  check('undoing the add removes its group', (await names()) === 'a4-landscape.pdf,a4-portrait.pdf' && (await pg.textContent('#status')).startsWith('共 2 份檔案'), await names());
+  check('no page errors (file order)', pg.errors.length === 0, pg.errors.join(' | '));
   await pg.close();
 }
 

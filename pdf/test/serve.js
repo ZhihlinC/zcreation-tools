@@ -28,6 +28,6 @@ function serve(overrides = {}) {
     res.writeHead(200, Object.assign(headersFor(p), { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream' }));
     fs.createReadStream(f).pipe(res);
   });
-  return new Promise(r => srv.listen(Number(process.env.PORT) || 0, '127.0.0.1', () => r(srv)));
+  return new Promise(r => srv.listen(Number(process.env.PORT) || 0, process.env.HOST || '127.0.0.1', () => r(srv)));
 }
 module.exports = { serve, ROOT, headersFor };

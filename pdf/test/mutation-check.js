@@ -61,6 +61,8 @@ const M = [
   { file: 'app.js', suite: 'browser', what: 'mixed values shown as the first page value', find: 'const lo = Math.min(...vals), hi = Math.max(...vals), mixed = lo !== hi;', replace: 'const lo = Math.min(...vals), hi = Math.max(...vals), mixed = false;' },
   { file: 'app.js', suite: 'browser', what: 'side preview not live while a slider moves', find: '  renderPreview(); // and the big preview\n', replace: '' },
   { file: 'app.js', suite: 'browser', what: 'side preview zoom ignored', find: '  const k = fit * pvZoom;', replace: '  const k = fit;' },
+  { file: 'app.js', suite: 'browser', what: 'moving a file does not regroup the output', find: '  S.pages = S.pages.map((p, i) => [p, i]).sort(', replace: '  if (0) S.pages = S.pages.map((p, i) => [p, i]).sort(' },
+  { file: 'app.js', suite: 'browser', what: 'undo forgets the file order', find: '  S.order = u.order;\n', replace: '' },
   { file: 'app.js', suite: 'browser', what: 'step 1: shift+click ignored (single toggle)', find: 'if (e.shiftKey && psrc === src) {', replace: 'if (false && e.shiftKey && psrc === src) {' },
   { file: 'app.js', suite: 'browser', what: 'step 1: re-ticked page goes to the end, not back in file order', find: '  S.pages.splice(at, 0, ...back);', replace: '  S.pages.push(...back);' },
   { file: 'app.js', suite: 'browser', what: 'step 1: un-ticking forgets the shapes', find: '    S.parked.set(key, gone);\n', replace: '' },

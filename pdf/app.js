@@ -62,6 +62,7 @@ const S = {
   collapsed: new Set(), // source ids whose group is folded in step 1
   focus: null,          // "src:index" shown in the step-1 preview
   pvOpen: true,
+  order: [],            // source ids in file order (step 1 groups; regrouping in moveFile)
 };
 let nextId = 1;
 const uid = () => 'p' + (nextId++);
@@ -72,7 +73,7 @@ function snapshot() { return clonePages(S.pages); }
 // Record a change. `before` is the snapshot taken before the change (callers
 // that mutate over several events, like a drag, take it at the start).
 function commit(label, before = null) {
-  S.undo.push({ label, pages: before || snapshot() });
+  S.undo.push({ label, pages: before || snapshot(), order: [...S.order] });
   if (S.undo.length > UNDO_LIMIT) S.undo.shift();
   S.dirty = true;
   S.rev++;
@@ -82,6 +83,7 @@ function undo() {
   const u = S.undo.pop();
   if (!u) return;
   S.pages = u.pages;
+  S.order = u.order;
   S.rev++;
   const alive = new Set(S.pages.map(p => p.uid));
   for (const id of [...S.sel]) if (!alive.has(id)) S.sel.delete(id);
@@ -145,6 +147,7 @@ async function addFiles(files) {
       S.sources.set(id, { id, name: f.name, bytes, doc: r.doc, geoms: fresh.map(p => ({ w: p.w, h: p.h, rotate: p.rotate })) });
       if (!S.focus) S.focus = id + ':0';
       commit('加入 ' + f.name);
+      S.order.push(id); // after commit: undoing the add removes the group as well
       S.pages.push(...fresh);
       added.push(...fresh.map(p => p.uid));
       render();
@@ -284,11 +287,11 @@ function renderGrid() {
 function renderChrome() {
   const n = S.pages.length, k = S.sel.size;
   const loading = document.querySelector('.card.loading') !== null;
-  $('empty').hidden = S.sources.size > 0 || loading;
-  $('picker').hidden = S.sources.size === 0 && !loading;
+  $('empty').hidden = S.order.length > 0 || loading;
+  $('picker').hidden = S.order.length === 0 && !loading;
   $('groups').hidden = S.step !== 1;
   $('grid').hidden = S.step !== 2;
-  $('grid-empty').hidden = S.step !== 2 || n > 0 || S.sources.size === 0;
+  $('grid-empty').hidden = S.step !== 2 || n > 0 || S.order.length === 0;
   $('step1-tab').setAttribute('aria-pressed', S.step === 1);
   $('step2-tab').setAttribute('aria-pressed', S.step === 2);
   for (const b of document.querySelectorAll('#toolbar .step2')) b.hidden = S.step !== 2 || b.dataset.off === '1';
@@ -298,9 +301,9 @@ function renderChrome() {
   $('pv-toggle').querySelector('span').textContent = S.pvOpen ? '收起' : '預覽';
   $('pv-toggle').title = S.pvOpen ? '收起大預覽' : '展開大預覽';
   if (S.step === 1) {
-    $('status').textContent = S.sources.size ? `共 ${S.sources.size} 份檔案，已選 ${n} 頁` : '';
+    $('status').textContent = S.order.length ? `共 ${S.order.length} 份檔案，已選 ${n} 頁` : '';
   } else {
-    $('status').textContent = n ? `共 ${n} 頁` + (k ? `，已選 ${k} 頁` : '') : (S.sources.size ? '還沒有選任何頁面，回「1 選頁」勾選' : '');
+    $('status').textContent = n ? `共 ${n} 頁` + (k ? `，已選 ${k} 頁` : '') : (S.order.length ? '還沒有選任何頁面，回「1 選頁」勾選' : '');
   }
   $('delete-btn').disabled = !k;
   $('rotate-btn').disabled = !k;
@@ -486,13 +489,17 @@ function pickAll(src, on) {
 const groupEls = new Map(); // source id -> { el, tiles: [{ el, c }] }
 function renderPicker() {
   const host = $('groups');
-  for (const [id, src] of S.sources) {
+  for (const [id, g] of groupEls) g.el.hidden = !S.order.includes(id);
+  S.order.forEach((id, pos) => {
+    const src = S.sources.get(id);
     let g = groupEls.get(id);
     if (!g) {
       const el = document.createElement('section');
       el.className = 'group';
       el.dataset.src = id;
       el.innerHTML = '<header><button class="fold" aria-expanded="true"></button><span class="gname"></span><span class="gcount"></span>' +
+        '<button class="btn small move" data-move="-1" aria-label="上移這份檔案" title="上移這份檔案">↑</button>' +
+        '<button class="btn small move" data-move="1" aria-label="下移這份檔案" title="下移這份檔案">↓</button>' +
         '<button class="btn small" data-all="1">全選</button><button class="btn small" data-all="0">全不選</button></header><div class="tiles"></div>';
       el.querySelector('.gname').textContent = src.name;
       el.querySelector('.gname').title = src.name;
@@ -509,11 +516,14 @@ function renderPicker() {
         return { el: t, c };
       });
       for (const t of tiles) el.querySelector('.tiles').appendChild(t.el);
-      // keep groups in upload order, ahead of any loading cards
-      host.insertBefore(el, host.querySelector('.card.loading'));
       g = { el, tiles };
       groupEls.set(id, g);
     }
+    // file order, ahead of any loading cards
+    const at = host.querySelectorAll('.group:not([hidden])')[pos];
+    if (at !== g.el) host.insertBefore(g.el, at || host.querySelector('.card.loading'));
+    g.el.querySelector('[data-move="-1"]').disabled = pos === 0;
+    g.el.querySelector('[data-move="1"]').disabled = pos === S.order.length - 1;
     const n = src.geoms.length;
     let picked = 0;
     g.tiles.forEach((t, i) => {
@@ -530,7 +540,24 @@ function renderPicker() {
     g.el.querySelector('.fold').setAttribute('aria-expanded', !folded);
     g.el.querySelector('.fold').setAttribute('aria-label', folded ? '展開' : '收合');
     g.el.querySelector('.gcount').textContent = `已選 ${picked} / ${n} 頁`;
-  }
+  });
+}
+
+// Move a whole file up or down. The output follows: pages are regrouped by
+// file order, each file keeping its own step-2 order — a later move wins
+// over an earlier interleaving in step 2, and the toast says so.
+function moveFile(src, d) {
+  const from = S.order.indexOf(src), to = from + d;
+  if (from < 0 || to < 0 || to >= S.order.length) return;
+  const name = S.sources.get(src).name;
+  const runs = S.pages.filter((p, i) => i === 0 || p.src !== S.pages[i - 1].src).length;
+  const files = new Set(S.pages.map(p => p.src)).size;
+  commit(`移動 ${name}`);
+  S.order.splice(to, 0, ...S.order.splice(from, 1));
+  const rank = new Map(S.order.map((id, i) => [id, i]));
+  S.pages = S.pages.map((p, i) => [p, i]).sort((a, b) => rank.get(a[0].src) - rank.get(b[0].src) || a[1] - b[1]).map(x => x[0]);
+  render();
+  toast(runs > files ? `已依新的檔案順序重排；步驟 2 的混排已打散（Ctrl+Z 可復原）` : `已把「${name}」${d < 0 ? '上移' : '下移'}`);
 }
 
 // a shift-press would otherwise start extending the text selection
@@ -543,6 +570,8 @@ $('groups').addEventListener('click', e => {
     if (S.collapsed.has(src)) S.collapsed.delete(src); else S.collapsed.add(src);
     return render();
   }
+  const mv = e.target.closest('[data-move]');
+  if (mv) return moveFile(src, Number(mv.dataset.move));
   const all = e.target.closest('[data-all]');
   if (all) return pickAll(src, all.dataset.all === '1');
   const tile = e.target.closest('.tile');

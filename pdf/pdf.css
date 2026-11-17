@@ -153,7 +153,8 @@ html, body {
 .thumb canvas { background: #fff; }
 .num { margin-top: 4px; font-size: 1.05rem; font-weight: 600; text-align: center; }
 .src { font-size: 0.75rem; color: var(--muted); text-align: center; white-space: nowrap; overflow: hidden; }
-.card.loading .thumb .sheet { width: 110px; height: 150px; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 0.8rem; background: #ececf1; }
+.card.loading .thumb .sheet { width: 110px; height: 150px; display: flex; flex-direction: column; gap: 8px; align-items: center; justify-content: center; color: var(--muted); font-size: 0.8rem; background: #ececf1; text-align: center; }
+.card.loading progress { width: 84px; height: 6px; accent-color: var(--accent); }
 
 #drop-overlay {
   position: fixed;

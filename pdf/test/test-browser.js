@@ -119,6 +119,7 @@ async function main() {
     await cjkTest(browser, base);
     await loadFailureTest(browser, base);
     await rasterTest(browser, base, pdfjs);
+    await uploadProgressTest(browser, base);
     await bigScrollTest(browser, base);
   } finally {
     await browser.close();
@@ -435,6 +436,37 @@ async function cjkTest(browser, base) {
   await pg.close();
 }
 
+// Big uploads: the pdf-lib parse runs in the worker (never on the page's
+// thread), and the loading card shows stages with a progress bar.
+async function uploadProgressTest(browser, base) {
+  const pg = await newPage(browser, base);
+  await pg.evaluate(() => {
+    window.__mainLoads = 0;
+    const L = window.PDFLib.PDFDocument;
+    const orig = L.load.bind(L);
+    L.load = (...a) => { window.__mainLoads++; return orig(...a); };
+    window.__stages = new Set();
+    window.__bars = 0;
+    new MutationObserver(() => {
+      for (const el of document.querySelectorAll('.card.loading')) {
+        window.__stages.add(el.querySelector('.stage').textContent.replace(/\d+\/\d+/, 'n/N'));
+        if (el.querySelector('progress')) window.__bars++;
+      }
+    }).observe(document.getElementById('grid'), { subtree: true, childList: true, characterData: true });
+  });
+  await pg.setInputFiles('#file-input', [fx('big-150.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 150, null, { timeout: 30000 });
+  const r = await pg.evaluate(() => ({ loads: window.__mainLoads, stages: [...window.__stages], bars: window.__bars }));
+  check('upload check does not parse on the page thread', r.loads === 0, r.loads);
+  check('loading card shows the stages', ['檢查檔案…', '準備頁面 n/N'].every(t => r.stages.includes(t)), r.stages.join(' | '));
+  check('loading card has a progress bar', r.bars > 0, r.bars);
+  check('no loading card left behind', await pg.locator('.card.loading').count() === 0);
+  // the download is assembled in the worker too
+  const { suggested } = await download(pg, 'big-original.pdf');
+  check('download assembled off the page thread', suggested === 'big-150-整理.pdf' && await pg.evaluate(() => window.__mainLoads) === 0, suggested);
+  await pg.close();
+}
+
 // Worker script missing → visible load-failure banner
 async function loadFailureTest(browser, base) {
   const pg = await browser.newPage();
@@ -443,6 +475,12 @@ async function loadFailureTest(browser, base) {
   await pg.waitForSelector('#load-failed:not([hidden])', { timeout: 8000 }).catch(() => {});
   check('load-failure banner when worker is missing', await pg.isVisible('#load-failed'));
   await pg.close();
+  const pg2 = await browser.newPage();
+  await pg2.route('**/pdf-worker.js', r => r.fulfill({ status: 404, body: '' }));
+  await pg2.goto(base);
+  await pg2.waitForSelector('#load-failed:not([hidden])', { timeout: 8000 }).catch(() => {});
+  check('load-failure banner when the pdf-lib worker is missing', await pg2.isVisible('#load-failed'));
+  await pg2.close();
 }
 
 // 圖片版 (image version): one image per page at the chosen dpi, page size =

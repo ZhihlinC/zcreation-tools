@@ -399,7 +399,9 @@
   // Returns { status: 'ok', doc, task } | { status: 'encrypted', kind: 'open'|'perms' }
   // | { status: 'notpdf' } | { status: 'broken', error }.
   // Known gap: an Encrypt dict without /P reads as 'broken', not 'encrypted'.
-  async function openSource(pdfjsLib, PDFLib, bytes, params) {
+  // opts.pageCount(bytes) → Promise<number> lets the browser run the pdf-lib
+  // parse in a worker (it blocks for seconds on big files); default: inline.
+  async function openSource(pdfjsLib, PDFLib, bytes, params, opts = {}) {
     const head = String.fromCharCode.apply(null, bytes.subarray(0, 1024));
     if (head.indexOf('%PDF-') < 0) return { status: 'notpdf' };
     // pdf.js transfers the buffer to its worker; keep ours for pdf-lib
@@ -416,8 +418,8 @@
       if ((await doc.getPermissions()) !== null) { task.destroy(); return { status: 'encrypted', kind: 'perms' }; }
       // pdf.js repairs damaged files, pdf-lib does not: if they disagree on
       // the pages, what is previewed is not what would be written
-      const lib = await PDFLib.PDFDocument.load(bytes);
-      if (lib.getPageCount() !== doc.numPages) throw new Error(`page count differs (pdf.js ${doc.numPages}, pdf-lib ${lib.getPageCount()})`);
+      const count = opts.pageCount ? await opts.pageCount(bytes) : (await PDFLib.PDFDocument.load(bytes)).getPageCount();
+      if (count !== doc.numPages) throw new Error(`page count differs (pdf.js ${doc.numPages}, pdf-lib ${count})`);
     } catch (e) { task.destroy(); return { status: 'broken', error: e }; }
     return { status: 'ok', doc, task };
   }

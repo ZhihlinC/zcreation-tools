@@ -17,6 +17,32 @@ const PDFJS_PARAMS = {
 // instead of reporting every file as unreadable.
 PDFJS_PARAMS.worker = new pdfjsLib.PDFWorker();
 PDFJS_PARAMS.worker.promise.catch(e => { console.error(e); document.getElementById('load-failed').hidden = false; });
+
+// pdf-lib parses on the main thread and freezes the page for seconds on big
+// files, so the upload check and the download assembly run in a worker.
+const libWorker = new Worker(new URL('./pdf-worker.js', import.meta.url));
+let workerSeq = 0;
+const workerWaiting = new Map();
+libWorker.onmessage = e => {
+  const w = workerWaiting.get(e.data.id);
+  if (!w) return;
+  workerWaiting.delete(e.data.id);
+  if (e.data.error) w.reject(new Error(e.data.error)); else w.resolve(e.data);
+};
+libWorker.onerror = e => {
+  console.error(e);
+  for (const w of workerWaiting.values()) w.reject(new Error('worker failed'));
+  workerWaiting.clear();
+  document.getElementById('load-failed').hidden = false;
+};
+function inWorker(msg, transfer = []) {
+  return new Promise((resolve, reject) => {
+    const id = ++workerSeq;
+    workerWaiting.set(id, { resolve, reject });
+    libWorker.postMessage(Object.assign({ id }, msg), transfer);
+  });
+}
+const workerPageCount = bytes => { const copy = bytes.slice(); return inWorker({ op: 'count', bytes: copy }, [copy.buffer]).then(r => r.count); };
 const THUMB_BOX = { w: 140, h: 182 }; // css px a page is fitted into
 const DRAG_THRESHOLD = 5;
 const UNDO_LIMIT = 100;
@@ -86,8 +112,10 @@ async function addFiles(files) {
     if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') { errs.push(`${f.name}：不是 PDF 檔`); continue; }
     const loading = loadingCard(f.name);
     try {
+      loading.stage('讀取檔案…');
       const bytes = new Uint8Array(await f.arrayBuffer());
-      const r = await A.openSource(pdfjsLib, window.PDFLib, bytes, PDFJS_PARAMS);
+      loading.stage('檢查檔案…');
+      const r = await A.openSource(pdfjsLib, window.PDFLib, bytes, PDFJS_PARAMS, { pageCount: workerPageCount });
       if (r.status === 'encrypted') {
         errs.push(`${f.name}：不支援有密碼保護的 PDF（${r.kind === 'open' ? '需要開啟密碼' : '這個檔案設了權限密碼'}）`);
         continue;
@@ -101,6 +129,7 @@ async function addFiles(files) {
       const id = 's' + (nextId++);
       const fresh = [];
       for (let i = 0; i < r.doc.numPages; i++) {
+        if (i % 10 === 0) loading.stage(`準備頁面 ${i}/${r.doc.numPages}`, i, r.doc.numPages);
         const pg = await r.doc.getPage(i + 1);
         const [x1, y1, x2, y2] = pg.view;
         const g = A.geom(pg.rotate, { x: x1, y: y1, w: x2 - x1, h: y2 - y1 });
@@ -129,13 +158,22 @@ async function addFiles(files) {
   }
   showErrors(errs);
 }
+// A placeholder card per file while it loads: stage text + progress bar
+// (indeterminate until the page count is known), so a big file never looks
+// like a frozen page.
 function loadingCard(name) {
   const el = document.createElement('div');
   el.className = 'card loading';
-  el.innerHTML = '<div class="thumb"><div class="sheet">讀取中…</div></div><div class="num">&nbsp;</div><div class="src"></div>';
+  el.setAttribute('role', 'status');
+  el.innerHTML = '<div class="thumb"><div class="sheet"><span class="stage">讀取中…</span><progress></progress></div></div><div class="num">&nbsp;</div><div class="src"></div>';
   el.querySelector('.src').textContent = middleTruncate(name, 20);
   $('grid').appendChild(el);
   $('empty').hidden = true;
+  const bar = el.querySelector('progress');
+  el.stage = (text, value, max) => {
+    el.querySelector('.stage').textContent = text;
+    if (max) { bar.max = max; bar.value = value; } else bar.removeAttribute('value');
+  };
   return el;
 }
 $('file-input').addEventListener('change', e => { addFiles([...e.target.files]); e.target.value = ''; });
@@ -495,8 +533,8 @@ async function download(dpi = 0) {
     if (dpi) {
       bytes = await rasterize(pages, dpi, (i, n) => { btn.textContent = `產生中… ${i}/${n}`; });
     } else {
-      const sources = [...S.sources.values()].filter(s => used.has(s.id)).map(s => ({ id: s.id, bytes: s.bytes }));
-      bytes = await A.assemble(window.PDFLib, sources, pages);
+      const sources = [...S.sources.values()].filter(s => used.has(s.id)).map(s => ({ id: s.id, bytes: s.bytes.slice() }));
+      bytes = (await inWorker({ op: 'assemble', sources, pages }, sources.map(s => s.bytes.buffer))).bytes;
     }
     const first = S.sources.get(pages[0].src).name.replace(/\.pdf$/i, '');
     const name = `${first}-${used.size > 1 ? '合併' : '整理'}${dpi ? `-圖片${dpi}dpi` : ''}.pdf`;

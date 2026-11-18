@@ -4,6 +4,7 @@ ok   all pages ticked at first
 ok   group counts
 ok   un-ticked page leaves the output
 ok   un-ticked page greyed
+ok   a click on the tick box itself leaves it unticked (#4)
 ok   status counts picked pages
 ok   preview shows the clicked page
 ok   arrow key moves the preview
@@ -18,6 +19,7 @@ ok   and reopened
 ok   step 2 shows only picked pages
 ok   re-ticked page keeps its shapes
 ok   shift+click unticks the range
+ok   shift+click on a tick box leaves the clicked box unticked (#4)
 ok   shift+click selects no text
 ok   shift+click on a thumbnail selects no text
 ok   shift+click on a thumbnail works too
@@ -163,13 +165,23 @@ ok   editor: undoing a rotation redraws the page upright
 ok   a drag across a file load stays on the dragged page
 ok   and undo takes back only the drag, not the added file
 ok   no page errors (undo races)
+ok   control: the turned copy shows its marker bottom right
+ok   #1 a new copy gets upright pixels, not the turned copy's
+ok   no page errors (thumbnail cache)
+ok   control: an unturned page shows its shape in step 1
+ok   #2 step-1 tile of a turned page: no shapes on the unturned page
+ok   #2 and it agrees with the step-1 preview
+ok   #5 every page un-ticked: leaving still warns
 ok   paper-a4.pdf: dialog opens on 原始大小
 ok   file name says the paper
 ok   A4: every page A4, portrait or landscape like the page
 ok   paper-b4-300.pdf: dialog opens on 原始大小
 ok   image B4: JIS size
+ok   samples sit well off the paper edge (oy on L1, ox on L2)
 ok   image B4: the box scaled and centred with its page
 ok   image B4: nothing red beside it
+ok   image B4: a Letter page centred top to bottom (box where oy puts it)
+ok   image B4: a landscape Letter page centred side to side (box where ox puts it)
 ok   no page errors (paper)
 ok   user-password message
 ok   owner-only message
@@ -194,7 +206,7 @@ ok   300 dpi: page sizes = preview sizes, no rotation left
 ok   300 dpi: one image per page at 300 dpi
 ok   300 dpi: no text left in the file
 ok   300 dpi: nothing but pages, images and their content
-  300 dpi: 11 pages in 486 ms, 820 KB
+  300 dpi: 11 pages in 575 ms, 820 KB
 ok   300 dpi: covered text is gone from the pixels
 ok   300 dpi: shape burned in where previewed
 ok   300 dpi: nothing red outside the shape
@@ -204,23 +216,33 @@ ok   600 dpi: page sizes = preview sizes, no rotation left
 ok   600 dpi: one image per page at 600 dpi
 ok   600 dpi: no text left in the file
 ok   600 dpi: nothing but pages, images and their content
-  600 dpi: 11 pages in 963 ms, 2706 KB
+  600 dpi: 11 pages in 1204 ms, 2706 KB
 ok   600 dpi: covered text is gone from the pixels
 ok   600 dpi: shape burned in where previewed
 ok   600 dpi: nothing red outside the shape
   (original output keeps B1 under the white box as text: B1)
 ok   no page errors (raster)
+ok   within the limit: the image version downloads
+  圖片版 estimate 387315 bytes vs real file 388437 bytes (5 pages, 300 dpi)
+ok   estimate within 25% of the real file size
+ok   over the limit at 600 dpi: stops, suggests 300 dpi
+ok   over the limit at 300 dpi: suggests fewer pages
+ok   over the limit: nothing assembled, nothing downloaded
+ok   over the limit: the tool is ready again
+ok   estimate fails: zh-TW message, nothing assembled
+ok   after a failed estimate the tool still downloads
+ok   no page errors (raster gate)
 ok   upload check does not parse on the page thread
 ok   loading card shows the stages
 ok   loading card has a progress bar
 ok   no loading card left behind
 ok   download assembled off the page thread
-  step 1, 150 pages: load 46 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
+  step 1, 150 pages: load 47 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
 ok   step 1: thumbnails are lazy (not all drawn up front)
 ok   step 1: scrolling draws more thumbnails
 ok   step 1: scroll p95 frame < 100 ms
-  step 2, 150 pages: load 59 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
+  step 2, 150 pages: load 66 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.8 max 16.8, 0 frames > 50 ms of 388
 ok   step 2: thumbnails are lazy (not all drawn up front)
 ok   step 2: scrolling draws more thumbnails
 ok   step 2: scroll p95 frame < 100 ms
-220 passed, 0 failed
+241 passed, 0 failed

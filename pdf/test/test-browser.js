@@ -123,12 +123,14 @@ async function main() {
     await fileOrderTest(browser, base);
     await stepOneUndoTest(browser, base);
     await undoRaceTest(browser, base);
+    await polishTest(browser, base);
     await paperTest(browser, base, pdfjs);
     await errorsTest(browser, base);
     await dropGuardTest(browser, base);
     await cjkTest(browser, base);
     await loadFailureTest(browser, base);
     await rasterTest(browser, base, pdfjs);
+    await rasterGateTest(browser, base);
     await uploadProgressTest(browser, base);
     await bigScrollTest(browser, base);
   } finally {
@@ -169,6 +171,7 @@ async function pickerTest(browser, base) {
   await tile(0, 1).locator('input').click();
   check('un-ticked page leaves the output', (await order(pg)).join() === 'A1,A3,B1,B2', (await order(pg)).join());
   check('un-ticked page greyed', await tile(0, 1).evaluate(e => e.classList.contains('off')));
+  check('a click on the tick box itself leaves it unticked (#4)', !(await tile(0, 1).locator('input').isChecked()));
   check('status counts picked pages', (await pg.textContent('#status')).includes('已選 4 頁'), await pg.textContent('#status'));
   // preview follows a click, arrow keys move it, space toggles
   await tile(1, 0).click();
@@ -214,6 +217,7 @@ async function pickerTest(browser, base) {
   await tile(1, 0).locator('input').click();                       // untick B1 (anchor)
   await tile(1, 1).locator('input').click({ modifiers: ['Shift'] }); // B1..B2 → unticked
   check('shift+click unticks the range', (await order(pg)).join() === 'A1,A3', (await order(pg)).join());
+  check('shift+click on a tick box leaves the clicked box unticked (#4)', !(await tile(1, 1).locator('input').isChecked()));
   check('shift+click selects no text', await pg.evaluate(() => window.getSelection().toString()) === '', await pg.evaluate(() => window.getSelection().toString()));
   await tile(0, 0).click();                                           // focus A1 (no change)
   await tile(0, 2).click({ modifiers: ['Shift'] });                 // on the thumbnail: A1..A3 take A3's new state (untick)
@@ -765,18 +769,153 @@ async function undoRaceTest(browser, base) {
   await pg.close();
 }
 
+// Cold review 11/18, P2s Yves promoted: what the screen shows must match what
+// is output (thumbnail cache, step-1 tiles of turned pages; the tick box is
+// in pickerTest), and un-ticked work must not vanish without a warning.
+async function polishTest(browser, base) {
+  // #1 a thumbnail redrawn for a new rotation must not stay listed under its old key
+  let pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 3);
+  await waitThumbs(pg);
+  const drawn = i => pg.waitForFunction(i => { const c = document.querySelectorAll('#grid .card[data-uid] canvas')[i]; return c && c.style.visibility !== 'hidden'; }, i);
+  await cardAt(pg, 0).click();
+  await pg.click('#dup-btn'); // A1 copy at 1, selected
+  await drawn(1);
+  for (let k = 0; k < 2; k++) { await pg.keyboard.press('r'); await drawn(1); } // the copy turned 180°
+  await cardAt(pg, 0).click();
+  await pg.click('#dup-btn'); // A1 again: A1, new copy, turned copy
+  await drawn(1);
+  // dark pixels where the "A1" marker sits upright (top left) and turned 180° (bottom right)
+  const marker = i => pg.evaluate(i => {
+    const c = document.querySelectorAll('#grid .card[data-uid] canvas')[i], g = c.getContext('2d');
+    const w = Math.round(c.width * 0.3), h = Math.round(c.height * 0.15);
+    const dark = (x, y) => { const d = g.getImageData(x, y, w, h).data; let n = 0; for (let j = 0; j < d.length; j += 4) if (d[j] + d[j + 1] + d[j + 2] < 300) n++; return n; };
+    return { tl: dark(0, 0), br: dark(c.width - w, c.height - h) };
+  }, i);
+  const turned = await marker(2), fresh = await marker(1);
+  check('control: the turned copy shows its marker bottom right', turned.br > 0 && turned.tl === 0, JSON.stringify(turned));
+  check('#1 a new copy gets upright pixels, not the turned copy\'s', fresh.tl > 0 && fresh.br === 0, JSON.stringify(fresh));
+  check('no page errors (thumbnail cache)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
+
+  // #2 step 1 shows the source page as it is: shapes of a turned page (in
+  // turned coordinates) are not drawn on the unturned thumbnail
+  pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-landscape.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 2);
+  await cardAt(pg, 0).dblclick();
+  await editorReady(pg);
+  await setStyle(pg, { tool: 'rect', stroke: 'black', fill: 'red', width: '2' });
+  await dragPts(pg, 30, 40, 120, 100);
+  await pg.keyboard.press('Escape');
+  const tile = pg.locator('#groups .group').nth(0).locator('.tile').nth(0);
+  const tileShapes = () => tile.locator('svg > *').count();
+  await pg.click('#step1-tab');
+  check('control: an unturned page shows its shape in step 1', await tileShapes() === 1, await tileShapes());
+  await pg.click('#step2-tab');
+  await cardAt(pg, 0).click();
+  await pg.keyboard.press('r');
+  await pg.click('#step1-tab');
+  const vb = (await tile.locator('svg').getAttribute('viewBox')).split(' ').map(Number);
+  check('#2 step-1 tile of a turned page: no shapes on the unturned page', await tileShapes() === 0 && vb[2] > vb[3], `${await tileShapes()} shapes, viewBox ${vb}`);
+  await tile.click();
+  check('#2 and it agrees with the step-1 preview', await pg.locator('#pv-svg > *').count() === await tileShapes());
+  await pg.close();
+
+  // #5 every page un-ticked: closing still warns, the parked pages carry the work
+  pg = await newPage(browser, base, 1);
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 3);
+  const leaving = () => pg.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; });
+  await pg.locator('#groups .group').nth(0).locator('[data-all="0"]').click();
+  check('#5 every page un-ticked: leaving still warns', await leaving());
+  await pg.close();
+}
+
+// 圖片版 memory gate: three pages drawn first give the output size. Over the
+// limit the download stops before anything is assembled, with a zh-TW
+// suggestion; a failed estimate says so and leaves the tool usable.
+async function rasterGateTest(browser, base) {
+  const pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf'), fx('a4-landscape.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 5);
+  await waitThumbs(pg);
+  await pg.evaluate(() => {
+    window.__creates = 0; // rasterize() starts by creating the output document
+    const D = window.PDFLib.PDFDocument, o = D.create.bind(D);
+    D.create = (...a) => { window.__creates++; return o(...a); };
+  });
+  let downloads = 0;
+  pg.on('download', () => downloads++);
+  const creates = () => pg.evaluate(() => window.__creates);
+  // within the limit: downloads as usual; the estimate (3 of 5 pages drawn) is near the real size
+  const est = await pg.evaluate(() => { const t = window.__pdfTool; return t.estimateRaster(t.snapshot(), 300, null); });
+  const { file } = await download(pg, 'gate-300.pdf', 300);
+  const size = fs.statSync(file).size;
+  check('within the limit: the image version downloads', (await creates()) === 1 && downloads === 1, `${await creates()} assembled, ${downloads} downloads`);
+  console.log(`  圖片版 estimate ${Math.round(est)} bytes vs real file ${size} bytes (5 pages, 300 dpi)`);
+  check('estimate within 25% of the real file size', Math.abs(est - size) / size < 0.25, `${Math.round(est)} vs ${size}`);
+  // over the limit
+  const limit = await pg.evaluate(() => window.__pdfTool.rasterMaxBytes);
+  await pg.evaluate(() => { window.__pdfTool.rasterMaxBytes = 1000; });
+  const stopped = async dpi => {
+    await pg.click('#download-btn');
+    await pg.waitForSelector('#dl-dialog[open]');
+    await pg.check(`#dl-dialog input[value="${dpi}"]`);
+    await pg.click('#dl-ok');
+    await pg.waitForSelector('#errors:not([hidden])');
+    await pg.waitForFunction(() => !window.__pdfTool.S.busy);
+    const t = await pg.textContent('#errors');
+    await pg.click('#errors-close');
+    return t;
+  };
+  let t = await stopped(600);
+  check('over the limit at 600 dpi: stops, suggests 300 dpi', t.includes('太大') && t.includes('300 dpi'), t);
+  t = await stopped(300);
+  check('over the limit at 300 dpi: suggests fewer pages', t.includes('太大') && t.includes('減少頁數'), t);
+  check('over the limit: nothing assembled, nothing downloaded', (await creates()) === 1 && downloads === 1, `${await creates()} assembled, ${downloads} downloads`);
+  check('over the limit: the tool is ready again', (await pg.textContent('#download-btn')) === '下載 PDF' && !(await pg.isDisabled('#download-btn')));
+  // the estimate itself fails (a page cannot be drawn)
+  await pg.evaluate(limit => {
+    const t = window.__pdfTool;
+    t.rasterMaxBytes = limit;
+    for (const s of t.S.sources.values()) s.doc.getPage = () => Promise.reject(new Error('test: page cannot be drawn'));
+  }, limit);
+  t = await stopped(300);
+  check('estimate fails: zh-TW message, nothing assembled', t.includes('無法預估') && (await creates()) === 1 && downloads === 1, `${t} / ${await creates()} assembled`);
+  await pg.evaluate(() => { for (const s of window.__pdfTool.S.sources.values()) delete s.doc.getPage; });
+  await download(pg, 'gate-again.pdf', 300);
+  check('after a failed estimate the tool still downloads', downloads === 2 && (await creates()) === 2);
+  check('no page errors (raster gate)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
+}
+
 // 紙張大小 in the download dialog: original and image version both put each
 // page on the chosen paper (orientation per page), scaled to fit, centred;
 // shapes come along. The dialog resets to 原始大小 each time.
 async function paperTest(browser, base, pdfjs) {
   const pg = await newPage(browser, base);
-  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf'), fx('a4-landscape.pdf'), fx('b4.pdf')]);
-  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 6);
+  // US Letter, portrait and landscape: not the √2 shape of A/B paper, so on B4
+  // they sit well off the edge (oy ≈ 44 pt on L1, ox ≈ 44 pt on L2)
+  const L = require('../vendor/pdf-lib.min.js');
+  const letter = await L.PDFDocument.create();
+  for (const [w, h] of [[612, 792], [792, 612]]) letter.addPage([w, h]).drawRectangle({ x: 10, y: 10, width: w - 20, height: h - 20, borderWidth: 1, borderColor: L.rgb(0.85, 0.85, 0.85) });
+  const file = f => ({ name: f, mimeType: 'application/pdf', buffer: fs.readFileSync(fx(f)) }); // paths and buffers cannot be mixed
+  await pg.setInputFiles('#file-input', [file('a4-portrait.pdf'), file('a4-landscape.pdf'), file('b4.pdf'),
+    { name: 'letter.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await letter.save()) }]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 8);
   await waitThumbs(pg);
   await cardAt(pg, 5).dblclick(); // C1 (ISO B4)
   await editorReady(pg);
   await setStyle(pg, { tool: 'rect', stroke: 'black', fill: 'red', width: '2' });
   await dragPts(pg, 100, 200, 300, 320);
+  // small boxes near the edge the centring moves them away from: a box drawn
+  // at offset 0 would miss its probe
+  await pg.keyboard.press('PageDown'); await editorReady(pg);
+  await dragPts(pg, 100, 20, 200, 60); // L1
+  await pg.keyboard.press('PageDown'); await editorReady(pg);
+  await dragPts(pg, 20, 100, 60, 200); // L2
   await pg.keyboard.press('Escape');
   const shape = (await shapesOf(pg, 5))[0];
   const dl = async (name, dpi, paperName) => {
@@ -796,17 +935,27 @@ async function paperTest(browser, base, pdfjs) {
   const vdoc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(vec)), verbosity: 0 }).promise;
   const sizes = [];
   for (let n = 1; n <= vdoc.numPages; n++) { const v = (await vdoc.getPage(n)).getViewport({ scale: 1 }); sizes.push(`${Math.round(v.width)}x${Math.round(v.height)}`); }
-  check('A4: every page A4, portrait or landscape like the page', sizes.join() === '595x842,595x842,595x842,842x595,842x595,595x842', sizes.join());
+  check('A4: every page A4, portrait or landscape like the page', sizes.join() === '595x842,595x842,595x842,842x595,842x595,595x842,595x842,842x595', sizes.join());
   const { file: img } = await dl('paper-b4-300.pdf', 300, 'B4');
   const idoc = await pdfjs.getDocument({ data: new Uint8Array(fs.readFileSync(img)), verbosity: 0 }).promise;
   const ip = await idoc.getPage(6), iv = ip.getViewport({ scale: 1 });
   check('image B4: JIS size', near(iv.width, B4[0], 0.1) && near(iv.height, B4[1], 0.1), `${iv.width}x${iv.height}`);
-  const fit = await pg.evaluate(([w, h, pw, ph]) => window.__pdfTool.A.paperFit({ w: pw, h: ph }, w, h), [708.66, 1000.63, ...B4]);
+  // where a page lands on the paper, worked out here — not with the tool's own paperFit
+  const onB4 = (w, h) => {
+    const D = w > h ? [B4[1], B4[0]] : [B4[0], B4[1]], s = Math.min(D[0] / w, D[1] / h);
+    return { D, s, ox: (D[0] - w * s) / 2, oy: (D[1] - h * s) / 2 };
+  };
+  const fit = onB4(708.66, 1000.63), f1 = onB4(612, 792), f2 = onB4(792, 612);
+  check('samples sit well off the paper edge (oy on L1, ox on L2)', f1.oy > 30 && f2.ox > 30, `${f1.oy} / ${f2.ox}`);
   const cx = fit.ox + fit.s * (shape.x1 + shape.x2) / 2, cy = fit.oy + fit.s * (shape.y1 + shape.y2) / 2;
-  const kit = pdfkitColors(img, [{ page: 6, x: cx / B4[0], y: cy / B4[1] }, { page: 6, x: (fit.ox + fit.s * (shape.x2 + 30)) / B4[0], y: cy / B4[1] }]);
+  const kit = pdfkitColors(img, [{ page: 6, x: cx / B4[0], y: cy / B4[1] }, { page: 6, x: (fit.ox + fit.s * (shape.x2 + 30)) / B4[0], y: cy / B4[1] },
+    { page: 7, x: (f1.ox + f1.s * 150) / f1.D[0], y: (f1.oy + f1.s * 40) / f1.D[1] },
+    { page: 8, x: (f2.ox + f2.s * 40) / f2.D[0], y: (f2.oy + f2.s * 150) / f2.D[1] }]);
   if (kit) {
     check('image B4: the box scaled and centred with its page', close(kit[0].rgb, RGB.red), kit[0].rgb);
     check('image B4: nothing red beside it', !close(kit[1].rgb, RGB.red, 40), kit[1].rgb);
+    check('image B4: a Letter page centred top to bottom (box where oy puts it)', close(kit[2].rgb, RGB.red), kit[2].rgb);
+    check('image B4: a landscape Letter page centred side to side (box where ox puts it)', close(kit[3].rgb, RGB.red), kit[3].rgb);
   }
   check('no page errors (paper)', pg.errors.length === 0, pg.errors.join(' | '));
   await pg.close();

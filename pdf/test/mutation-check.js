@@ -65,7 +65,7 @@ const M = [
   { file: 'app.js', suite: 'browser', what: 'mixed values shown as the first page value', find: 'const lo = Math.min(...vals), hi = Math.max(...vals), mixed = lo !== hi;', replace: 'const lo = Math.min(...vals), hi = Math.max(...vals), mixed = false;' },
   { file: 'app.js', suite: 'browser', what: 'side preview not live while a slider moves', find: '  renderPreview(); // and the big preview\n', replace: '' },
   { file: 'app.js', suite: 'browser', what: 'side preview zoom ignored', find: '  const k = fit * pvZoom;', replace: '  const k = fit;' },
-  { file: 'app.js', suite: 'browser', what: 'image version ignores the paper', find: '    const fit = paper && A.paperFit(paper, p.w, p.h);', replace: '    const fit = null;' },
+  { file: 'app.js', suite: 'browser', what: 'image version ignores the paper', find: '  const fit = paper && A.paperFit(paper, p.w, p.h);', replace: '  const fit = null;' },
   { file: 'app.js', suite: 'browser', what: 'moving a file does not regroup the output', find: '  S.pages = S.pages.map((p, i) => [p, i]).sort(', replace: '  if (0) S.pages = S.pages.map((p, i) => [p, i]).sort(' },
   { file: 'app.js', suite: 'browser', what: 'undo forgets the file order', find: '  S.order = u.order;\n', replace: '' },
   { file: 'app.js', suite: 'browser', what: 'step 1: shift+click ignored (single toggle)', find: 'if (e.shiftKey && psrc === src) {', replace: 'if (false && e.shiftKey && psrc === src) {' },
@@ -90,6 +90,17 @@ const M = [
   { file: 'app.js', suite: 'browser', what: 'image version does not burn the shapes in', find: 'if (p.shapes.length) await burnShapes(g, p, canvas.width, canvas.height);', replace: '' },
   { file: 'app.js', suite: 'browser', what: 'download dialog does not default to the original', find: `querySelector('input[value="0"]').checked = true;`, replace: `querySelector('input[value="300"]').checked = true;` },
   { file: 'app.js', suite: 'browser', what: 'thumbnails render annotations (preview ≠ output)', find: 'canvas, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.DISABLE,', replace: 'canvas, viewport: vp,' },
+  // ---- polish batch 11/18: promoted P2s, paper centring, 圖片版 memory gate
+  { file: 'app.js', suite: 'browser', what: 'thumbnail cache keeps a redrawn canvas under its old key', find: '  unlist(c.canvas); // its old key no longer describes these pixels\n', replace: '' },
+  { file: 'app.js', suite: 'browser', what: 'step-1 tile draws a turned page\'s shapes on the unturned page', find: 'shapes: plainShapes(entry) }, { outlines: true });', replace: 'shapes: entry ? entry.shapes : [] }, { outlines: true });' },
+  { file: 'app.js', suite: 'browser', what: 'click on the tick box cancelled (old tick comes back)', find: "  if (e.target.closest('.tick')) {\n    if (!onBox) e.preventDefault();", replace: "  if (e.target.closest('.tick')) {\n    e.preventDefault();" },
+  { file: 'app.js', suite: 'browser', what: 'shift+click on the tick box cancelled (old tick comes back)', find: '    if (!onBox) e.preventDefault();\n    tile.focus', replace: '    e.preventDefault();\n    tile.focus' },
+  { file: 'app.js', suite: 'browser', what: 'no leave warning when every page is un-ticked', find: '(S.pages.length || S.parked.size) && S.dirty', replace: 'S.pages.length && S.dirty' },
+  { file: 'assemble.js', suite: 'browser', what: 'paper: image version not centred side to side (ox 0)', find: 'ox: (D.w - w * s) / 2', replace: 'ox: 0' },
+  { file: 'assemble.js', suite: 'browser', what: 'paper: image version not centred top to bottom (oy 0)', find: 'oy: (D.h - h * s) / 2', replace: 'oy: 0' },
+  { file: 'app.js', suite: 'browser', what: '圖片版 size gate removed', find: 'if (est > ctx.rasterMaxBytes) {', replace: 'if (false) {' },
+  { file: 'app.js', suite: 'browser', what: '圖片版 failed estimate falls through to assembling', find: "return showErrors(['無法預估", replace: "showErrors(['無法預估" },
+  { file: 'app.js', suite: 'browser', what: '圖片版 estimate not scaled to the page count', find: 'return sum / sample.length * n;', replace: 'return sum / sample.length;' },
 ];
 
 function run(cmd, args, env) {

@@ -208,7 +208,7 @@ window.addEventListener('drop', e => {
   if (!ctx.editorOpen() && e.dataTransfer?.files?.length) addFiles([...e.dataTransfer.files]);
 });
 window.addEventListener('beforeunload', e => {
-  if (S.pages.length && S.dirty) { e.preventDefault(); e.returnValue = ''; }
+  if ((S.pages.length || S.parked.size) && S.dirty) { e.preventDefault(); e.returnValue = ''; } // un-ticked pages carry work too
 });
 
 // ---------- grid rendering ----------
@@ -228,10 +228,11 @@ function fitSize(p) {
 const jobs = new WeakMap();
 const drawnCanvas = new Map(); // "src:index" -> a canvas holding that thumbnail
 function watch(el, c, info) { jobs.set(el, { c, info }); observer.observe(el); }
+const unlist = canvas => { for (const [k, cv] of drawnCanvas) if (cv === canvas) drawnCanvas.delete(k); };
 function forgetCard(c) {
   observer.unobserve(c.el);
   c.el.remove();
-  for (const [k, cv] of drawnCanvas) if (cv === c.canvas) drawnCanvas.delete(k);
+  unlist(c.canvas);
 }
 function makeSheet(el, p) {
   const c = { el, sheet: el.querySelector('.sheet'), canvas: el.querySelector('canvas'), svg: el.querySelector('svg'), drawnKey: null };
@@ -440,6 +441,7 @@ async function drawThumb(c, p, key) {
     page.cleanup(); // drop decoded images; a scanned page holds tens of MB
   }
   c.drawnKey = key;
+  unlist(c.canvas); // its old key no longer describes these pixels
   drawnCanvas.set(key, c.canvas);
   c.canvas.style.visibility = '';
 }
@@ -450,6 +452,9 @@ async function drawThumb(c, p, key) {
 // ticking again brings them back; deleting in step 2 just removes them.
 const pkey = (src, i) => src + ':' + i;
 const isPicked = (src, i) => S.pages.some(p => p.src === src && p.index === i);
+// Step 1 shows the source page as it is, so an entry's shapes only when it is
+// not turned or adjusted (they are placed on the turned / adjusted page)
+const plainShapes = e => (e && !e.rot && !e.zoom && !e.margin ? e.shapes : []);
 function pick(src, i, on) {
   const key = pkey(src, i);
   if (!on) {
@@ -543,7 +548,7 @@ function renderPicker() {
       t.el.querySelector('input').checked = on;
       t.el.classList.toggle('focus', S.focus === pkey(id, i));
       const entry = S.pages.find(p => p.src === id && p.index === i);
-      drawShapesSvg(t.c.svg, entry || { w: src.geoms[i].w, h: src.geoms[i].h, shapes: [] }, { outlines: true });
+      drawShapesSvg(t.c.svg, { w: src.geoms[i].w, h: src.geoms[i].h, shapes: plainShapes(entry) }, { outlines: true });
     });
     const folded = S.collapsed.has(id);
     g.el.classList.toggle('folded', folded);
@@ -592,13 +597,17 @@ $('groups').addEventListener('click', e => {
   // Shift+click: every page from the last clicked one (same file) to this
   // one takes this page's new state — one undo step
   const [psrc, pi] = (prev || '').split(':');
+  // On the label, cancel: it would toggle the box itself (state comes from
+  // S.pages). On the box, don't: cancelling makes the browser put the old
+  // tick back after render().
+  const onBox = e.target.matches('.tick input');
   if (e.shiftKey && psrc === src) {
-    e.preventDefault();
+    if (!onBox) e.preventDefault();
     tile.focus({ preventScroll: true });
     return rangePick(src, Number(pi), Number(i), !isPicked(src, Number(i)));
   }
   if (e.target.closest('.tick')) {
-    e.preventDefault(); // the label would toggle the box itself; state comes from S.pages
+    if (!onBox) e.preventDefault();
     return togglePick(src, Number(i));
   }
   tile.focus({ preventScroll: true });
@@ -619,10 +628,8 @@ function previewTarget() {
     if (!source) return null;
     const i = Number(si), geo = source.geoms[i];
     const entry = S.pages.find(p => p.src === src && p.index === i);
-    // the source page as it is; an entry's shapes only if it is not turned or adjusted
-    const plain = entry && !entry.rot && !entry.zoom && !entry.margin;
     return {
-      p: { src, index: i, w: geo.w, h: geo.h, rotate: geo.rotate, shapes: plain ? entry.shapes : [] },
+      p: { src, index: i, w: geo.w, h: geo.h, rotate: geo.rotate, shapes: plainShapes(entry) },
       key: S.focus,
       label: `${source.name} · 第 ${i + 1} 頁${isPicked(src, i) ? '' : '（未選）'}`,
     };
@@ -928,46 +935,62 @@ function duplicateSelected() {
 // ---------- image-version output ----------
 const RASTER_JPEG_QUALITY = 0.92;
 const MAX_CANVAS_SIDE = 16384; // browsers refuse larger canvases
+// The image version holds every page's JPEG in memory and copies the whole
+// file twice more (save, Blob): at the peak ~3x the output size (cold review
+// 11/18: 1.18 GB of output, +3.4 GB). Past this the tab may crash and take
+// the unsaved work with it, so download() stops first. Tests lower it.
+const RASTER_MAX_BYTES = 500e6;
 
 // Each page drawn by pdf.js at `dpi` (rotation applied), the shapes burned in
 // with the very SVG the preview shows, then one JPEG per page in a fresh PDF.
 // Nothing but pixels is carried over: the print matches the preview, and no
 // object of a deleted page (or text under a white box) can come along.
+async function pageJpeg(p, dpi, paper) {
+  const page = await S.sources.get(p.src).doc.getPage(p.index + 1);
+  const canvas = document.createElement('canvas');
+  const g = canvas.getContext('2d');
+  try {
+    // on a chosen paper the page prints scaled by fit.s: render it at that size
+    await renderPage(page, p, Math.min((paper ? A.paperFit(paper, p.w, p.h).s : 1) * dpi / 72, MAX_CANVAS_SIDE / Math.max(p.w, p.h)), canvas);
+  } finally {
+    page.cleanup();
+  }
+  if (p.shapes.length) await burnShapes(g, p, canvas.width, canvas.height);
+  // 縮放至紙張: the page image, scaled to fit, centred on white paper
+  const fit = paper && A.paperFit(paper, p.w, p.h);
+  let sheet = canvas, pw = p.w, ph = p.h;
+  if (fit) {
+    pw = fit.D.w; ph = fit.D.h;
+    sheet = document.createElement('canvas');
+    sheet.width = Math.round(Math.min(pw * dpi / 72, MAX_CANVAS_SIDE));
+    sheet.height = Math.round(sheet.width * ph / pw);
+    const k = sheet.width / pw, sg = sheet.getContext('2d');
+    sg.fillStyle = '#fff';
+    sg.fillRect(0, 0, sheet.width, sheet.height);
+    sg.drawImage(canvas, fit.ox * k, fit.oy * k, p.w * fit.s * k, p.h * fit.s * k);
+    canvas.width = canvas.height = 0;
+  }
+  const blob = await new Promise(r => sheet.toBlob(r, 'image/jpeg', RASTER_JPEG_QUALITY));
+  sheet.width = sheet.height = 0; // free the bitmap before the next page
+  return { blob, pw, ph };
+}
 async function rasterize(pages, dpi, onProgress, paper) {
   const out = await window.PDFLib.PDFDocument.create();
   for (let i = 0; i < pages.length; i++) {
     onProgress(i + 1, pages.length);
-    const p = pages[i];
-    const page = await S.sources.get(p.src).doc.getPage(p.index + 1);
-    const canvas = document.createElement('canvas');
-    const g = canvas.getContext('2d');
-    try {
-      // on a chosen paper the page prints scaled by fit.s: render it at that size
-      await renderPage(page, p, Math.min((paper ? A.paperFit(paper, p.w, p.h).s : 1) * dpi / 72, MAX_CANVAS_SIDE / Math.max(p.w, p.h)), canvas);
-    } finally {
-      page.cleanup();
-    }
-    if (p.shapes.length) await burnShapes(g, p, canvas.width, canvas.height);
-    // 縮放至紙張: the page image, scaled to fit, centred on white paper
-    const fit = paper && A.paperFit(paper, p.w, p.h);
-    let sheet = canvas, pw = p.w, ph = p.h;
-    if (fit) {
-      pw = fit.D.w; ph = fit.D.h;
-      sheet = document.createElement('canvas');
-      sheet.width = Math.round(Math.min(pw * dpi / 72, MAX_CANVAS_SIDE));
-      sheet.height = Math.round(sheet.width * ph / pw);
-      const k = sheet.width / pw, sg = sheet.getContext('2d');
-      sg.fillStyle = '#fff';
-      sg.fillRect(0, 0, sheet.width, sheet.height);
-      sg.drawImage(canvas, fit.ox * k, fit.oy * k, p.w * fit.s * k, p.h * fit.s * k);
-      canvas.width = canvas.height = 0;
-    }
-    const blob = await new Promise(r => sheet.toBlob(r, 'image/jpeg', RASTER_JPEG_QUALITY));
-    sheet.width = sheet.height = 0; // free the bitmap before the next page
+    const { blob, pw, ph } = await pageJpeg(pages[i], dpi, paper);
     const img = await out.embedJpg(new Uint8Array(await blob.arrayBuffer()));
     out.addPage([pw, ph]).drawImage(img, { x: 0, y: 0, width: pw, height: ph });
   }
   return out.save();
+}
+// Output size of the image version: the first, middle and last page drawn
+// for real, their mean times the page count.
+async function estimateRaster(pages, dpi, paper) {
+  const n = pages.length, sample = [...new Set([0, n >> 1, n - 1])];
+  let sum = 0;
+  for (const i of sample) sum += (await pageJpeg(pages[i], dpi, paper)).blob.size;
+  return sum / sample.length * n;
 }
 async function burnShapes(g, p, w, h) {
   const svg = document.createElementNS(SVGNS, 'svg');
@@ -1003,6 +1026,18 @@ async function download(dpi = 0, paperName = '') {
     const used = new Set(pages.map(p => p.src));
     let bytes;
     if (dpi) {
+      btn.textContent = '估算檔案大小…';
+      let est;
+      try {
+        est = await estimateRaster(pages, dpi, paper);
+      } catch (e) {
+        console.error(e);
+        return showErrors(['無法預估圖片版的檔案大小，為了不讓分頁因記憶體不足而當掉，先不產生檔案。頁面都還在，可以再試一次或改用「原始」；還是失敗請截圖給 Yves。']);
+      }
+      if (est > ctx.rasterMaxBytes) {
+        return showErrors([`圖片版預估約 ${Math.round(est / 1e6)} MB（${pages.length} 頁・${dpi} dpi），檔案太大：瀏覽器可能記憶體不足、整個分頁當掉，還沒下載的進度會消失，所以先不產生。` +
+          (dpi > 300 ? '請改用 300 dpi，或減少頁數、分次下載。' : '請減少頁數、分次下載，或改用「原始」。')]);
+      }
       // page images at the dpi they will print at on the chosen paper
       bytes = await rasterize(pages, dpi, (i, n) => { btn.textContent = `產生中… ${i}/${n}`; }, paper);
     } else {
@@ -1075,7 +1110,7 @@ document.addEventListener('keydown', e => {
 
 // Shared with the shape editor (editor.js).
 export const ctx = {
-  S, pdfjsLib, A, setStep, renderPage, snapshot, commit, undo, render, toast, drawShapesSvg, shapeEl, outlineEl, newId: () => 'h' + (nextId++),
+  S, pdfjsLib, A, setStep, renderPage, snapshot, estimateRaster, rasterMaxBytes: RASTER_MAX_BYTES, commit, undo, render, toast, drawShapesSvg, shapeEl, outlineEl, newId: () => 'h' + (nextId++),
   editorAvailable: false,
   editorOpen: () => false,
   editorGesture: () => false,

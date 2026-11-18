@@ -73,7 +73,8 @@ function snapshot() { return clonePages(S.pages); }
 // Record a change. `before` is the snapshot taken before the change (callers
 // that mutate over several events, like a drag, take it at the start).
 function commit(label, before = null) {
-  S.undo.push({ label, pages: before || snapshot(), order: [...S.order] });
+  // parked entries are only ever set or deleted, never changed: a shallow copy is a snapshot
+  S.undo.push({ label, pages: before || snapshot(), order: [...S.order], parked: new Map(S.parked) });
   if (S.undo.length > UNDO_LIMIT) S.undo.shift();
   S.dirty = true;
   S.rev++;
@@ -84,6 +85,8 @@ function undo() {
   if (!u) return;
   S.pages = u.pages;
   S.order = u.order;
+  S.parked = u.parked;
+  if (S.focus && !S.order.includes(S.focus.split(':')[0])) S.focus = null; // its file's add was undone
   S.rev++;
   const alive = new Set(S.pages.map(p => p.uid));
   for (const id of [...S.sel]) if (!alive.has(id)) S.sel.delete(id);
@@ -115,6 +118,7 @@ $('errors-close').onclick = () => { $('errors').hidden = true; $('errors').query
 async function addFiles(files) {
   const errs = [];
   const added = [];
+  let keepSel = false;
   for (const f of files) {
     if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') { errs.push(`${f.name}：不是 PDF 檔`); continue; }
     const loading = loadingCard(f.name);
@@ -146,6 +150,9 @@ async function addFiles(files) {
       // undo stack stay consistent
       S.sources.set(id, { id, name: f.name, bytes, doc: r.doc, geoms: fresh.map(p => ({ w: p.w, h: p.h, rotate: p.rotate })) });
       if (!S.focus) S.focus = id + ':0';
+      // a 頁面調整 slider mid-drag: close its undo step first, and leave the
+      // selection it is adjusting alone
+      if (adjBefore) { commitAdjust(); keepSel = true; }
       commit('加入 ' + f.name);
       S.order.push(id); // after commit: undoing the add removes the group as well
       S.pages.push(...fresh);
@@ -159,7 +166,7 @@ async function addFiles(files) {
     }
   }
   const alive = added.filter(id => S.pages.some(p => p.uid === id)); // some may be undone/deleted meanwhile
-  if (alive.length) {
+  if (alive.length && !keepSel && !adjBefore) {
     S.sel = new Set(alive);
     S.anchor = alive[0];
     render();
@@ -459,11 +466,14 @@ function pick(src, i, on) {
     .map(p => ({ ...p, uid: uid(), shapes: p.shapes.map(sh => ({ ...sh })) }));
   S.parked.delete(key);
   // back into file order: after the last earlier page of the same file,
-  // else before its first later page, else at the end
+  // else before its first later page, else before the first page of a file
+  // that comes later in S.order, else at the end
   let at = -1;
   S.pages.forEach((p, k) => { if (p.src === src && p.index < i) at = k; });
   if (at >= 0) at += 1;
-  else { at = S.pages.findIndex(p => p.src === src && p.index > i); if (at < 0) at = S.pages.length; }
+  else at = S.pages.findIndex(p => p.src === src && p.index > i);
+  if (at < 0) { const r = S.order.indexOf(src); at = S.pages.findIndex(p => S.order.indexOf(p.src) > r); }
+  if (at < 0) at = S.pages.length;
   S.pages.splice(at, 0, ...back);
 }
 function togglePick(src, i) {
@@ -690,7 +700,7 @@ window.addEventListener('resize', () => { pvShown = null; renderPreview(); });
 
 // visible tiles in reading order (folded groups skipped)
 function moveFocus(d) {
-  const tiles = [...document.querySelectorAll('#groups .group:not(.folded) .tile')];
+  const tiles = [...document.querySelectorAll('#groups .group:not([hidden]):not(.folded) .tile')];
   if (!tiles.length) return;
   let k = tiles.findIndex(t => t.dataset.key === S.focus);
   k = k < 0 ? 0 : Math.max(0, Math.min(tiles.length - 1, k + d));
@@ -1050,7 +1060,11 @@ document.addEventListener('keydown', e => {
     if (e.target.closest && e.target.closest('button')) return;
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); moveFocus(1); }
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); moveFocus(-1); }
-    else if (e.key === ' ' && S.focus) { e.preventDefault(); const [src, i] = S.focus.split(':'); togglePick(src, Number(i)); }
+    else if (e.key === ' ') {
+      // the page whose checkbox has the keyboard focus, else the previewed one
+      const key = (e.target.closest && e.target.closest('.group:not([hidden]) .tile')?.dataset.key) || S.focus;
+      if (key) { e.preventDefault(); const [src, i] = key.split(':'); togglePick(src, Number(i)); }
+    }
     return;
   }
   if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); S.sel = new Set(S.pages.map(p => p.uid)); render(); }

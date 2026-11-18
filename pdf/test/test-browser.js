@@ -14,7 +14,7 @@ const { serve } = require('./serve');
 const { drawnPaths } = require('./oracle');
 
 const FIX = path.join(__dirname, 'fixtures');
-const OUT = path.join(__dirname, 'out');
+const OUT = process.env.OUT_DIR || path.join(__dirname, 'out'); // mutation-check gives each parallel run its own
 fs.mkdirSync(OUT, { recursive: true });
 const fx = f => path.join(FIX, f);
 let failed = 0, passed = 0;
@@ -121,6 +121,8 @@ async function main() {
     await sidePreviewTest(browser, base);
     await mixedAdjustTest(browser, base);
     await fileOrderTest(browser, base);
+    await stepOneUndoTest(browser, base);
+    await undoRaceTest(browser, base);
     await paperTest(browser, base, pdfjs);
     await errorsTest(browser, base);
     await dropGuardTest(browser, base);
@@ -667,6 +669,99 @@ async function fileOrderTest(browser, base) {
   await pg.keyboard.press('Control+z');
   check('undoing the add removes its group', (await names()) === 'a4-landscape.pdf,a4-portrait.pdf' && (await pg.textContent('#status')).startsWith('共 2 份檔案'), await names());
   check('no page errors (file order)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
+}
+
+// Cold review 11/18 (P1 regressions): undo vs parked pages, focus on a file
+// whose add was undone, editor undo of a rotation, a slider dragged while a
+// file finishes loading, re-ticking a fully un-ticked first file, Space on a
+// keyboard-focused checkbox.
+async function stepOneUndoTest(browser, base) {
+  // undoing a re-tick must not throw away what the parked page carried
+  let pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-landscape.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 2);
+  await cardAt(pg, 1).click();
+  await pg.keyboard.press('r');
+  await pg.click('#step1-tab');
+  const tick = i => pg.locator('#groups .group').nth(0).locator('.tile').nth(i).locator('input');
+  await tick(1).click(); // park B2 (turned)
+  await tick(1).click(); // back
+  await pg.keyboard.press('Control+z');
+  await tick(1).click(); // back again
+  const b2 = await pg.evaluate(() => window.__pdfTool.S.pages.find(p => p.index === 1));
+  check('undo of a re-tick keeps the parked page (rotation survives)', b2 && b2.rot === 90, JSON.stringify(b2 && { rot: b2.rot }));
+  check('no page errors (parked undo)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
+
+  // undoing an add hides that file: its pages must not be tickable any more
+  for (const how of ['space', 'arrow']) {
+    pg = await newPage(browser, base, 1);
+    await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf')]);
+    await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 3);
+    await pg.setInputFiles('#file-input', [fx('a4-landscape.pdf')]);
+    await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 5);
+    const tile = (g, i) => pg.locator('#groups .group').nth(g).locator('.tile').nth(i);
+    await tile(1, 0).click(); // focus B1
+    await pg.keyboard.press('Control+z'); // undo adding B
+    if (how === 'arrow') {
+      await tile(0, 2).click();
+      await pg.keyboard.press('ArrowRight');
+      check('after undoing an add, ArrowRight stays in the visible files', await pg.evaluate(() => { const { S } = window.__pdfTool; return S.focus && S.order.includes(S.focus.split(':')[0]); }));
+    }
+    await pg.keyboard.press(' ');
+    const o = (await order(pg)).join();
+    check(`after undoing an add, ${how === 'space' ? 'Space' : 'ArrowRight + Space'} cannot tick the hidden file`, !/B/.test(o), o);
+    await pg.close();
+  }
+
+  // the first file un-ticked entirely and ticked again goes back to its place
+  pg = await newPage(browser, base, 1);
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf'), fx('a4-landscape.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 5);
+  await pg.locator('#groups .group').nth(0).locator('[data-all="0"]').click();
+  await pg.locator('#groups .group').nth(0).locator('[data-all="1"]').click();
+  check('re-ticking an emptied first file puts it back first', (await order(pg)).join() === 'A1,A2,A3,B1,B2', (await order(pg)).join());
+
+  // Space toggles the page whose checkbox has the keyboard focus
+  await pg.locator('#groups .group').nth(0).locator('.tile').nth(2).locator('input').focus();
+  await pg.keyboard.press(' ');
+  check('Space on a focused checkbox toggles that page', (await order(pg)).join() === 'A1,A2,B1,B2', (await order(pg)).join());
+  check('no page errors (step 1 focus)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
+}
+
+async function undoRaceTest(browser, base) {
+  // Ctrl+Z inside the editor that undoes a rotation redraws the page
+  let pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 3);
+  await cardAt(pg, 0).click();
+  await pg.keyboard.press('r');
+  await cardAt(pg, 0).dblclick();
+  await editorReady(pg);
+  await pg.keyboard.press('Control+z');
+  const portrait = () => { const r = document.getElementById('ed-page').getBoundingClientRect(); return r.height > r.width; };
+  await pg.waitForFunction(portrait, null, { timeout: 3000 }).catch(() => {});
+  check('editor: undoing a rotation redraws the page upright', await pg.evaluate(portrait) && await pg.evaluate(() => !window.__pdfTool.S.pages[0].rot));
+  await pg.keyboard.press('Escape');
+  await pg.close();
+
+  // a 白邊 drag still in progress when another file finishes loading
+  pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [fx('a4-portrait.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 3);
+  await cardAt(pg, 0).click();
+  const slide = (v, done) => pg.evaluate(([v, done]) => { const el = document.getElementById('adj-margin'); el.value = v; el.dispatchEvent(new Event('input')); if (done) el.dispatchEvent(new Event('change')); }, [v, done]);
+  await slide(3, false);
+  await pg.setInputFiles('#file-input', [fx('b4.pdf')]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 4);
+  await slide(6, true);
+  const margins = () => pg.evaluate(() => window.__pdfTool.S.pages.map(p => p.margin || 0).join());
+  check('a drag across a file load stays on the dragged page', (await margins()) === '6,0,0,0', await margins());
+  await pg.keyboard.press('Control+z');
+  check('and undo takes back only the drag, not the added file', (await margins()) === '3,0,0,0', await margins());
+  check('no page errors (undo races)', pg.errors.length === 0, pg.errors.join(' | '));
   await pg.close();
 }
 

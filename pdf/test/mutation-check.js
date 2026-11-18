@@ -71,6 +71,17 @@ const M = [
   { file: 'app.js', suite: 'browser', what: 'step 1: shift+click ignored (single toggle)', find: 'if (e.shiftKey && psrc === src) {', replace: 'if (false && e.shiftKey && psrc === src) {' },
   { file: 'app.js', suite: 'browser', what: 'step 1: re-ticked page goes to the end, not back in file order', find: '  S.pages.splice(at, 0, ...back);', replace: '  S.pages.push(...back);' },
   { file: 'app.js', suite: 'browser', what: 'step 1: un-ticking forgets the shapes', find: '    S.parked.set(key, gone);\n', replace: '' },
+  // ---- cold review 11/18: P1 fixes
+  { file: 'assemble.js', what: 'single-stream /Contents left as is (縮放 silently lost)', find: '          else if (v instanceof PDFLib.PDFStream) page.node.set(C, out.context.obj([contents]));\n', replace: '' },
+  { file: 'assemble.js', what: 'paper: page without /Contents embedded anyway', find: '      if (!page.node.Contents()) continue; // a blank page with no content: embedPage would throw\n', replace: '' },
+  { file: 'app.js', suite: 'browser', what: 'undo forgets the parked pages', find: '  S.parked = u.parked;\n', replace: '' },
+  { file: 'app.js', suite: 'browser', what: 'undo keeps the focus on a file whose add was undone', find: "  if (S.focus && !S.order.includes(S.focus.split(':')[0])) S.focus = null; // its file's add was undone\n", replace: '' },
+  { file: 'app.js', suite: 'browser', what: 'arrow keys walk into a hidden group', find: "'#groups .group:not([hidden]):not(.folded) .tile'", replace: "'#groups .group:not(.folded) .tile'" },
+  { file: 'app.js', suite: 'browser', what: 're-ticking an emptied file puts it at the end', find: '  if (at < 0) { const r = S.order.indexOf(src); at = S.pages.findIndex(p => S.order.indexOf(p.src) > r); }\n', replace: '' },
+  { file: 'app.js', suite: 'browser', what: 'Space toggles the previewed page, not the focused checkbox', find: "(e.target.closest && e.target.closest('.group:not([hidden]) .tile')?.dataset.key) || S.focus", replace: 'S.focus' },
+  { file: 'app.js', suite: 'browser', what: 'a file load replaces the selection a slider is dragging', find: 'if (alive.length && !keepSel && !adjBefore)', replace: 'if (alive.length)' },
+  { file: 'app.js', suite: 'browser', what: 'a file load does not close the open slider undo step', find: '      if (adjBefore) { commitAdjust(); keepSel = true; }\n', replace: '      if (adjBefore) keepSel = true;\n' },
+  { file: 'editor.js', suite: 'browser', what: 'editor undo does not redraw an un-rotated page', find: '  if (shownAs(page()) !== E.shown) showPage(); else refresh();', replace: '  refresh();' },
   { file: 'app.js', suite: 'browser', what: 'preview / image version ignore 縮放', find: 'transform: k === 1 ? undefined : [k, 0, 0, k, W * (1 - k) / 2, H * (1 - k) / 2],', replace: 'transform: undefined,' },
   { file: 'app.js', suite: 'browser', what: 'preview / image version ignore 白邊', find: '  if (p.margin) {\n    const bx = W * p.margin / 100', replace: '  if (false) {\n    const bx = W * p.margin / 100' },
   { file: 'app.js', suite: 'browser', what: 'upload check parses on the page thread', find: ', { pageCount: workerPageCount });', replace: ');' },
@@ -104,7 +115,8 @@ function run(cmd, args, env) {
     const f = path.join(TMP, i + '-' + m.file);
     fs.writeFileSync(f, mutated);
     const r = m.suite === 'browser'
-      ? await run('node', ['test-browser.js'], { ['OVERRIDE_' + m.file.replace('.js', '_JS').toUpperCase()]: f })
+      // own OUT_DIR: two runs at once must not overwrite each other's downloads
+      ? await run('node', ['test-browser.js'], { ['OVERRIDE_' + m.file.replace('.js', '_JS').toUpperCase()]: f, OUT_DIR: fs.mkdtempSync(path.join(TMP, 'out-')) })
       : await run('node', ['test-assemble.js'], { ASSEMBLE_JS: f }).then(r => (r.code ? r : run('node', ['test-sanitize.js'], { ASSEMBLE_JS: f })));
     const fails = r.out.split('\n').filter(l => l.startsWith('FAIL') || /Error/.test(l));
     if (r.code === 0) { survived++; console.log(`SURVIVED  [${m.suite || 'node'}] ${m.file}: ${m.what}`); }

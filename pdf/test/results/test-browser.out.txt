@@ -151,6 +151,18 @@ ok   plain move
 ok   added file joins at the end
 ok   undoing the add removes its group
 ok   no page errors (file order)
+ok   undo of a re-tick keeps the parked page (rotation survives)
+ok   no page errors (parked undo)
+ok   after undoing an add, Space cannot tick the hidden file
+ok   after undoing an add, ArrowRight stays in the visible files
+ok   after undoing an add, ArrowRight + Space cannot tick the hidden file
+ok   re-ticking an emptied first file puts it back first
+ok   Space on a focused checkbox toggles that page
+ok   no page errors (step 1 focus)
+ok   editor: undoing a rotation redraws the page upright
+ok   a drag across a file load stays on the dragged page
+ok   and undo takes back only the drag, not the added file
+ok   no page errors (undo races)
 ok   paper-a4.pdf: dialog opens on 原始大小
 ok   file name says the paper
 ok   A4: every page A4, portrait or landscape like the page
@@ -182,7 +194,7 @@ ok   300 dpi: page sizes = preview sizes, no rotation left
 ok   300 dpi: one image per page at 300 dpi
 ok   300 dpi: no text left in the file
 ok   300 dpi: nothing but pages, images and their content
-  300 dpi: 11 pages in 506 ms, 820 KB
+  300 dpi: 11 pages in 486 ms, 820 KB
 ok   300 dpi: covered text is gone from the pixels
 ok   300 dpi: shape burned in where previewed
 ok   300 dpi: nothing red outside the shape
@@ -192,7 +204,7 @@ ok   600 dpi: page sizes = preview sizes, no rotation left
 ok   600 dpi: one image per page at 600 dpi
 ok   600 dpi: no text left in the file
 ok   600 dpi: nothing but pages, images and their content
-  600 dpi: 11 pages in 997 ms, 2706 KB
+  600 dpi: 11 pages in 963 ms, 2706 KB
 ok   600 dpi: covered text is gone from the pixels
 ok   600 dpi: shape burned in where previewed
 ok   600 dpi: nothing red outside the shape
@@ -203,12 +215,12 @@ ok   loading card shows the stages
 ok   loading card has a progress bar
 ok   no loading card left behind
 ok   download assembled off the page thread
-  step 1, 150 pages: load 49 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
+  step 1, 150 pages: load 46 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
 ok   step 1: thumbnails are lazy (not all drawn up front)
 ok   step 1: scrolling draws more thumbnails
 ok   step 1: scroll p95 frame < 100 ms
-  step 2, 150 pages: load 67 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.8 max 16.8, 0 frames > 50 ms of 388
+  step 2, 150 pages: load 59 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
 ok   step 2: thumbnails are lazy (not all drawn up front)
 ok   step 2: scrolling draws more thumbnails
 ok   step 2: scroll p95 frame < 100 ms
-208 passed, 0 failed
+220 passed, 0 failed

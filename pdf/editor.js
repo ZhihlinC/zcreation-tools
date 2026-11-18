@@ -122,8 +122,10 @@ function layoutPage() {
   el.style.height = Math.round(p.h * k) + 'px';
   return k;
 }
+const shownAs = p => [p.uid, p.w, p.h, p.rot, p.zoom, p.margin].join();
 async function showPage() {
   const p = page();
+  E.shown = shownAs(p);
   E.ready = false;
   if (E.renderTask) { E.renderTask.cancel(); E.renderTask = null; }
   const k = layoutPage();
@@ -334,6 +336,7 @@ ctx.onUndo = () => {
   if (!E.open) return;
   if (!page()) return close();
   if (!selShape()) E.selId = null;
-  refresh();
+  // an undone rotation or 頁面調整 changes the page itself, not just its shapes
+  if (shownAs(page()) !== E.shown) showPage(); else refresh();
 };
 ctx.render();

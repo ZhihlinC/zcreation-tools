@@ -275,6 +275,35 @@ async function testAdjust() {
   }
 }
 
+// The fixtures are written by pdf-lib, which always makes /Contents an array.
+// Real producers (Word, browsers, scanners) write ONE stream, and some blank
+// pages have no /Contents at all: 縮放 must still apply, paper must still work.
+async function testContentsShapes() {
+  const d = await PDFLib.PDFDocument.create();
+  const pg = d.addPage([595.28, 841.89]);
+  pg.drawText('S1', { x: 100, y: 700, size: 36, font: await d.embedFont(PDFLib.StandardFonts.Helvetica) });
+  pg.node.set(PDFLib.PDFName.of('Contents'), pg.node.Contents().get(0)); // one stream, as most files have
+  d.addPage([595.28, 841.89]); // blank: no /Contents
+  const bytes = await d.save();
+  check('fixture: page 1 /Contents is a single stream', (await PDFLib.PDFDocument.load(bytes)).getPage(0).node.lookup(PDFLib.PDFName.of('Contents')) instanceof PDFLib.PDFStream);
+  check('fixture: page 2 has no /Contents', !(await PDFLib.PDFDocument.load(bytes)).getPage(1).node.get(PDFLib.PDFName.of('Contents')));
+  const cx = 595.28 / 2, cy = 841.89 / 2;
+  for (const zoom of [10, -10]) {
+    const out = await A.assemble(PDFLib, [{ id: 'S', bytes }], [{ src: 'S', index: 0, zoom, shapes: [] }]);
+    const t = (await (await (await open(out.slice())).getPage(1)).getTextContent()).items[0];
+    const k = 1 + zoom / 100, ex = cx + k * (100 - cx), ey = cy + k * (700 - cy);
+    check(`single-stream page: 縮放 ${zoom}% applied`, near(t.transform[4], ex, 0.05) && near(t.transform[5], ey, 0.05) && near(t.transform[0], 36 * k, 0.05), `${t.transform[4].toFixed(2)},${t.transform[5].toFixed(2)} size ${t.transform[0]} vs ${ex.toFixed(2)},${ey.toFixed(2)} size ${36 * k}`);
+  }
+  let out = null, err = null;
+  try { out = await A.assemble(PDFLib, [{ id: 'S', bytes }], [{ src: 'S', index: 0, shapes: [] }, { src: 'S', index: 1, shapes: [] }], { paper: A.paperPt('A4') }); } catch (e) { err = e; }
+  const odoc = out && await open(out.slice());
+  check('page without /Contents: paper download works', odoc && odoc.numPages === 2, err && err.message);
+  if (odoc) {
+    const vp = (await odoc.getPage(2)).getViewport({ scale: 1 });
+    check('page without /Contents: blank A4 sheet', near(vp.width, 210 * 72 / 25.4, 0.05) && near(vp.height, 297 * 72 / 25.4, 0.05), `${vp.width}×${vp.height}`);
+  }
+}
+
 // 縮放至紙張: every output page is the chosen paper (JIS B), portrait or
 // landscape like the page; its content is scaled uniformly and centred. The
 // oracle is display space: a source text's on-screen position (pdf.js
@@ -365,6 +394,7 @@ async function testValidation() {
   await testNoLeaks();
   await testFidelity();
   await testAdjust();
+  await testContentsShapes();
   await testPaper();
   await testGeometryGuard();
   await testOpenSource();

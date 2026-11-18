@@ -410,6 +410,8 @@
         if (contents instanceof PDFLib.PDFRef) {
           const v = out.context.lookup(contents);
           if (v instanceof PDFLib.PDFArray) page.node.set(C, v.clone(out.context));
+          // one stream (most real files): the 縮放 wrap only works on an array
+          else if (v instanceof PDFLib.PDFStream) page.node.set(C, out.context.obj([contents]));
         }
         if (p.zoom) zoomContent(PDFLib, out, page, g, p.zoom);
         if (p.margin) whiteMargin(PDFLib, page, g, p.margin);
@@ -447,9 +449,10 @@
       const { D, s } = paperFit(paper, g.w, g.h);
       const turned = g.rotate === 90 || g.rotate === 270;
       const U = turned ? { w: D.h, h: D.w } : D; // the paper before /Rotate
-      const emb = await fin.embedPage(page, { left: g.box.x, bottom: g.box.y, right: g.box.x + g.box.w, top: g.box.y + g.box.h });
       const np = fin.addPage([U.w, U.h]);
       if (g.rotate) np.setRotation(PDFLib.degrees(g.rotate));
+      if (!page.node.Contents()) continue; // a blank page with no content: embedPage would throw
+      const emb = await fin.embedPage(page, { left: g.box.x, bottom: g.box.y, right: g.box.x + g.box.w, top: g.box.y + g.box.h });
       np.drawPage(emb, { x: (U.w - g.box.w * s) / 2, y: (U.h - g.box.h * s) / 2, xScale: s, yScale: s });
     }
     return fin;

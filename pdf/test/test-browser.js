@@ -131,6 +131,7 @@ async function main() {
     await loadFailureTest(browser, base);
     await rasterTest(browser, base, pdfjs);
     await rasterGateTest(browser, base);
+    await rasterGateUnevenTest(browser, base);
     await uploadProgressTest(browser, base);
     await bigScrollTest(browser, base);
   } finally {
@@ -821,6 +822,18 @@ async function polishTest(browser, base) {
   check('#2 step-1 tile of a turned page: no shapes on the unturned page', await tileShapes() === 0 && vb[2] > vb[3], `${await tileShapes()} shapes, viewBox ${vb}`);
   await tile.click();
   check('#2 and it agrees with the step-1 preview', await pg.locator('#pv-svg > *').count() === await tileShapes());
+  // same for 縮放 (shapes are placed on the adjusted page): B2 gets a shape, then 縮放 −10%
+  await pg.click('#step2-tab');
+  await cardAt(pg, 1).dblclick();
+  await editorReady(pg);
+  await dragPts(pg, 30, 40, 120, 100);
+  await pg.keyboard.press('Escape');
+  const tile2 = pg.locator('#groups .group').nth(0).locator('.tile').nth(1);
+  await cardAt(pg, 1).click();
+  await pg.evaluate(() => { const e = document.getElementById('adj-zoom'); e.value = -10; e.dispatchEvent(new Event('input', { bubbles: true })); e.dispatchEvent(new Event('change', { bubbles: true })); });
+  await pg.click('#step1-tab');
+  await tile2.click();
+  check('#2 step-1 tile of a 縮放 page: no shapes, and the preview agrees', await tile2.locator('svg > *').count() === 0 && await pg.locator('#pv-svg > *').count() === 0, `${await tile2.locator('svg > *').count()} / ${await pg.locator('#pv-svg > *').count()}`);
   await pg.close();
 
   // #5 every page un-ticked: closing still warns, the parked pages carry the work
@@ -888,6 +901,55 @@ async function rasterGateTest(browser, base) {
   await download(pg, 'gate-again.pdf', 300);
   check('after a failed estimate the tool still downloads', downloads === 2 && (await creates()) === 2);
   check('no page errors (raster gate)', pg.errors.length === 0, pg.errors.join(' | '));
+  await pg.close();
+}
+
+// Exam files are uneven: pages of different sizes, sparse pages around dense
+// ones. The estimate weighs each page by its area; when the content still
+// fools it (the samples are all sparse), a running total inside the image
+// version stops it before the file is saved (save + Blob triple the memory).
+async function rasterGateUnevenTest(browser, base) {
+  const L = require('../vendor/pdf-lib.min.js');
+  const A4 = [595.28, 841.89], A3 = [841.89, 1190.55];
+  const make = async specs => {
+    const d = await L.PDFDocument.create();
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647; // repeatable
+    for (const { size, dense } of specs) {
+      const [w, h] = size, pg = d.addPage(size);
+      pg.drawRectangle({ x: 10, y: 10, width: w - 20, height: h - 20, borderWidth: 1, borderColor: L.rgb(0.85, 0.85, 0.85) });
+      if (dense) for (let i = 0; i < 4000; i++) pg.drawRectangle({ x: rnd() * w, y: rnd() * h, width: 4 + rnd() * 10, height: 4 + rnd() * 10, color: L.rgb(rnd(), rnd(), rnd()) });
+    }
+    return { name: 'uneven.pdf', mimeType: 'application/pdf', buffer: Buffer.from(await d.save()) };
+  };
+  // page sizes: the sampled pages (first, middle, last) are A4, the rest A3
+  let pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [await make([A4, A3, A3, A4, A3, A3, A4].map(size => ({ size })))]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 7);
+  const est = await pg.evaluate(() => { const t = window.__pdfTool; return t.estimateRaster(t.snapshot(), 300, null); });
+  const { file } = await download(pg, 'uneven-sizes.pdf', 300);
+  const size = fs.statSync(file).size;
+  console.log(`  圖片版 estimate ${Math.round(est)} bytes vs real file ${size} bytes (A4 samples, 4 A3 pages)`);
+  check('estimate counts page sizes (A4 samples, A3 pages in between): within 25%', Math.abs(est - size) / size < 0.25, `${Math.round(est)} vs ${size}`);
+  await pg.close();
+
+  // content: sparse samples, dense pages in between; the limit sits above the estimate
+  pg = await newPage(browser, base);
+  await pg.setInputFiles('#file-input', [await make([0, 1, 0, 1, 0].map(k => ({ size: A4, dense: !!k })))]);
+  await pg.waitForFunction(() => window.__pdfTool.S.pages.length === 5);
+  const e2 = await pg.evaluate(() => { const t = window.__pdfTool; return t.estimateRaster(t.snapshot(), 300, null); });
+  await pg.evaluate(limit => { window.__pdfTool.rasterMaxBytes = limit; }, e2 * 2);
+  await pg.click('#download-btn');
+  await pg.waitForSelector('#dl-dialog[open]');
+  await pg.check('#dl-dialog input[value="300"]');
+  const outcome = await Promise.race([
+    pg.waitForEvent('download', { timeout: 60000 }).then(() => 'downloaded'),
+    pg.waitForSelector('#errors:not([hidden])', { timeout: 60000 }).then(() => 'stopped'),
+    pg.click('#dl-ok').then(() => new Promise(() => {})),
+  ]);
+  const t = outcome === 'stopped' ? await pg.textContent('#errors') : '';
+  check('fooled estimate: the running total stops the image version before saving', outcome === 'stopped' && t.includes('已超過') && t.includes('減少頁數'), `${outcome}; ${t}`);
+  check('no page errors (uneven)', pg.errors.length === 0, pg.errors.join(' | '));
   await pg.close();
 }
 

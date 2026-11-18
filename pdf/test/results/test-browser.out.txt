@@ -171,6 +171,7 @@ ok   no page errors (thumbnail cache)
 ok   control: an unturned page shows its shape in step 1
 ok   #2 step-1 tile of a turned page: no shapes on the unturned page
 ok   #2 and it agrees with the step-1 preview
+ok   #2 step-1 tile of a 縮放 page: no shapes, and the preview agrees
 ok   #5 every page un-ticked: leaving still warns
 ok   paper-a4.pdf: dialog opens on 原始大小
 ok   file name says the paper
@@ -206,7 +207,7 @@ ok   300 dpi: page sizes = preview sizes, no rotation left
 ok   300 dpi: one image per page at 300 dpi
 ok   300 dpi: no text left in the file
 ok   300 dpi: nothing but pages, images and their content
-  300 dpi: 11 pages in 575 ms, 820 KB
+  300 dpi: 11 pages in 561 ms, 820 KB
 ok   300 dpi: covered text is gone from the pixels
 ok   300 dpi: shape burned in where previewed
 ok   300 dpi: nothing red outside the shape
@@ -216,7 +217,7 @@ ok   600 dpi: page sizes = preview sizes, no rotation left
 ok   600 dpi: one image per page at 600 dpi
 ok   600 dpi: no text left in the file
 ok   600 dpi: nothing but pages, images and their content
-  600 dpi: 11 pages in 1204 ms, 2706 KB
+  600 dpi: 11 pages in 1200 ms, 2706 KB
 ok   600 dpi: covered text is gone from the pixels
 ok   600 dpi: shape burned in where previewed
 ok   600 dpi: nothing red outside the shape
@@ -232,17 +233,21 @@ ok   over the limit: the tool is ready again
 ok   estimate fails: zh-TW message, nothing assembled
 ok   after a failed estimate the tool still downloads
 ok   no page errors (raster gate)
+  圖片版 estimate 791214 bytes vs real file 743907 bytes (A4 samples, 4 A3 pages)
+ok   estimate counts page sizes (A4 samples, A3 pages in between): within 25%
+ok   fooled estimate: the running total stops the image version before saving
+ok   no page errors (uneven)
 ok   upload check does not parse on the page thread
 ok   loading card shows the stages
 ok   loading card has a progress bar
 ok   no loading card left behind
 ok   download assembled off the page thread
-  step 1, 150 pages: load 47 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.7 max 16.8, 0 frames > 50 ms of 388
+  step 1, 150 pages: load 51 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.8 max 16.8, 0 frames > 50 ms of 388
 ok   step 1: thumbnails are lazy (not all drawn up front)
 ok   step 1: scrolling draws more thumbnails
 ok   step 1: scroll p95 frame < 100 ms
-  step 2, 150 pages: load 66 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.8 max 16.8, 0 frames > 50 ms of 388
+  step 2, 150 pages: load 68 ms; thumbnails drawn before scroll 20/150, after 150/150; frame ms p50 16.7 p95 16.8 max 16.8, 0 frames > 50 ms of 388
 ok   step 2: thumbnails are lazy (not all drawn up front)
 ok   step 2: scrolling draws more thumbnails
 ok   step 2: scroll p95 frame < 100 ms
-241 passed, 0 failed
+245 passed, 0 failed

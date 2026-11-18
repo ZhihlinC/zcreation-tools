@@ -91,16 +91,20 @@ const M = [
   { file: 'app.js', suite: 'browser', what: 'download dialog does not default to the original', find: `querySelector('input[value="0"]').checked = true;`, replace: `querySelector('input[value="300"]').checked = true;` },
   { file: 'app.js', suite: 'browser', what: 'thumbnails render annotations (preview ≠ output)', find: 'canvas, viewport: vp, annotationMode: pdfjsLib.AnnotationMode.DISABLE,', replace: 'canvas, viewport: vp,' },
   // ---- polish batch 11/18: promoted P2s, paper centring, 圖片版 memory gate
-  { file: 'app.js', suite: 'browser', what: 'thumbnail cache keeps a redrawn canvas under its old key', find: '  unlist(c.canvas); // its old key no longer describes these pixels\n', replace: '' },
+  { file: 'app.js', suite: 'browser', what: 'thumbnail cache keeps a redrawn canvas under its old key', find: '  unlist(c.canvas); // about to be redrawn: no card may copy it under its old key meanwhile\n', replace: '' },
   { file: 'app.js', suite: 'browser', what: 'step-1 tile draws a turned page\'s shapes on the unturned page', find: 'shapes: plainShapes(entry) }, { outlines: true });', replace: 'shapes: entry ? entry.shapes : [] }, { outlines: true });' },
   { file: 'app.js', suite: 'browser', what: 'click on the tick box cancelled (old tick comes back)', find: "  if (e.target.closest('.tick')) {\n    if (!onBox) e.preventDefault();", replace: "  if (e.target.closest('.tick')) {\n    e.preventDefault();" },
   { file: 'app.js', suite: 'browser', what: 'shift+click on the tick box cancelled (old tick comes back)', find: '    if (!onBox) e.preventDefault();\n    tile.focus', replace: '    e.preventDefault();\n    tile.focus' },
   { file: 'app.js', suite: 'browser', what: 'no leave warning when every page is un-ticked', find: '(S.pages.length || S.parked.size) && S.dirty', replace: 'S.pages.length && S.dirty' },
   { file: 'assemble.js', suite: 'browser', what: 'paper: image version not centred side to side (ox 0)', find: 'ox: (D.w - w * s) / 2', replace: 'ox: 0' },
   { file: 'assemble.js', suite: 'browser', what: 'paper: image version not centred top to bottom (oy 0)', find: 'oy: (D.h - h * s) / 2', replace: 'oy: 0' },
-  { file: 'app.js', suite: 'browser', what: '圖片版 size gate removed', find: 'if (est > ctx.rasterMaxBytes) {', replace: 'if (false) {' },
+  { file: 'app.js', suite: 'browser', what: '圖片版 size gate removed', find: 'if (est > ctx.rasterMaxBytes) return showErrors(', replace: 'if (false) return showErrors(' },
   { file: 'app.js', suite: 'browser', what: '圖片版 failed estimate falls through to assembling', find: "return showErrors(['無法預估", replace: "showErrors(['無法預估" },
-  { file: 'app.js', suite: 'browser', what: '圖片版 estimate not scaled to the page count', find: 'return sum / sample.length * n;', replace: 'return sum / sample.length;' },
+  { file: 'app.js', suite: 'browser', what: '圖片版 estimate not scaled to all pages', find: 'return bytes / sampled * pages.reduce((s, p) => s + area(p), 0);', replace: 'return bytes / sampled * area(pages[0]);' },
+  // ---- /review round on the polish batch
+  { file: 'app.js', suite: 'browser', what: '圖片版 estimate by page count, not area', find: 'return bytes / sampled * pages.reduce((s, p) => s + area(p), 0);', replace: 'return bytes / sample.length * n;' },
+  { file: 'app.js', suite: 'browser', what: '圖片版 no running cap (fooled estimate passes)', find: '    if ((held += blob.size) > ctx.rasterMaxBytes) throw', replace: '    if (false) throw' },
+  { file: 'app.js', suite: 'browser', what: 'step-1 tile draws a 縮放 page\'s shapes', find: '!e.rot && !e.zoom && !e.margin', replace: '!e.rot' },
 ];
 
 function run(cmd, args, env) {

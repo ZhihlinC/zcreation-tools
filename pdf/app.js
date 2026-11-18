@@ -427,6 +427,7 @@ async function renderPage(page, p, scale, canvas, onTask) {
   }
 }
 async function drawThumb(c, p, key) {
+  unlist(c.canvas); // about to be redrawn: no card may copy it under its old key meanwhile
   const fs = fitSize(p);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const W = Math.round(fs.w * dpr), H = Math.round(fs.h * dpr);
@@ -441,7 +442,6 @@ async function drawThumb(c, p, key) {
     page.cleanup(); // drop decoded images; a scanned page holds tens of MB
   }
   c.drawnKey = key;
-  unlist(c.canvas); // its old key no longer describes these pixels
   drawnCanvas.set(key, c.canvas);
   c.canvas.style.visibility = '';
 }
@@ -976,21 +976,26 @@ async function pageJpeg(p, dpi, paper) {
 }
 async function rasterize(pages, dpi, onProgress, paper) {
   const out = await window.PDFLib.PDFDocument.create();
+  let held = 0;
   for (let i = 0; i < pages.length; i++) {
     onProgress(i + 1, pages.length);
     const { blob, pw, ph } = await pageJpeg(pages[i], dpi, paper);
+    // the estimate can be fooled (sparse sample pages): stop before save() copies it all
+    if ((held += blob.size) > ctx.rasterMaxBytes) throw new Error(`raster too big at page ${i + 1} of ${pages.length}`);
     const img = await out.embedJpg(new Uint8Array(await blob.arrayBuffer()));
     out.addPage([pw, ph]).drawImage(img, { x: 0, y: 0, width: pw, height: ph });
   }
   return out.save();
 }
 // Output size of the image version: the first, middle and last page drawn
-// for real, their mean times the page count.
+// for real, their bytes per printed area times the area of all pages (an A3
+// page makes about twice the bytes of an A4 one).
 async function estimateRaster(pages, dpi, paper) {
+  const area = p => { const f = paper && A.paperFit(paper, p.w, p.h); return f ? f.D.w * f.D.h : p.w * p.h; };
   const n = pages.length, sample = [...new Set([0, n >> 1, n - 1])];
-  let sum = 0;
-  for (const i of sample) sum += (await pageJpeg(pages[i], dpi, paper)).blob.size;
-  return sum / sample.length * n;
+  let bytes = 0, sampled = 0;
+  for (const i of sample) { bytes += (await pageJpeg(pages[i], dpi, paper)).blob.size; sampled += area(pages[i]); }
+  return bytes / sampled * pages.reduce((s, p) => s + area(p), 0);
 }
 async function burnShapes(g, p, w, h) {
   const svg = document.createElementNS(SVGNS, 'svg');
@@ -1010,6 +1015,8 @@ async function burnShapes(g, p, w, h) {
   }
 }
 
+const tooBig = (what, dpi) => `${what}，檔案太大：瀏覽器可能記憶體不足、整個分頁當掉，還沒下載的進度會消失，所以先不產生。` +
+  (dpi > 300 ? '請改用 300 dpi，或減少頁數、分次下載。' : '請減少頁數、分次下載，或改用「原始」。');
 // dpi 0 = original (vector) output; 300 / 600 = image version
 async function download(dpi = 0, paperName = '') {
   const paper = A.paperPt(paperName);
@@ -1034,10 +1041,7 @@ async function download(dpi = 0, paperName = '') {
         console.error(e);
         return showErrors(['無法預估圖片版的檔案大小，為了不讓分頁因記憶體不足而當掉，先不產生檔案。頁面都還在，可以再試一次或改用「原始」；還是失敗請截圖給 Yves。']);
       }
-      if (est > ctx.rasterMaxBytes) {
-        return showErrors([`圖片版預估約 ${Math.round(est / 1e6)} MB（${pages.length} 頁・${dpi} dpi），檔案太大：瀏覽器可能記憶體不足、整個分頁當掉，還沒下載的進度會消失，所以先不產生。` +
-          (dpi > 300 ? '請改用 300 dpi，或減少頁數、分次下載。' : '請減少頁數、分次下載，或改用「原始」。')]);
-      }
+      if (est > ctx.rasterMaxBytes) return showErrors([tooBig(`圖片版預估約 ${Math.round(est / 1e6)} MB（${pages.length} 頁・${dpi} dpi）`, dpi)]);
       // page images at the dpi they will print at on the chosen paper
       bytes = await rasterize(pages, dpi, (i, n) => { btn.textContent = `產生中… ${i}/${n}`; }, paper);
     } else {
@@ -1055,6 +1059,8 @@ async function download(dpi = 0, paperName = '') {
   } catch (e) {
     console.error(e);
     const msg = (e && e.message) || '';
+    const at = /^raster too big at page (\d+) of (\d+)/.exec(msg);
+    if (at) return showErrors([tooBig(`圖片版做到第 ${at[1]} 頁（共 ${at[2]} 頁・${dpi} dpi）已超過 ${Math.round(ctx.rasterMaxBytes / 1e6)} MB`, dpi)]);
     // refusals that protect what the user deleted get their own wording
     const why = /cannot be checked/.test(msg) ? '這份 PDF 有頁面的內容格式沒辦法檢查，為了不把刪掉的頁面一起帶出去，先不產生檔案。可以把檔案寄給 Yves 看看。'
       : /not chosen/.test(msg) ? '輸出檔會帶到沒選的頁面，已停止。可以把檔案寄給 Yves 看看。'
@@ -1108,7 +1114,8 @@ document.addEventListener('keydown', e => {
   else if ((e.key === 'r' || e.key === 'R') && !mod && S.sel.size) { e.preventDefault(); rotateSelected(); }
 });
 
-// Shared with the shape editor (editor.js).
+// Shared with the shape editor (editor.js). estimateRaster and rasterMaxBytes
+// are test hooks: download() reads the limit from here so tests can lower it.
 export const ctx = {
   S, pdfjsLib, A, setStep, renderPage, snapshot, estimateRaster, rasterMaxBytes: RASTER_MAX_BYTES, commit, undo, render, toast, drawShapesSvg, shapeEl, outlineEl, newId: () => 'h' + (nextId++),
   editorAvailable: false,

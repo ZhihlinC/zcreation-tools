@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sound Coverage Sketch</title>
+  <meta name="description" content="Sketch multichannel speaker layouts in 3D: see the geometric coverage of each speaker on the audience plane and get VBAP layout health hints. A sound design sketch tool, not an acoustic simulation.">
+  <link rel="canonical" href="https://tools.zcreation.art/coverage/">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://tools.zcreation.art/coverage/">
+  <meta property="og:title" content="Sound Coverage Sketch">
+  <meta property="og:description" content="Sketch multichannel speaker layouts in 3D: see the geometric coverage of each speaker on the audience plane and get VBAP layout health hints. A sound design sketch tool, not an acoustic simulation.">
+  <meta property="og:image" content="https://tools.zcreation.art/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Sound Coverage Sketch — 32-channel dome layout in 3D coverage view.">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="stylesheet" href="coverage.css">
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.11.0/lib/p5.min.js" defer></script>
+  <script src="coverage.js" defer></script>
+</head>
+<body>
+
+  <main id="canvas-host" aria-label="3D scene"></main>
+
+  <!-- Shown by coverage.js when p5.js could not be loaded (e.g. a saved file
+       opened offline). Panels keep working without p5. -->
+  <div id="offline-notice" role="status" hidden>
+    <p>The 3D view needs an internet connection to load p5.js. Your layout data in this file is intact — reconnect and reload to see the scene.</p>
+  </div>
+
+  <!-- HTML overlay labels (axis labels + speaker names); positioned per-frame
+       via manual view × projection matrix multiplication. Replaces p5 WEBGL
+       text() which is unreliable. -->
+  <div id="overlay-labels" aria-hidden="true">
+    <span id="axis-label-x" class="overlay-label axis-label-x">X</span>
+    <span id="axis-label-y" class="overlay-label axis-label-y">Y</span>
+    <span id="axis-label-z" class="overlay-label axis-label-z">Z</span>
+    <div id="speaker-labels"></div>
+    <div id="phantom-labels"></div>
+    <div id="coord-labels"></div>
+  </div>
+
+  <!-- Disclaimer banner (SPEC §2): must be visible in first viewport, not abbreviated.
+       Header (title) is always shown; body collapses on click as a per-session
+       reminder rather than a full dismissal. -->
+  <aside id="disclaimer" class="panel" aria-label="Disclaimer">
+    <button id="disclaimer-toggle" type="button" aria-expanded="true" aria-controls="disclaimer-body">
+      <h1>Sound Coverage Sketch</h1>
+      <span class="caret" aria-hidden="true">▴</span>
+    </button>
+    <div id="disclaimer-body" class="disclaimer-body">
+      <div class="disclaimer-lang disclaimer-zh" lang="zh-TW">
+        <p>這是一個透過 3D 視覺化呈現音響角度與覆蓋的草圖繪製工具。</p>
+        <p>它把你輸入的擴散角當作高頻覆蓋的近似值，並依 Pulkki-VBAP 的凸包三角剖分，提供 layout 健康度提示。</p>
+        <p><strong>它不是聲學模擬：不預測 SPL、頻率響應、反射或相位，也不模擬任何 renderer 的行為。</strong></p>
+        <p>它主要幫你看兩件事：</p>
+        <ol>
+          <li>「我設想的聽覺中心，有沒有被我擺的音響涵蓋到？」</li>
+          <li>「從幾何上看，我的多聲道 layout 對 VBAP 系列 panner 是否健康？」</li>
+        </ol>
+        <p>實際聽起來如何，仍以你的 renderer 與耳朵為準。</p>
+      </div>
+      <div class="disclaimer-lang disclaimer-en" lang="en">
+        <p>A geometric sketch tool for placing and aiming speakers in 3D and seeing what they cover.</p>
+        <p>It treats your speaker dispersion angles as an approximation of high-frequency coverage,
+           and gives layout-health hints based on Pulkki-VBAP convex-hull triangulation.</p>
+        <p><strong>It is not an acoustic simulation: it does not predict SPL, frequency response,
+           reflections or phase, and it does not model any renderer's behaviour.</strong></p>
+        <p>It is meant to help with two questions:</p>
+        <ol>
+          <li>"Is my imagined listening centre actually covered by the speakers I've placed?"</li>
+          <li>"Geometrically, is my multichannel layout healthy for VBAP-family panners?"</li>
+        </ol>
+        <p>How it actually sounds is still up to your renderer and your ears.</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Top left column: meta (layout name + unit) + view (camera presets).
+       Both are global-scope controls — layout identity + scene navigation —
+       so they share a column. Layers / editing surfaces stay on the right. -->
+  <aside id="left-column-top" aria-label="Layout meta + view">
+
+    <section id="meta-panel" class="panel" aria-label="Layout meta">
+      <label class="meta-name">
+        <span class="panel-label">Layout</span>
+        <input type="text" id="layout-name" placeholder="Untitled" maxlength="80" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="unit-toggle" role="radiogroup" aria-label="Unit">
+        <button type="button" data-unit="cm" class="active">cm</button>
+        <button type="button" data-unit="m">m</button>
+      </div>
+    </section>
+
+    <section id="view-controls" class="panel">
+      <h2>View</h2>
+      <div class="view-buttons">
+        <button type="button" data-view="perspective" class="active">Perspective</button>
+        <button type="button" data-view="top">Top</button>
+        <button type="button" data-view="front">Front</button>
+        <button type="button" data-view="side">Side</button>
+        <button type="button" data-view="listening">Listening</button>
+      </div>
+    </section>
+
+    <section id="actions-panel" class="panel" aria-label="File actions">
+      <h2>File</h2>
+      <div class="action-buttons">
+        <button id="save-html-btn" type="button">Save HTML</button>
+        <button id="open-html-btn" type="button">Open HTML</button>
+        <button id="save-png-btn" type="button">Save PNG</button>
+      </div>
+      <input id="open-html-input" type="file" accept=".html,text/html" hidden>
+    </section>
+
+  </aside>
+
+  <!-- Right column: layers + speakers + phantoms (stacked, the two list
+       panels grow and scroll internally). -->
+  <aside id="right-column" aria-label="Editing panels">
+
+    <section id="layers-panel" class="panel">
+      <h2>Layers</h2>
+      <ul>
+        <li><label><input type="checkbox" data-layer="floor" checked> Floor grid</label></li>
+        <li><label><input type="checkbox" data-layer="audience" checked> Audience</label></li>
+        <li><label><input type="checkbox" data-layer="listening-plane" checked> Listening plane</label></li>
+        <li><label><input type="checkbox" data-layer="listening-centre" checked> Listening centre</label></li>
+        <li><label><input type="checkbox" data-layer="speakers" checked> Speakers</label></li>
+        <li><label><input type="checkbox" data-layer="cones" checked> Cones</label></li>
+        <li><label><input type="checkbox" data-layer="axes" checked> Axes</label></li>
+        <li><label><input type="checkbox" data-layer="coords"> Coordinates</label></li>
+        <li><label><input type="checkbox" data-layer="coverage-heat" checked> Coverage heatmap</label></li>
+        <li class="coverage-legend" aria-label="Coverage heatmap legend">
+          <span class="chip" data-c="0"></span><span>0</span>
+          <span class="chip" data-c="1"></span><span>1</span>
+          <span class="chip" data-c="2"></span><span>2</span>
+          <span class="chip" data-c="3"></span><span>3+</span>
+          <span class="legend-suffix">speakers covering</span>
+        </li>
+        <li><label><input type="checkbox" data-layer="triangulation"> Triangulation</label></li>
+        <li class="triangulation-status" data-kind=""><span id="triangulation-status">…</span></li>
+        <li><label><input type="checkbox" data-layer="phantoms" checked> Phantoms</label></li>
+        <li><label><input type="checkbox" data-layer="health-panel" checked> Layout Health</label></li>
+      </ul>
+    </section>
+
+    <section id="speakers-panel" class="panel">
+      <h2>Speakers</h2>
+      <ul id="speakers-list"></ul>
+      <button type="button" id="add-speaker-btn" class="primary-btn">+ Add Speaker</button>
+    </section>
+
+    <section id="phantoms-panel" class="panel">
+      <h2>Phantoms</h2>
+      <p class="panel-note" id="phantoms-note">Phantoms reserve a panning position on the sphere — they are not speakers to buy. Add one to see how the layout health changes when that direction is covered.</p>
+      <ul id="phantoms-list"></ul>
+      <button type="button" id="add-phantom-btn" class="primary-btn">+ Add Phantom</button>
+    </section>
+
+  </aside>
+
+  <!-- Bottom left: audience editor. -->
+  <aside id="audience-panel" class="panel" aria-label="Audience">
+    <h2>Audience</h2>
+    <div class="field-grid">
+      <label><span>Length</span><input type="number" data-audience="length" step="any"></label>
+      <label><span>Width</span><input type="number" data-audience="width" step="any"></label>
+      <label><span>Listen height</span><input type="number" data-audience="listeningHeight" step="any"></label>
+    </div>
+  </aside>
+
+  <!-- Bottom right: Layout Health panel (SPEC §8.3). Framing paragraph is
+       static and always visible; #health-panel-status hosts the dynamic
+       lines composed by composeHealthLines() in coverage.js. -->
+  <aside id="health-panel" class="panel" aria-label="Layout Health">
+    <h2>Layout Health</h2>
+    <p class="health-framing">
+      These triangles are the geometric backbone every sphere-panning renderer
+      (VBAP, AllRAD-decoded ambisonics, …) works from. Sources panned across
+      an unhealthy triangle will localise poorly regardless of which renderer
+      you use later.
+    </p>
+    <p class="health-framing health-framing-disclaimer">
+      <strong>Not a compliance check.</strong> ITU-spec layouts can still trigger
+      warnings — that means VBAP conditioning is poor in that region, not that
+      the layout violates a standard.
+    </p>
+    <div id="health-panel-status" class="health-status"></div>
+  </aside>
+
+  <!-- Add Speaker / Add Phantom forms (SPEC §9.2). Values are entered in the
+       current display unit (cm / m); coverage.js converts and validates with
+       the same rules as the inline editors. -->
+  <dialog id="add-speaker-dialog" class="panel add-dialog" aria-labelledby="add-speaker-title">
+    <form method="dialog" id="add-speaker-form" novalidate>
+      <h2 id="add-speaker-title">Add speaker</h2>
+      <label class="field field-wide"><span>Name</span><input type="text" name="name" autocomplete="off" spellcheck="false"></label>
+      <div class="dialog-grid">
+        <label class="field"><span>X <em class="unit-tag"></em></span><input type="number" step="any" name="x" data-kind="len" required></label>
+        <label class="field"><span>Y <em class="unit-tag"></em></span><input type="number" step="any" name="y" data-kind="len" required></label>
+        <label class="field"><span>Z <em class="unit-tag"></em></span><input type="number" step="any" name="z" data-kind="len" required></label>
+        <label class="field"><span>Yaw°</span><input type="number" step="any" name="yaw" required></label>
+        <label class="field"><span>Pitch°</span><input type="number" step="any" name="pitch" required></label>
+        <span class="dialog-grid-spacer" aria-hidden="true"></span>
+        <label class="field" title="Total angle, between 0° and 180°"><span>Spread H°</span><input type="number" step="any" name="angleH" required></label>
+        <label class="field" title="Total angle, between 0° and 180°"><span>Spread V°</span><input type="number" step="any" name="angleV" required></label>
+      </div>
+      <p class="dialog-hint">Yaw and pitch follow the position (aimed at the listening centre) until you edit them.</p>
+      <div class="dialog-actions">
+        <button type="button" class="aim-btn" data-action="aim">⊙ Aim at centre</button>
+        <span class="dialog-actions-spacer"></span>
+        <button type="button" data-action="cancel">Cancel</button>
+        <button type="submit" class="primary-btn" data-action="add">Add</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="add-phantom-dialog" class="panel add-dialog" aria-labelledby="add-phantom-title">
+    <form method="dialog" id="add-phantom-form" novalidate>
+      <h2 id="add-phantom-title">Add phantom</h2>
+      <p class="panel-note">Phantoms reserve a panning position on the sphere — they are not speakers to buy. Add one to see how the layout health changes when that direction is covered.</p>
+      <label class="field field-wide"><span>Name</span><input type="text" name="name" autocomplete="off" spellcheck="false"></label>
+      <div class="dialog-grid">
+        <label class="field"><span>X <em class="unit-tag"></em></span><input type="number" step="any" name="x" data-kind="len" required></label>
+        <label class="field"><span>Y <em class="unit-tag"></em></span><input type="number" step="any" name="y" data-kind="len" required></label>
+        <label class="field"><span>Z <em class="unit-tag"></em></span><input type="number" step="any" name="z" data-kind="len" required></label>
+      </div>
+      <div class="dialog-actions">
+        <span class="dialog-actions-spacer"></span>
+        <button type="button" data-action="cancel">Cancel</button>
+        <button type="submit" class="primary-btn" data-action="add">Add</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Triangle hover tooltip. Hidden by default; populated and
+       positioned by pickTriangle()/updateTooltip() in coverage.js. -->
+  <div id="triangle-tooltip" class="tooltip" role="tooltip" hidden>
+    <div class="tt-line"><span class="tt-label">Max angle</span><span class="tt-value" data-tt="maxAngle"></span></div>
+    <div class="tt-line"><span class="tt-label">Area</span><span class="tt-value" data-tt="area"></span></div>
+    <div class="tt-line"><span class="tt-label">Health</span><span class="tt-value" data-tt="level"></span></div>
+    <div class="tt-line"><span class="tt-label">Region</span><span class="tt-value" data-tt="region"></span></div>
+    <div class="tt-line tt-line-vertices"><span class="tt-label">Vertices</span><span class="tt-value" data-tt="vertices"></span></div>
+  </div>
+
+  <!-- Speaker hover tooltip (SPEC §9.3). Same picking framework as
+       the triangle tooltip; takes priority when both would hit. -->
+  <div id="speaker-tooltip" class="tooltip" role="tooltip" hidden>
+    <div class="tt-header" data-tt="name"></div>
+    <div class="tt-line"><span class="tt-label">Position</span><span class="tt-value" data-tt="position"></span></div>
+    <div class="tt-line"><span class="tt-label">Orientation</span><span class="tt-value" data-tt="orientation"></span></div>
+    <div class="tt-line"><span class="tt-label">Spread</span><span class="tt-value" data-tt="spread"></span></div>
+    <div class="tt-line"><span class="tt-label">Distance</span><span class="tt-value" data-tt="distance"></span></div>
+  </div>
+
+  <!-- Tool meta footer — version (and later: GitHub link). Lives bottom-center
+       between audience-panel and health-panel. Populated from TOOL_VERSION
+       on DOMContentLoaded so downloaded HTML shows the version it was
+       saved with. -->
+  <aside id="tool-footer" aria-label="Tool meta">
+    <span class="tool-footer-version">v<span id="tool-version-text"></span></span>
+    <span class="tool-footer-sep" aria-hidden="true">·</span>
+    <a href="https://github.com/ZhihlinC/zcreation-tools" class="tool-footer-link" target="_blank" rel="noopener">GitHub</a>
+  </aside>
+
+  <!-- Mobile banner (SPEC §13). Shown when viewport < 1024px; manual
+       dismiss is session-scoped (not persisted) so reload always re-shows it.
+       Bilingual (SPEC §12 exception) so both audiences read it without
+       language switching. -->
+  <aside id="mobile-banner" hidden>
+    <div class="banner-text">
+      <span lang="zh-TW">此工具為桌面瀏覽器設計。在較小的螢幕上只會顯示 3D 畫面，編輯請改用較寬的視窗。</span>
+      <span lang="en">This tool is designed for desktop. On smaller screens only the 3D view is shown — use a wider window to edit.</span>
+    </div>
+    <button type="button" id="mobile-banner-dismiss" aria-label="Dismiss">✕</button>
+  </aside>
+
+</body>
+</html>

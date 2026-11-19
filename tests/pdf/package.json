@@ -1,0 +1,16 @@
+{
+  "private": true,
+  "description": "Dev-only test deps for the PDF tool. The tool itself uses site/pdf/vendor/ and needs no install.",
+  "scripts": {
+    "fixtures": "node make-fixtures.js",
+    "test": "node test-assemble.js && node test-sanitize.js",
+    "test:browser": "node test-browser.js",
+    "mutation": "node mutation-check.js",
+    "mutation:browser": "node mutation-check.js --browser"
+  },
+  "devDependencies": {
+    "@cantoo/pdf-lib": "2.11.1",
+    "pdfjs-dist": "6.5.438",
+    "playwright": "1.65.1"
+  }
+}

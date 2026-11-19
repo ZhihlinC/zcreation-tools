@@ -1,0 +1,4423 @@
+// Sound Coverage Sketch — coverage.js
+// SPEC.md is the source of truth.
+//
+// World coordinate system (SPEC §4, audience POV):
+//   +X = right, +Y = forward (toward stage), +Z = up. Right-handed:
+//   +X × +Y = +Z. Origin (0,0,0) = floor projection of the listening centre.
+//
+// p5 WEBGL handedness reconciliation: p5's perspective() bakes a Y-flip into
+// the projection matrix (the "-f * yScale" entry), which makes world +Y
+// appear screen-down. We undo it once by setting `cam.yScale = -1` after
+// createCanvas(). After that, all five camera presets use natural up vectors
+// (e.g. +Z for perspective/front/side/listening, +Y for top) with no extra
+// scale or sign hacks, and the right-hand rule holds visually in every view.
+//
+// Text in WEBGL: p5's text() in WEBGL is unreliable, so labels are HTML spans
+// positioned each frame via manual view × projection matrix multiplication.
+
+// Fresh copy of the boot-time default layout. Used for the initial STATE and
+// by applyLoadedState(), which resets to these defaults before applying a
+// loaded file (SPEC §10.3) so nothing from the previous layout leaks in.
+function makeDefaultState() {
+  return {
+    metadata: { layoutName: '' },
+    audience: { length: 600, width: 800, listeningHeight: 120 },  // cm
+    speakers: [
+      // Default L/R/C in front of listening centre (toward stage, +Y), aimed
+      // at the listening centre (0, 0, listeningHeight=120). Yaw/pitch are
+      // aimAtCentre() results rounded to 0.1°.
+      { id: 's1', name: 'L', enabled: true, x: -250, y: 150, z: 240, yaw:  121.0, pitch: -22.4, angleH: 90, angleV: 60 },
+      { id: 's2', name: 'R', enabled: true, x:  250, y: 150, z: 240, yaw: -121.0, pitch: -22.4, angleH: 90, angleV: 60 },
+      { id: 's3', name: 'C', enabled: true, x:    0, y: 200, z: 240, yaw:  180.0, pitch: -31.0, angleH: 70, angleV: 50 },
+    ],
+    phantoms: [],
+    view: {
+      unit: 'cm',
+      cameraPreset: 'perspective',
+      // Free (mouse-orbited) camera, SPEC §5.4 / §10.2. null = use the preset.
+      // { eye: [x,y,z], centre: [x,y,z], up: [x,y,z] } in world cm.
+      camera: null,
+      layers: {
+        floor: true, audience: true, 'listening-plane': true,
+        'listening-centre': true,
+        speakers: true, cones: true, axes: true, coords: false,
+        'coverage-heat': true, triangulation: false,
+        phantoms: true, 'health-panel': true,
+      },
+    },
+  };
+}
+
+const STATE = makeDefaultState();
+
+// =============================================================================
+// Shared value validation — used by BOTH the editing inputs and the file
+// loader so that anything the UI accepts can be saved and read back, and
+// anything the loader rejects can't be typed in.
+// =============================================================================
+
+const DEG2RAD = Math.PI / 180;
+function degToRad(d) { return d * DEG2RAD; }
+
+// Coordinates, yaw, pitch: any finite number.
+function isValidFinite(v) { return typeof v === 'number' && Number.isFinite(v); }
+// Audience length / width / listening height: finite and > 0.
+function isValidAudienceValue(v) { return isValidFinite(v) && v > 0; }
+// Dispersion (total) angle: strictly inside (0°, 180°). 0° covers nothing and
+// ≥ 180° makes tan(angle/2) blow up or flip sign.
+function isValidSpread(v) { return isValidFinite(v) && v > 0 && v < 180; }
+
+function validatorForField(key) {
+  if (key === 'angleH' || key === 'angleV') return isValidSpread;
+  return isValidFinite;
+}
+
+let _speakerCounter = STATE.speakers.length + 1;
+function nextSpeakerId() { return 's' + (_speakerCounter++); }
+
+let _phantomCounter = STATE.phantoms.length + 1;
+function nextPhantomId() { return 'p' + (_phantomCounter++); }
+
+// =============================================================================
+// State persistence — version, source URL, embedded-state boot loader.
+// Downloaded HTML files carry a <script id="coverage-state" type="application/json">
+// node; on boot, if that node is present and parses cleanly with the right
+// schemaVersion, we replace the default STATE before setup() runs.
+// =============================================================================
+
+const SCHEMA_VERSION = 1;
+const TOOL_VERSION = '1.1.0-beta';
+const SOURCE_URL = 'https://tools.zcreation.art/coverage';
+
+// Allowed layer keys — anything outside this whitelist is dropped on load,
+// keeping the loader tolerant of unknown fields (forward-compat for v1.1).
+const LAYER_KEYS = [
+  'floor', 'audience', 'listening-plane', 'listening-centre',
+  'speakers', 'cones', 'axes', 'coords',
+  'coverage-heat', 'triangulation', 'phantoms', 'health-panel',
+];
+const CAMERA_PRESETS = ['perspective', 'top', 'front', 'side', 'listening'];
+
+// Read a field through the shared validator; fall back when it fails.
+// Strings that hold numbers are NOT accepted (the tool always writes numbers).
+// A field that is present but fails validation is replaced by the fallback
+// AND recorded in `bad` (owner name) so the open dialog can say so (SPEC
+// §10.3, honesty first). A missing field (undefined) is not an error.
+function loadNumber(v, validator, fallback, bad, owner) {
+  if (validator(v)) return v;
+  if (v !== undefined && bad) bad.push(owner);
+  return fallback;
+}
+
+function loadVec3(v) {
+  return Array.isArray(v) && v.length === 3 && v.every(isValidFinite) ? v.slice() : null;
+}
+
+// Free-camera record → validated copy or null. Distance is clamped into
+// CAMERA_DISTANCE_LIMITS so a hand-edited file can't park the eye inside the
+// listening centre or 200 m away.
+function loadCamera(c) {
+  if (!c || typeof c !== 'object') return null;
+  const eye = loadVec3(c.eye), centre = loadVec3(c.centre), up = loadVec3(c.up);
+  if (!eye || !centre || !up) return null;
+  if (Math.hypot(up[0], up[1], up[2]) < 1e-9) return null;
+  return { eye: clampCameraEye(eye, centre), centre, up };
+}
+
+// Reset-then-apply loader (SPEC §10.3). Builds the complete next state first
+// and only then commits it, so a throw anywhere leaves STATE untouched.
+function applyLoadedState(parsed) {
+  if (!parsed || typeof parsed !== 'object') throw new Error('state is not an object');
+  if (parsed.schemaVersion !== SCHEMA_VERSION) {
+    throw new Error('schemaVersion mismatch: expected ' + SCHEMA_VERSION + ', got ' + parsed.schemaVersion);
+  }
+
+  const next = makeDefaultState();
+  const bad = [];  // owner name of every present-but-invalid value
+
+  // Metadata: only layoutName round-trips into the editing UI; the other
+  // fields are write-only on save, ignored on load (we'll regenerate them).
+  if (parsed.metadata && typeof parsed.metadata.layoutName === 'string') {
+    next.metadata.layoutName = parsed.metadata.layoutName;
+  }
+
+  // Audience.
+  if (parsed.audience && typeof parsed.audience === 'object') {
+    for (const k of ['length', 'width', 'listeningHeight']) {
+      next.audience[k] = loadNumber(parsed.audience[k], isValidAudienceValue, next.audience[k], bad, 'audience');
+    }
+  }
+
+  // Speakers. Ids are assigned later (after the counters are rebuilt from the
+  // ids that ARE present) so a missing id can't collide with a loaded one.
+  const missingIds = [];
+  if (Array.isArray(parsed.speakers)) {
+    next.speakers = parsed.speakers
+      .filter(s => s && typeof s === 'object')
+      .map(s => {
+        const out = {
+          id: typeof s.id === 'string' ? s.id : null,
+          name: typeof s.name === 'string' ? s.name : 'Speaker',
+          enabled: s.enabled !== false,
+        };
+        for (const k of ['x', 'y', 'z', 'yaw', 'pitch']) out[k] = loadNumber(s[k], isValidFinite, 0, bad, out.name);
+        out.angleH = loadNumber(s.angleH, isValidSpread, 90, bad, out.name);
+        out.angleV = loadNumber(s.angleV, isValidSpread, 60, bad, out.name);
+        if (out.id === null) missingIds.push(out);
+        return out;
+      });
+  }
+
+  // Phantoms.
+  if (Array.isArray(parsed.phantoms)) {
+    next.phantoms = parsed.phantoms
+      .filter(p => p && typeof p === 'object')
+      .map(p => {
+        const out = {
+          id: typeof p.id === 'string' ? p.id : null,
+          name: typeof p.name === 'string' ? p.name : 'Phantom',
+        };
+        for (const k of ['x', 'y', 'z']) out[k] = loadNumber(p[k], isValidFinite, 0, bad, out.name);
+        if (out.id === null) missingIds.push(out);
+        return out;
+      });
+  }
+
+  // View.
+  if (parsed.view && typeof parsed.view === 'object') {
+    if (parsed.view.unit === 'cm' || parsed.view.unit === 'm') {
+      next.view.unit = parsed.view.unit;
+    }
+    if (CAMERA_PRESETS.includes(parsed.view.cameraPreset)) {
+      next.view.cameraPreset = parsed.view.cameraPreset;
+    }
+    if (parsed.view.layers && typeof parsed.view.layers === 'object') {
+      for (const k of LAYER_KEYS) {
+        if (typeof parsed.view.layers[k] === 'boolean') {
+          next.view.layers[k] = parsed.view.layers[k];
+        }
+      }
+    }
+    next.view.camera = loadCamera(parsed.view.camera);
+  }
+
+  // Commit. STATE is a const binding, so replace its top-level fields.
+  STATE.metadata = next.metadata;
+  STATE.audience = next.audience;
+  STATE.speakers = next.speakers;
+  STATE.phantoms = next.phantoms;
+  STATE.view = next.view;
+
+  rebuildIdCounters();
+  for (const item of missingIds) {
+    item.id = STATE.speakers.includes(item) ? nextSpeakerId() : nextPhantomId();
+  }
+  return { count: bad.length, names: [...new Set(bad.map(n => n.trim() ? n : '(unnamed)'))] };
+}
+
+// One-line warning for the open dialog, or '' when nothing was replaced.
+function loadWarning({ count, names }) {
+  if (!count) return '';
+  const shown = names.slice(0, 5).join(', ');
+  const more = names.length > 5 ? `, and ${names.length - 5} more` : '';
+  return `⚠ ${count} value(s) in this file couldn't be read and were replaced with defaults (${shown}${more}). Check them before relying on this layout.`;
+}
+
+function rebuildIdCounters() {
+  let maxS = 0, maxP = 0;
+  for (const s of STATE.speakers) {
+    const m = /^s(\d+)$/.exec(s.id);
+    if (m) maxS = Math.max(maxS, parseInt(m[1], 10));
+  }
+  for (const p of STATE.phantoms) {
+    const m = /^p(\d+)$/.exec(p.id);
+    if (m) maxP = Math.max(maxP, parseInt(m[1], 10));
+  }
+  _speakerCounter = maxS + 1;
+  _phantomCounter = maxP + 1;
+}
+
+// (The boot-time embedded-state loader lives at the END of this file — see
+// loadEmbeddedStateOnBoot — so every const it touches is initialised.)
+
+// =============================================================================
+// Unit conversion. Internal storage is always cm; display follows STATE.view.unit.
+// =============================================================================
+
+function lenDisplay(cm) {
+  return STATE.view.unit === 'm' ? cm / 100 : cm;
+}
+// Metres → cm is rounded to 0.01 cm so typed values don't leave float tails
+// in the stored cm value (2.53 m → 253, not 252.99999999999997).
+function lenStore(displayed) {
+  return STATE.view.unit === 'm' ? Math.round(displayed * 100 * 100) / 100 : displayed;
+}
+
+// =============================================================================
+// Aim helper: yaw/pitch that point a speaker at (sx, sy, sz) toward the
+// imagined listening centre. The listening centre is on the audience listening
+// plane: (0, 0, listeningHeight) — NOT the world origin (the floor projection).
+// Aiming at z=0 would dip every cone toward the floor, which is wrong for
+// audience-ear coverage. Returned values are rounded to 0.1°.
+//   yaw  = atan2(-Δx, -Δy)         (0° = +Y, +° toward +X clockwise)
+//   pitch = atan2(-Δz, √(Δx²+Δy²))  (0° = horizontal, +° looks up)
+// =============================================================================
+
+function aimAtCentre(sx, sy, sz) {
+  const tx = 0;
+  const ty = 0;
+  const tz = STATE.audience.listeningHeight;
+  const dx = tx - sx;
+  const dy = ty - sy;
+  const dz = tz - sz;
+  const yaw   = Math.atan2(dx, dy) * 180 / Math.PI;
+  const horiz = Math.sqrt(dx * dx + dy * dy);
+  const pitch = Math.atan2(dz, horiz) * 180 / Math.PI;
+  return {
+    yaw:   Math.round(yaw   * 10) / 10,
+    pitch: Math.round(pitch * 10) / 10,
+  };
+}
+
+// =============================================================================
+// Camera presets — world-space eye / target / up.
+// =============================================================================
+
+const CAMERA_DIST = 1400;
+
+function getCameraPreset(name) {
+  const h = STATE.audience.listeningHeight;
+  switch (name) {
+    case 'top':       return { eye: [0, 0, CAMERA_DIST], target: [0, 0, 0],   up: [0, 1, 0] };
+    case 'front':     return { eye: [0, -CAMERA_DIST, 200], target: [0, 0, 200], up: [0, 0, 1] };
+    case 'side':      return { eye: [CAMERA_DIST, 0, 200], target: [0, 0, 200], up: [0, 0, 1] };
+    case 'listening': return { eye: [0, 0, h], target: [0, CAMERA_DIST, h],   up: [0, 0, 1] };
+    case 'perspective':
+    default:          return { eye: [700, -900, 750], target: [0, 0, 100],     up: [0, 0, 1] };
+  }
+}
+
+// Orbit / wheel zoom distance limits (SPEC §9.1), in cm from the
+// orbit centre. One place to tune. Preset distances (1400 cm, listening view
+// 1400 cm) sit comfortably inside.
+const CAMERA_DISTANCE_LIMITS = { min: 100, max: 5000 };
+
+// Pull `eye` along the centre→eye ray so its distance to `centre` lies in
+// CAMERA_DISTANCE_LIMITS. Returns a new [x, y, z].
+function clampCameraEye(eye, centre) {
+  const dx = eye[0] - centre[0], dy = eye[1] - centre[1], dz = eye[2] - centre[2];
+  const d = Math.hypot(dx, dy, dz);
+  if (d < 1e-9) return [centre[0], centre[1] - CAMERA_DISTANCE_LIMITS.min, centre[2]];
+  const target = Math.min(CAMERA_DISTANCE_LIMITS.max, Math.max(CAMERA_DISTANCE_LIMITS.min, d));
+  if (target === d) return eye.slice();
+  const k = target / d;
+  return [centre[0] + dx * k, centre[1] + dy * k, centre[2] + dz * k];
+}
+
+let cam;
+
+// Projection only — keeps the current eye/centre/up. Used on window resize so
+// a mouse-orbited view survives a resize.
+function applyProjection() {
+  // Un-flip p5's projection Y. yScale must be set BEFORE perspective() so the
+  // new value is baked into projMatrix.
+  if (cam) cam.yScale = -1;
+  perspective(PI / 3, width / height, 1, 20000);
+}
+
+// Camera from STATE: the saved free camera if one is present (a file saved
+// after orbiting, SPEC §10.2), otherwise the active preset.
+function applyCamera() {
+  const free = STATE.view.camera;
+  if (free) {
+    camera(...free.eye, ...free.centre, ...free.up);
+  } else {
+    const p = getCameraPreset(STATE.view.cameraPreset);
+    camera(...p.eye, ...p.target, ...p.up);
+  }
+  applyProjection();
+  _lastCameraKey = cameraKey(readCameraState());
+}
+
+// Mouse orbit / wheel zoom is detected per frame by comparing against the
+// camera at the end of the previous frame; a change means the user moved
+// the view freely, so it is recorded in STATE.view.camera (and saved).
+let _lastCameraKey = '';
+function cameraKey(c) { return c ? c.eye.concat(c.centre, c.up).join(',') : ''; }
+function trackFreeCamera() {
+  const now = readCameraState();
+  const key = cameraKey(now);
+  if (key !== _lastCameraKey) {
+    STATE.view.camera = now;
+    _lastCameraKey = key;
+  }
+}
+
+// Live camera → serialisable record (null before setup()).
+function readCameraState() {
+  if (!cam) return null;
+  const r = v => Math.round(v * 1000) / 1000;
+  return {
+    eye:    [cam.eyeX, cam.eyeY, cam.eyeZ].map(r),
+    centre: [cam.centerX, cam.centerY, cam.centerZ].map(r),
+    up:     [cam.upX, cam.upY, cam.upZ].map(r),
+  };
+}
+
+// Per-frame zoom clamp, run right after orbitControl().
+function enforceCameraDistance() {
+  if (!cam) return;
+  const eye = [cam.eyeX, cam.eyeY, cam.eyeZ];
+  const centre = [cam.centerX, cam.centerY, cam.centerZ];
+  const clamped = clampCameraEye(eye, centre);
+  if (clamped[0] === eye[0] && clamped[1] === eye[1] && clamped[2] === eye[2]) return;
+  cam.camera(...clamped, ...centre, cam.upX, cam.upY, cam.upZ);
+}
+
+// =============================================================================
+// Speaker forward direction & cone corners (world space).
+//   yaw  : 0 = +Y, +yaw rotates toward +X (clockwise looking down +Z).
+//   pitch: 0 = horizontal, +pitch tilts toward +Z.
+// =============================================================================
+
+function speakerForward(yawDeg, pitchDeg) {
+  const y = degToRad(yawDeg);
+  const p = degToRad(pitchDeg);
+  return {
+    x: Math.sin(y) * Math.cos(p),
+    y: Math.cos(y) * Math.cos(p),
+    z: Math.sin(p),
+  };
+}
+
+// Speaker local basis: forward + right + up, all unit vectors in world space.
+// Used to build a rectangular-pyramid cone whose base is FLAT and perpendicular
+// to forward. This avoids the trapezoid artifact you get from independently
+// offsetting yaw and pitch in spherical coordinates.
+//
+// right comes straight from yaw (SPEC §7.2): right = (cos yaw, −sin yaw, 0).
+// For |pitch| < 90° this equals normalize(forward × world-up) exactly, and it
+// stays defined at pitch = ±90°, where forward × world-up is zero — so a
+// ceiling speaker pointing straight down still turns with its yaw instead of
+// snapping to a fixed axis.
+function speakerBasis(yawDeg, pitchDeg) {
+  const f = speakerForward(yawDeg, pitchDeg);
+  const yr = degToRad(yawDeg);
+  const r = { x: Math.cos(yr), y: -Math.sin(yr), z: 0 };
+  // up = right × forward
+  const u = {
+    x: r.y * f.z - r.z * f.y,
+    y: r.z * f.x - r.x * f.z,
+    z: r.x * f.y - r.y * f.x,
+  };
+  return { f, r, u };
+}
+
+// 4 corners of the rectangular cone base in world space.
+function coneCorners(s, length) {
+  const { f, r, u } = speakerBasis(s.yaw, s.pitch);
+  const dh = length * Math.tan(degToRad(s.angleH / 2));
+  const dv = length * Math.tan(degToRad(s.angleV / 2));
+  const cx = s.x + length * f.x;
+  const cy = s.y + length * f.y;
+  const cz = s.z + length * f.z;
+  return [
+    [+dh, +dv], [-dh, +dv], [-dh, -dv], [+dh, -dv],
+  ].map(([h, v]) => ({
+    x: cx + h * r.x + v * u.x,
+    y: cy + h * r.y + v * u.y,
+    z: cz + h * r.z + v * u.z,
+  }));
+}
+
+// =============================================================================
+// Coverage heatmap (SPEC §7).
+//
+// Grid-sample the listening plane, count enabled speakers covering each cell
+// via the rectangular-pyramid test (§7.2), colour by count (§7.3).
+//
+// Render path: instead of building a p5.Image and using texture() — which is
+// flaky in p5 v1.11 WEBGL with hand-painted pixel buffers (the GPU upload
+// silently misses, leaving the quad with whatever fill happened to be
+// active) — we bucket cells by colour band during compute and draw 4 batched
+// QUADS shapes per frame (one per colour). Lighting is disabled for this
+// pass so the colours render at their declared RGB rather than being
+// modulated by the directional light.
+//
+// Recompute is leading-edge throttled to 50ms so dragging an angle/position
+// field gives near-real-time feedback without flooding the main loop.
+// =============================================================================
+
+const COVERAGE = {
+  resX: 80,
+  resY: 80,
+  counts: null,                      // Uint8Array(resX * resY) — kept for hover lookups
+  groupVerts: [[], [], [], []],      // flat (x0,y0,x1,y0,x1,y1,x0,y1) repeated, per colour bucket 0/1/2/3+
+  dirty: true,
+  scheduled: false,
+};
+
+function markCoverageDirty() {
+  COVERAGE.dirty = true;
+  if (COVERAGE.scheduled) return;
+  COVERAGE.scheduled = true;
+  setTimeout(() => {
+    COVERAGE.scheduled = false;
+    if (COVERAGE.dirty) computeCoverage();
+  }, 50);
+}
+
+function computeCoverage() {
+  const lx = STATE.audience.length / 2;
+  const ly = STATE.audience.width  / 2;
+  const z  = STATE.audience.listeningHeight;
+  const nx = COVERAGE.resX;
+  const ny = COVERAGE.resY;
+
+  if (!COVERAGE.counts || COVERAGE.counts.length !== nx * ny) {
+    COVERAGE.counts = new Uint8Array(nx * ny);
+  }
+
+  // Pre-bake speaker bases + half-angle tangents. Flat-property objects so
+  // the inner loop touches no nested .x/.y/.z lookups.
+  const speakers = [];
+  for (const s of STATE.speakers) {
+    if (!s.enabled) continue;
+    const { f, r, u } = speakerBasis(s.yaw, s.pitch);
+    speakers.push({
+      x: s.x, y: s.y, z: s.z,
+      fx: f.x, fy: f.y, fz: f.z,
+      rx: r.x, ry: r.y, rz: r.z,
+      ux: u.x, uy: u.y, uz: u.z,
+      tanH: Math.tan(degToRad(s.angleH / 2)),
+      tanV: Math.tan(degToRad(s.angleV / 2)),
+    });
+  }
+
+  const dx = (2 * lx) / nx;
+  const dy = (2 * ly) / ny;
+
+  // Reset colour buckets. Reusing the arrays (length = 0) keeps the JS
+  // engine's hidden class instead of reallocating, but recomputes are
+  // throttled to 50ms so allocation cost is negligible either way.
+  for (let g = 0; g < 4; g++) COVERAGE.groupVerts[g].length = 0;
+
+  for (let iy = 0; iy < ny; iy++) {
+    const py = -ly + (iy + 0.5) * dy;
+    const y0 = -ly + iy * dy;
+    const y1 = y0 + dy;
+    for (let ix = 0; ix < nx; ix++) {
+      const px = -lx + (ix + 0.5) * dx;
+      let count = 0;
+      for (const s of speakers) {
+        const ddx = px - s.x;
+        const ddy = py - s.y;
+        const ddz = z  - s.z;
+        const fp = ddx * s.fx + ddy * s.fy + ddz * s.fz;
+        if (fp <= 0) continue;
+        const rp = ddx * s.rx + ddy * s.ry + ddz * s.rz;
+        const up = ddx * s.ux + ddy * s.uy + ddz * s.uz;
+        // Multiply instead of divide so the comparison stays well-defined
+        // when fp is tiny-positive.
+        if (Math.abs(rp) <= fp * s.tanH && Math.abs(up) <= fp * s.tanV) {
+          count++;
+        }
+      }
+      COVERAGE.counts[iy * nx + ix] = count > 255 ? 255 : count;
+
+      const x0 = -lx + ix * dx;
+      const x1 = x0 + dx;
+      const bucket = count >= 3 ? 3 : count;
+      const arr = COVERAGE.groupVerts[bucket];
+      arr.push(x0, y0, x1, y0, x1, y1, x0, y1);
+    }
+  }
+
+  COVERAGE.dirty = false;
+}
+
+// SPEC §7.3 lookup. Alpha is moderate-high — high enough that the four
+// bands stay distinguishable after compositing over the listening-plane
+// fill and grey background, low enough that the floor grid below remains
+// legible through the heatmap ("不蓋掉地面格線"). The companion fix:
+// when the heatmap layer is on, drawListeningPlane() skips its blue fill
+// so the heatmap colours don't get washed by an extra translucent layer.
+function coverageColour(count) {
+  switch (count) {
+    case 0:  return [225,  70,  70, 175];  // red — uncovered hole
+    case 1:  return [240, 200,  70, 175];  // yellow — single coverage
+    case 2:  return [180, 210,  90, 175];  // orange-green — double
+    default: return [ 80, 180, 100, 175];  // green — 3+ healthy
+  }
+}
+
+function drawCoverageHeat() {
+  // 1cm above the listening plane so we don't z-fight its outline. From the
+  // listening camera (eye exactly at z = listeningHeight) the heatmap shows
+  // edge-on as expected — sitting just above ear level.
+  const z = STATE.audience.listeningHeight + 1;
+
+  push();
+  noStroke();
+  // Disable lighting for this pass — the directional light would otherwise
+  // modulate the heatmap RGB, washing reds toward green-grey under the
+  // current directional vector. Re-enable when the pass ends.
+  if (typeof noLights === 'function') noLights();
+
+  for (let bucket = 0; bucket < 4; bucket++) {
+    const verts = COVERAGE.groupVerts[bucket];
+    if (verts.length === 0) continue;
+    const [r, g, b, a] = coverageColour(bucket);
+    fill(r, g, b, a);
+    beginShape(QUADS);
+    for (let i = 0; i < verts.length; i += 8) {
+      vertex(verts[i],     verts[i + 1], z);
+      vertex(verts[i + 2], verts[i + 3], z);
+      vertex(verts[i + 4], verts[i + 5], z);
+      vertex(verts[i + 6], verts[i + 7], z);
+    }
+    endShape();
+  }
+  pop();
+}
+
+// =============================================================================
+// Triangulation diagnostic (SPEC §8).
+//
+// Classifies the current layout (enabled speakers + all phantoms) by the
+// geometry of their direction vectors from the listening centre:
+//
+//   too-few          < 4 points after the sliver pre-merge
+//   point-at-centre  a point sits on the listening centre (cannot normalize)
+//   collinear        all directions on a single line through origin
+//   planar           elevation spread (max − min) ≤ 2° → 2D ring
+//   hull-open        3D, but the hull does not enclose the listening centre
+//                    → warning only, no triangle scores
+//   numerical-issue  the hull came out non-manifold → no scores
+//   ok               closed hull around the listening centre → scored
+//
+// The classification is cached in TRIANGULATION.result and refreshed lazily
+// via markTriangulationDirty(). Status text under the layer toggle reflects
+// the current result regardless of whether the layer is on. Drawing happens
+// only when the layer is on: 'planar' draws a closed polygon connecting
+// points in azimuth order; 'ok' draws the health-coloured triangulation;
+// 'hull-open' draws the hull edges in neutral grey (no health colours).
+// =============================================================================
+
+const TRIANGULATION = {
+  result: null,    // { kind, ... } from analyseTriangulation()
+  dirty: true,
+  scheduled: false,
+};
+
+function markTriangulationDirty() {
+  TRIANGULATION.dirty = true;
+  // Status text needs to refresh even if the layer is off, so we can't rely
+  // on draw to recompute. Schedule a microtask-ish update; coalesces multiple
+  // edits in the same tick.
+  if (TRIANGULATION.scheduled) return;
+  TRIANGULATION.scheduled = true;
+  setTimeout(() => {
+    TRIANGULATION.scheduled = false;
+    ensureTriangulationFresh();
+    updateTriangulationStatusDom();
+  }, 0);
+}
+
+function ensureTriangulationFresh() {
+  if (!TRIANGULATION.dirty) return;
+  TRIANGULATION.result = analyseTriangulation();
+  TRIANGULATION.dirty = false;
+  // Hover cache references the previous result's face indices — invalidate
+  // so the next mousemove re-reads metrics from the new result.
+  if (typeof HOVER !== 'undefined') HOVER.lastTriIdx = -1;
+  // If a tooltip is currently visible (e.g. user renamed via keyboard
+  // without moving the mouse off the triangle), re-pick at the last
+  // known cursor position so the new names appear immediately.
+  if (typeof HOVER !== 'undefined' && HOVER.mx >= 0) {
+    const triEl = document.getElementById('triangle-tooltip');
+    const spkEl = document.getElementById('speaker-tooltip');
+    if (triEl && spkEl && (!triEl.hidden || !spkEl.hidden)) {
+      updateHoverTooltips(HOVER.mx, HOVER.my,
+        typeof _pointerCurrentlyOverPanel !== 'undefined' && _pointerCurrentlyOverPanel);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sliver pre-merge & spherical convex hull.
+//
+// Pre-merge: speakers with directions within SLIVER_MERGE_EPS of each other
+// are considered the same panning slot for triangulation purposes — keeping
+// them separate would force the hull to generate near-degenerate sliver
+// triangles that the health classifier would falsely flag as red. The
+// threshold is set above the human auditory just-noticeable difference
+// (~1°–3°) so the merge only kicks in when speakers are functionally
+// redundant directionally.
+//
+// Hull: incremental construction. Seed tetrahedron from 4 extreme points
+// (farthest sequential search); for each remaining point P, find faces
+// "visible from P" (P on the outer side of the face plane), collect horizon
+// edges (edges that border exactly one visible face), delete visible faces,
+// and create one new face per horizon edge with apex P. Face orientation is
+// preserved automatically via the horizon-edge directed-pair rule: if a
+// visible face had directed edge (u, v), the new face replacing it is
+// (P, u, v) so that the same edge is now in (u, v) direction in a face
+// containing P, while its non-visible neighbor still has (v, u). Manifold
+// invariant: every undirected edge is shared by exactly 2 faces; total face
+// count = 2V − 4 (Euler V − E + F = 2 for sphere triangulation).
+// ---------------------------------------------------------------------------
+
+const SLIVER_MERGE_EPS = 0.05;          // rad ≈ 2.9°, above auditory JND
+const HULL_DET_EPS     = 1e-7;          // signed-determinant threshold
+const HULL_VISIBILITY_EPS = 1e-9;       // dot threshold for face-visibility
+
+// Planar tolerance: a layout whose directions all
+// lie within PLANAR_ELEVATION_DEG of each other in elevation (max − min) is
+// treated as a 2D ring, wherever that ring sits relative to the ears.
+const PLANAR_ELEVATION_DEG = 2;
+// Enclosure tolerance, independent of the planar one: a hull face
+// whose plane passes within sin(1°) of the listening centre counts as "not
+// enclosing". Such a face spans almost a whole hemisphere, so nothing healthy
+// is lost.
+const ENCLOSE_DEG = 1;
+const ENCLOSE_EPS = Math.sin(ENCLOSE_DEG * Math.PI / 180);
+
+// Group input points by union-find on pairwise direction angle. Returns the
+// merged-point array (length ≤ input length). Each merged point carries
+// its own dir/pos plus a names array and a sourceCount.
+function premergeSlivers(points) {
+  const N = points.length;
+  if (N < 2) {
+    return points.map(p => ({ ...p, names: [p.name], sourceCount: 1 }));
+  }
+
+  const parent = new Array(N);
+  for (let i = 0; i < N; i++) parent[i] = i;
+  const find = (i) => {
+    while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; }
+    return i;
+  };
+  const union = (i, j) => {
+    const ri = find(i), rj = find(j);
+    if (ri !== rj) parent[ri] = rj;
+  };
+
+  const cosT = Math.cos(SLIVER_MERGE_EPS);
+  for (let i = 0; i < N; i++) {
+    for (let j = i + 1; j < N; j++) {
+      const a = points[i].dir, b = points[j].dir;
+      const dot = a.x*b.x + a.y*b.y + a.z*b.z;
+      if (dot >= cosT) union(i, j);
+    }
+  }
+
+  const groups = new Map();
+  for (let i = 0; i < N; i++) {
+    const r = find(i);
+    let bucket = groups.get(r);
+    if (!bucket) { bucket = []; groups.set(r, bucket); }
+    bucket.push(points[i]);
+  }
+
+  const merged = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      merged.push({ ...group[0], names: [group[0].name], sourceCount: 1 });
+      continue;
+    }
+    let dx = 0, dy = 0, dz = 0, px = 0, py = 0, pz = 0;
+    const names = [];
+    for (const p of group) {
+      dx += p.dir.x; dy += p.dir.y; dz += p.dir.z;
+      px += p.pos.x; py += p.pos.y; pz += p.pos.z;
+      names.push(p.name);
+    }
+    const dmag = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    const k = group.length;
+    merged.push({
+      kind: 'merged',
+      name: names.join(' + '),
+      names,
+      sourceCount: k,
+      dir: { x: dx / dmag, y: dy / dmag, z: dz / dmag },
+      pos: { x: px / k, y: py / k, z: pz / k },
+    });
+  }
+  return merged;
+}
+
+// Make a face with the given vertex order, computing the unit outward normal
+// from the cross product. Returns null if the triangle is degenerate.
+// Caller is responsible for orientation (the normal direction follows from
+// the order of vertices, so the caller chooses the order to get outward).
+function makeFaceWithOrder(points, ia, ib, ic) {
+  const va = points[ia].dir, vb = points[ib].dir, vc = points[ic].dir;
+  const ex = vb.x - va.x, ey = vb.y - va.y, ez = vb.z - va.z;
+  const fx = vc.x - va.x, fy = vc.y - va.y, fz = vc.z - va.z;
+  let nx = ey * fz - ez * fy;
+  let ny = ez * fx - ex * fz;
+  let nz = ex * fy - ey * fx;
+  const m = Math.sqrt(nx*nx + ny*ny + nz*nz);
+  if (m < HULL_DET_EPS) return null;
+  return { a: ia, b: ib, c: ic, nx: nx / m, ny: ny / m, nz: nz / m };
+}
+
+// 4-stage extreme-point search to find a non-degenerate seed tetrahedron.
+// Returns { faces, indices } or null if no spanning tetrahedron exists
+// (which means the prior collinear/planar check missed an edge case).
+function seedTetrahedron(points) {
+  const N = points.length;
+  if (N < 4) return null;
+
+  // Stage 1: pick i0 arbitrarily.
+  const i0 = 0;
+  const v0 = points[i0].dir;
+
+  // Stage 2: i1 = farthest from i0 by angle (= smallest dot).
+  let i1 = -1, smallestDot = Infinity;
+  for (let i = 0; i < N; i++) {
+    if (i === i0) continue;
+    const v = points[i].dir;
+    const d = v0.x*v.x + v0.y*v.y + v0.z*v.z;
+    if (d < smallestDot) { smallestDot = d; i1 = i; }
+  }
+  if (i1 < 0) return null;
+  const v1 = points[i1].dir;
+
+  // Stage 3: i2 maximizes |(v1−v0) × (v_i−v0)| (distance from line v0v1).
+  const ax = v1.x - v0.x, ay = v1.y - v0.y, az = v1.z - v0.z;
+  let i2 = -1, biggestCrossSq = 0;
+  for (let i = 0; i < N; i++) {
+    if (i === i0 || i === i1) continue;
+    const v = points[i].dir;
+    const bx = v.x - v0.x, by = v.y - v0.y, bz = v.z - v0.z;
+    const cx = ay*bz - az*by, cy = az*bx - ax*bz, cz = ax*by - ay*bx;
+    const m2 = cx*cx + cy*cy + cz*cz;
+    if (m2 > biggestCrossSq) { biggestCrossSq = m2; i2 = i; }
+  }
+  if (i2 < 0 || biggestCrossSq < HULL_DET_EPS * HULL_DET_EPS) return null;
+  const v2 = points[i2].dir;
+
+  // Stage 4: i3 maximizes |det| of [v1−v0, v2−v0, v−v0] (distance from plane).
+  const planeNx = ay * (v2.z - v0.z) - az * (v2.y - v0.y);
+  const planeNy = az * (v2.x - v0.x) - ax * (v2.z - v0.z);
+  const planeNz = ax * (v2.y - v0.y) - ay * (v2.x - v0.x);
+  let i3 = -1, biggestDet = 0;
+  for (let i = 0; i < N; i++) {
+    if (i === i0 || i === i1 || i === i2) continue;
+    const v = points[i].dir;
+    const det = planeNx * (v.x - v0.x) + planeNy * (v.y - v0.y) + planeNz * (v.z - v0.z);
+    if (Math.abs(det) > Math.abs(biggestDet)) { biggestDet = det; i3 = i; }
+  }
+  if (i3 < 0 || Math.abs(biggestDet) < HULL_DET_EPS) return null;
+
+  // Build 4 outward-oriented faces. For each face, the opposite vertex is
+  // "inside" (the tetrahedron contains it on its interior side); flip vertex
+  // order if the computed normal points toward (instead of away from) it.
+  const indices = [i0, i1, i2, i3];
+  const triples = [[1, 2, 3, 0], [0, 3, 2, 1], [0, 1, 3, 2], [0, 2, 1, 3]];
+  const faces = [];
+  for (const [a, b, c, opp] of triples) {
+    const ia = indices[a], ib = indices[b], ic = indices[c], iOpp = indices[opp];
+    let f = makeFaceWithOrder(points, ia, ib, ic);
+    if (!f) return null;
+    const va = points[ia].dir, vo = points[iOpp].dir;
+    const facingOpposite = f.nx * (vo.x - va.x) + f.ny * (vo.y - va.y) + f.nz * (vo.z - va.z);
+    if (facingOpposite > 0) {
+      // Normal points toward the opposite vertex → flip so it points away.
+      f = makeFaceWithOrder(points, ia, ic, ib);
+      if (!f) return null;
+    }
+    faces.push(f);
+  }
+  return { faces, indices };
+}
+
+// Insert one point into the existing hull. Returns the updated face array
+// (the same reference if no face sees the point), or null if the visible
+// region's boundary is not a single simple loop (numerical failure — the
+// caller reports it instead of drawing a broken mesh).
+//
+// Visibility is grown by flood fill from the face that sees P the most,
+// crossing only edges into faces that also see P (dot > HULL_VISIBILITY_EPS).
+// Rationale: with near-cocircular inputs — e.g. ring
+// coordinates rounded to 5–6 decimals — some faces are coplanar with P to
+// within ~1e-9, and a plain per-face threshold test flips them on and off
+// independently. That produced disconnected "visible islands", several
+// horizon loops, duplicated directed edges and extra faces. Requiring the
+// visible set to be connected to the most-visible face makes the result
+// deterministic and always a disk. The threshold itself needs no scaling:
+// the hull works on unit direction vectors, so speaker distance and
+// coordinate magnitude never reach it. After the sliver pre-merge, merged
+// directions are a few degrees apart, so every point lies roughly 1e-3 or
+// more outside the hull of the others — far above the threshold — and no
+// real point is ever skipped as "inside".
+function insertPointIntoHull(points, faces, pointIdx) {
+  const P = points[pointIdx].dir;
+  const n = faces.length;
+
+  const dist = new Array(n);
+  let seedFace = -1, seedDist = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const f = faces[i];
+    const va = points[f.a].dir;
+    dist[i] = f.nx * (P.x - va.x) + f.ny * (P.y - va.y) + f.nz * (P.z - va.z);
+    if (dist[i] > seedDist) { seedDist = dist[i]; seedFace = i; }
+  }
+  if (seedDist <= HULL_VISIBILITY_EPS) return faces;  // P is inside / on the hull
+
+  // Directed edge 'u_v' → index of the face that owns it.
+  const edgeOwner = new Map();
+  for (let i = 0; i < n; i++) {
+    const f = faces[i];
+    edgeOwner.set(f.a + '_' + f.b, i);
+    edgeOwner.set(f.b + '_' + f.c, i);
+    edgeOwner.set(f.c + '_' + f.a, i);
+  }
+
+  const visible = new Uint8Array(n);
+  visible[seedFace] = 1;
+  const stack = [seedFace];
+  while (stack.length) {
+    const f = faces[stack.pop()];
+    for (const [u, v] of [[f.a, f.b], [f.b, f.c], [f.c, f.a]]) {
+      const j = edgeOwner.get(v + '_' + u);  // neighbour across this edge
+      if (j !== undefined && !visible[j] && dist[j] > HULL_VISIBILITY_EPS) {
+        visible[j] = 1;
+        stack.push(j);
+      }
+    }
+  }
+
+  // Horizon = directed edges of visible faces whose neighbour is not visible.
+  const kept = [];
+  const horizon = [];
+  for (let i = 0; i < n; i++) {
+    const f = faces[i];
+    if (!visible[i]) { kept.push(f); continue; }
+    for (const [u, v] of [[f.a, f.b], [f.b, f.c], [f.c, f.a]]) {
+      const j = edgeOwner.get(v + '_' + u);
+      if (j === undefined || !visible[j]) horizon.push([u, v]);
+    }
+  }
+
+  // The horizon must be exactly one simple loop.
+  const nextOf = new Map();
+  for (const [u, v] of horizon) {
+    if (nextOf.has(u)) return null;
+    nextOf.set(u, v);
+  }
+  let cur = horizon[0][0], steps = 0;
+  do {
+    cur = nextOf.get(cur);
+    steps++;
+    if (cur === undefined || steps > horizon.length) return null;
+  } while (cur !== horizon[0][0]);
+  if (steps !== horizon.length) return null;
+
+  // New faces: for each horizon edge (u, v) (in the visible face's CCW
+  // direction), the new face is (P, u, v) — preserves orientation against
+  // the still-present non-visible neighbour that has (v, u).
+  for (const [u, v] of horizon) {
+    const f = makeFaceWithOrder(points, pointIdx, u, v);
+    if (!f) return null;
+    kept.push(f);
+  }
+  return kept;
+}
+
+// Orchestrator: seed + iteratively insert.
+// Returns { faces }, null when no spanning tetrahedron exists (all directions
+// on one plane → the hull can't close around the listening centre), or
+// { error } when an insertion failed numerically.
+function buildSphericalHull(points) {
+  const seed = seedTetrahedron(points);
+  if (!seed) return null;
+  let faces = seed.faces;
+  const used = new Set(seed.indices);
+  for (let i = 0; i < points.length; i++) {
+    if (used.has(i)) continue;
+    faces = insertPointIntoHull(points, faces, i);
+    if (!faces) return { error: 'horizon is not a single loop' };
+  }
+  return { faces };
+}
+
+// ---------------------------------------------------------------------------
+// Per-triangle metrics — spherical area via L'Huilier theorem and
+// max interior angle via spherical law of cosines. Both inputs are unit
+// vectors on the sphere. Returned units: steradians (radians²) for area,
+// radians for max angle. Caller is responsible for converting to the
+// classification per SPEC §8.2 (area ratio vs median, angle thresholds).
+// ---------------------------------------------------------------------------
+
+const SPHERICAL_SIDE_EPS = 1e-9;  // arc-length below this → degenerate
+
+function clamp1(x) { return x < -1 ? -1 : x > 1 ? 1 : x; }
+function arcLen(u, v) { return Math.acos(clamp1(u.x*v.x + u.y*v.y + u.z*v.z)); }
+
+function sphericalTriangleArea(A, B, C) {
+  const a = arcLen(B, C);
+  const b = arcLen(C, A);
+  const c = arcLen(A, B);
+  // Degenerate (one side ≈ 0): area is 0 by definition.
+  if (a < SPHERICAL_SIDE_EPS || b < SPHERICAL_SIDE_EPS || c < SPHERICAL_SIDE_EPS) return 0;
+  const s = (a + b + c) / 2;
+  // Float-safety: tan products can go slightly negative near degenerate.
+  const t = Math.tan(s/2)
+          * Math.tan((s-a)/2)
+          * Math.tan((s-b)/2)
+          * Math.tan((s-c)/2);
+  return 4 * Math.atan(Math.sqrt(Math.max(0, t)));
+}
+
+function sphericalTriangleMaxAngle(A, B, C) {
+  const a = arcLen(B, C);
+  const b = arcLen(C, A);
+  const c = arcLen(A, B);
+  // Degenerate side → return π so the triangle trips the red threshold.
+  if (a < SPHERICAL_SIDE_EPS || b < SPHERICAL_SIDE_EPS || c < SPHERICAL_SIDE_EPS) return Math.PI;
+  // Spherical law of cosines: angle at A (opposite side a) =
+  //   acos((cos a − cos b cos c) / (sin b sin c))
+  const angleAt = (oppositeSide, adj1, adj2) => {
+    const sinProd = Math.sin(adj1) * Math.sin(adj2);
+    if (sinProd < SPHERICAL_SIDE_EPS) return Math.PI;
+    return Math.acos(clamp1(
+      (Math.cos(oppositeSide) - Math.cos(adj1) * Math.cos(adj2)) / sinProd
+    ));
+  };
+  return Math.max(
+    angleAt(a, b, c),
+    angleAt(b, c, a),
+    angleAt(c, a, b),
+  );
+}
+
+// Median of a numeric array. Returns 0 for empty input. Uses (lo+hi)/2 for
+// even counts. Operates on a copy so the caller's order is preserved.
+function median(values) {
+  if (values.length === 0) return 0;
+  const sorted = values.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+// SPEC §8.2 classification thresholds. Hardcoded for v1.
+// Angle thresholds anchored to regular polyhedra on the unit sphere:
+// icosahedron face vertex angle = 72° (12 points; the most equilateral
+// VBAP-friendly low-point sphere), octahedron = 90° (6 points; borderline
+// usable as 6-channel surround), tetrahedron = 120° (4 points; clearly
+// degenerate). YELLOW set above icosahedron so a perfectly icosahedral
+// layout reads green; RED set past octahedron with implementation cushion
+// so 90.0/89.9 borderline doesn't flip on every edit.
+const HEALTH_ANGLE_YELLOW = 75 * Math.PI / 180;  //  > 75° → yellow
+const HEALTH_ANGLE_RED    = 105 * Math.PI / 180; //  > 105° → red
+// Area ratio thresholds remain subjective ("uneven layout") and stay open
+// for beta + workshop tuning.
+const HEALTH_RATIO_YELLOW = 1.5;                 //  > 1.5× median → yellow
+const HEALTH_RATIO_RED    = 2.5;                 //  > 2.5× median → red
+
+function classifyTriangle(area, maxAngle, areaRatio) {
+  // Worst-of across both metrics. Order matters: red can't be downgraded.
+  let level = 'green';
+  if (maxAngle > HEALTH_ANGLE_RED)         level = 'red';
+  else if (maxAngle > HEALTH_ANGLE_YELLOW) level = 'yellow';
+  if (areaRatio > HEALTH_RATIO_RED)         level = 'red';
+  else if (areaRatio > HEALTH_RATIO_YELLOW && level !== 'red') level = 'yellow';
+  return level;
+}
+
+function computeHullMetrics(points, faces) {
+  const N = faces.length;
+  const areas = new Array(N);
+  const maxAngles = new Array(N);
+  const regions = new Array(N);
+  for (let i = 0; i < N; i++) {
+    const f = faces[i];
+    const A = points[f.a].dir, B = points[f.b].dir, C = points[f.c].dir;
+    areas[i] = sphericalTriangleArea(A, B, C);
+    maxAngles[i] = sphericalTriangleMaxAngle(A, B, C);
+    regions[i] = faceRegion(f);
+  }
+  const medianArea = median(areas);
+  const metrics = new Array(N);
+  const summary = { green: 0, yellow: 0, red: 0 };
+  for (let i = 0; i < N; i++) {
+    const ratio = medianArea > 0 ? areas[i] / medianArea : 1;
+    const level = classifyTriangle(areas[i], maxAngles[i], ratio);
+    metrics[i] = {
+      area: areas[i],
+      maxAngle: maxAngles[i],
+      areaRatio: ratio,
+      level,
+      region: regions[i],
+    };
+    summary[level]++;
+  }
+  return { metrics, medianArea, summary };
+}
+
+// ---------------------------------------------------------------------------
+// Region labels (SPEC §8.3) — coarse direction tag for a triangle, taken from
+// the triangle's OUTWARD FACE NORMAL (not the vertex centroid). For small
+// triangles the two agree; for a big cap triangle (e.g. the lid over an
+// ear-level ring) the chord centroid sits near the horizon and would read
+// "front"/"rear", while the normal points to where the triangle actually
+// covers — up or down.
+//
+// Rule, in order (SPEC §8.3):
+//   z >  0.7 → upper hemisphere      z < −0.7 → lower hemisphere
+//   y >  0.7 → front                 y < −0.7 → rear
+//   otherwise the largest |component| decides:
+//     x → right side / left side,  y → front / rear,  z → upper / lower
+//
+// dominantRegion picks the most common label among triangles of a level.
+// Tie for first place → the two first tied labels in REGION_LABELS order,
+// joined with "and" (e.g. "front and rear").
+// ---------------------------------------------------------------------------
+
+const REGION_LABELS = [
+  'upper hemisphere', 'lower hemisphere', 'front', 'rear', 'right side', 'left side',
+];
+
+function regionForDirection(d) {
+  if (d.z >  0.7) return 'upper hemisphere';
+  if (d.z < -0.7) return 'lower hemisphere';
+  if (d.y >  0.7) return 'front';
+  if (d.y < -0.7) return 'rear';
+  const ax = Math.abs(d.x), ay = Math.abs(d.y), az = Math.abs(d.z);
+  if (ax >= ay && ax >= az) return d.x >= 0 ? 'right side' : 'left side';
+  if (ay >= az)             return d.y >= 0 ? 'front' : 'rear';
+  return d.z >= 0 ? 'upper hemisphere' : 'lower hemisphere';
+}
+
+function faceRegion(face) {
+  return regionForDirection({ x: face.nx, y: face.ny, z: face.nz });
+}
+
+function dominantRegion(metrics, level) {
+  const counts = new Map();
+  for (const m of metrics) {
+    if (m.level !== level) continue;
+    counts.set(m.region, (counts.get(m.region) || 0) + 1);
+  }
+  let best = 0;
+  for (const c of counts.values()) if (c > best) best = c;
+  if (best === 0) return null;
+  const top = REGION_LABELS.filter(label => counts.get(label) === best);
+  return top.length >= 2 ? `${top[0]} and ${top[1]}` : top[0];
+}
+
+// ---------------------------------------------------------------------------
+// L/R symmetry deviation. For each merged point's direction, find
+// the nearest direction in the X-mirrored set; return the mean angular
+// distance (radians). 0 → perfectly mirror-symmetric across the listening
+// centerline (X=0 plane). Larger → asymmetric.
+//
+// Greedy nearest-neighbour pairing (each original maps to its closest
+// mirror) rather than bipartite minimum matching. Hungarian-style matching
+// would be more rigorous but materially differs only on pathological
+// inputs (clustered duplicates pulling toward the same mirror); for
+// typical speaker layouts (N ≤ 32 distinct directions) greedy is correct
+// and ~10× cheaper. Acceptable trade for v1.
+//
+// Thresholds per SPEC §8.2 (v1 estimate; recalibrate during beta with
+// real layouts):
+//   > 0.05 rad → yellow
+//   > 0.15 rad → red
+// ---------------------------------------------------------------------------
+
+const SYMMETRY_DELTA_YELLOW = 0.05;
+const SYMMETRY_DELTA_RED    = 0.15;
+
+function computeSymmetryDelta(points) {
+  const N = points.length;
+  if (N === 0) return null;
+  let total = 0;
+  for (const p of points) {
+    let minAngle = Infinity;
+    const px = p.dir.x, py = p.dir.y, pz = p.dir.z;
+    for (const q of points) {
+      // mirror(q).dir = (-q.dir.x, q.dir.y, q.dir.z); dot with p =
+      // -px*qx + py*qy + pz*qz. Pure inline — no allocation.
+      const dot = -px * q.dir.x + py * q.dir.y + pz * q.dir.z;
+      const angle = Math.acos(clamp1(dot));
+      if (angle < minAngle) minAngle = angle;
+    }
+    total += minAngle;
+  }
+  return total / N;
+}
+
+function classifySymmetry(delta) {
+  if (delta == null) return null;
+  if (delta > SYMMETRY_DELTA_RED)    return 'red';
+  if (delta > SYMMETRY_DELTA_YELLOW) return 'yellow';
+  return 'green';
+}
+
+// Diagnostic-only manifold check used by the dev tests. Throws on violation.
+// Conditions: every directed edge appears exactly once; its reverse exists
+// (= each undirected edge shared by exactly 2 faces); Euler V − E + F = 2.
+function assertManifoldOrThrow(faces) {
+  const edgeCount = new Map();
+  for (const f of faces) {
+    for (const [u, v] of [[f.a, f.b], [f.b, f.c], [f.c, f.a]]) {
+      const k = u + '_' + v;
+      edgeCount.set(k, (edgeCount.get(k) || 0) + 1);
+    }
+  }
+  for (const [k, count] of edgeCount) {
+    if (count !== 1) throw new Error(`directed edge ${k} appears ${count}× (expected 1)`);
+  }
+  for (const k of edgeCount.keys()) {
+    const [u, v] = k.split('_');
+    if (!edgeCount.has(v + '_' + u)) throw new Error(`directed edge ${k} has no reverse — not a manifold`);
+  }
+  const verts = new Set();
+  for (const f of faces) { verts.add(f.a); verts.add(f.b); verts.add(f.c); }
+  const V = verts.size;
+  const E = edgeCount.size / 2;
+  const F = faces.length;
+  if (V - E + F !== 2) throw new Error(`Euler check failed: V=${V}, E=${E}, F=${F}, χ=${V-E+F}`);
+}
+
+function analyseTriangulation() {
+  // Listening centre is the panning origin; all directions are measured from
+  // here, NOT from the world floor origin.
+  const ox = 0, oy = 0, oz = STATE.audience.listeningHeight;
+
+  // 1 cm: closer than this and the direction vector is numerically unusable.
+  // The user-visible message names the offending point so they can fix it.
+  const POINT_AT_CENTRE_EPS = 1.0;
+
+  // Threshold below which a candidate plane normal is considered too short
+  // to be meaningful (i.e. the two source directions are nearly parallel).
+  // |d_i × d_j| = sin(angle), so 1e-3 ≈ 0.057° between the pair.
+  const COLLINEAR_EPS = 1e-3;
+
+
+  const points = [];
+  // Collect every point sitting on the listening centre, not just the first —
+  // listing them all lets the user fix the layout in one pass instead of
+  // playing whack-a-mole. The names array is what the status text consumes.
+  const atCentre = [];
+
+  function consume(item, kind) {
+    const dx = item.x - ox;
+    const dy = item.y - oy;
+    const dz = item.z - oz;
+    const mag = Math.sqrt(dx*dx + dy*dy + dz*dz);
+    if (mag < POINT_AT_CENTRE_EPS) {
+      atCentre.push(item.name || '(unnamed)');
+      return;
+    }
+    points.push({
+      kind,
+      name: item.name || '(unnamed)',
+      pos: { x: item.x, y: item.y, z: item.z },
+      dir: { x: dx / mag, y: dy / mag, z: dz / mag },
+    });
+  }
+
+  for (const s of STATE.speakers) {
+    if (!s.enabled) continue;
+    consume(s, 'speaker');
+  }
+  for (const p of STATE.phantoms) {
+    consume(p, 'phantom');
+  }
+
+  if (atCentre.length > 0) {
+    return { kind: 'point-at-centre', names: atCentre };
+  }
+
+  // Sliver pre-merge — collapse direction-near-duplicate inputs so the hull
+  // doesn't generate sliver triangles that the health classifier would
+  // falsely flag as red. The merged-points array is what every downstream
+  // branch operates on.
+  const inputCount = points.length;
+  const merged = premergeSlivers(points);
+  const mergeReduction = inputCount - merged.length;
+
+  // L/R symmetry — layout-wide property, computed once and attached to
+  // every post-merge return so the caption can warn about asymmetric
+  // layouts even when triangulation isn't possible (too-few / collinear).
+  const symmetryDelta = computeSymmetryDelta(merged);
+  const symmetry = symmetryDelta == null
+    ? null
+    : { delta: symmetryDelta, level: classifySymmetry(symmetryDelta) };
+
+  if (merged.length < 4) {
+    return {
+      kind: 'too-few',
+      count: merged.length,
+      inputCount, mergeReduction, symmetry,
+    };
+  }
+
+  // Collinearity: the largest |(b−a)×(c−a)| over all triples. Below
+  // COLLINEAR_EPS every direction sits on one line. O(N³) on N≤32 = trivial.
+  // (After the sliver pre-merge this is essentially unreachable — a line
+  // through the centre has only two directions — but it is kept as a guard.)
+  let bestMag = 0;
+  for (let i = 0; i < merged.length; i++) {
+    const a = merged[i].dir;
+    for (let j = i + 1; j < merged.length; j++) {
+      const b = merged[j].dir;
+      const ex = b.x - a.x, ey = b.y - a.y, ez = b.z - a.z;
+      for (let k = j + 1; k < merged.length; k++) {
+        const c = merged[k].dir;
+        const fx = c.x - a.x, fy = c.y - a.y, fz = c.z - a.z;
+        const cx = ey * fz - ez * fy;
+        const cy = ez * fx - ex * fz;
+        const cz = ex * fy - ey * fx;
+        const m2 = cx*cx + cy*cy + cz*cz;
+        if (m2 > bestMag * bestMag) bestMag = Math.sqrt(m2);
+      }
+    }
+  }
+
+  if (bestMag < COLLINEAR_EPS) {
+    return {
+      kind: 'collinear',
+      count: merged.length,
+      inputCount, mergeReduction, symmetry,
+    };
+  }
+
+  // Planar (SPEC §8.1): elevation spread (max − min) ≤ 2° as
+  // seen from the listening centre; a ring at one height above or below the
+  // ears counts. Purely angular, so the tolerance is the same for a speaker
+  // 2 m or 20 m away. Drawn as a 2D ring in azimuth order (0° = +Y,
+  // clockwise looking down).
+  const elev = merged.map(p => Math.asin(Math.max(-1, Math.min(1, p.dir.z))));
+  if (Math.max(...elev) - Math.min(...elev) <= PLANAR_ELEVATION_DEG * Math.PI / 180) {
+    const azimuth = (d) => Math.atan2(d.x, d.y);
+    const sorted = merged.slice().sort((p, q) => azimuth(p.dir) - azimuth(q.dir));
+    return {
+      kind: 'planar',
+      points: sorted,
+      normal: { x: 0, y: 0, z: 1 },
+      inputCount, mergeReduction, symmetry,
+    };
+  }
+
+  // 3D — build the spherical convex hull.
+  const hull = buildSphericalHull(merged);
+  if (!hull) {
+    // No spanning tetrahedron: every direction lies on one plane that is
+    // not the ear-level plane (e.g. a ring of speakers all above the ears,
+    // or a tilted ring). The hull is a flat patch, not a closed surface
+    // around the listening centre.
+    return {
+      kind: 'hull-open',
+      count: merged.length,
+      inputCount, mergeReduction, symmetry,
+    };
+  }
+
+  // Guard: never score a broken mesh. A failed insertion or a
+  // non-manifold result is reported as a numerical issue instead.
+  let manifoldError = hull.error || null;
+  if (!manifoldError) {
+    try { assertManifoldOrThrow(hull.faces); } catch (e) { manifoldError = e.message; }
+  }
+  if (manifoldError) {
+    return {
+      kind: 'numerical-issue',
+      count: merged.length,
+      detail: manifoldError,
+      inputCount, mergeReduction, symmetry,
+    };
+  }
+
+  // Enclosure: the listening centre must be strictly inside the
+  // hull — every outward face normal n satisfies n · a > ENCLOSE_EPS, where a
+  // is any vertex of that face (n · a is the face plane's distance from the
+  // centre). Otherwise part of the sphere has no triangle over it and the
+  // triangles that do exist overlap or degenerate, so their scores mean
+  // nothing: report hull-open and score nothing.
+  let minPlaneOffset = Infinity;
+  for (const f of hull.faces) {
+    const a = merged[f.a].dir;
+    const off = f.nx * a.x + f.ny * a.y + f.nz * a.z;
+    if (off < minPlaneOffset) minPlaneOffset = off;
+  }
+  if (!(minPlaneOffset > ENCLOSE_EPS)) {
+    return {
+      kind: 'hull-open',
+      count: merged.length,
+      points: merged,
+      faces: hull.faces,      // drawn uncoloured, never scored
+      minPlaneOffset,
+      inputCount, mergeReduction, symmetry,
+    };
+  }
+
+  const { metrics, medianArea, summary } = computeHullMetrics(merged, hull.faces);
+  return {
+    kind: 'ok',
+    points: merged,
+    faces: hull.faces,
+    metrics,
+    medianArea,
+    healthSummary: summary,
+    minPlaneOffset,
+    inputCount, mergeReduction, symmetry,
+  };
+}
+
+// Suffix appended to status text when the sliver pre-merge collapsed inputs.
+// Empty string when no merge happened, otherwise " (N sliver-merged)".
+function mergeNote(r) {
+  return r.mergeReduction > 0 ? ` (${r.mergeReduction} sliver-merged)` : '';
+}
+
+// Caption under the triangulation layer toggle is intentionally minimal:
+// it answers "what kind of layout is this and how many points / triangles"
+// — the Layout Health panel carries the health and symmetry warnings.
+// mergeNote stays here because it's a non-health input-vs-effective-count
+// fact the panel doesn't surface.
+function triangulationStatusText(r) {
+  if (!r) return '';
+  switch (r.kind) {
+    case 'too-few':
+      return `Add ≥ 4 enabled speakers or phantoms to enable triangulation. Currently: ${r.count}${mergeNote(r)}.`;
+    case 'point-at-centre': {
+      // 1 → "X sits", 2 → "X and Y sit", 3-4 → "X, Y, and Z sit",
+      // 5+ → first three names + "...and N more sit". Cap is to keep the
+      // caption readable; if the user really has 5+ points at the centre
+      // they have bigger problems anyway.
+      const quoted = r.names.map(n => `“${n}”`);
+      const verb = quoted.length === 1 ? 'sits' : 'sit';
+      let head;
+      if (quoted.length === 1) {
+        head = quoted[0];
+      } else if (quoted.length === 2) {
+        head = `${quoted[0]} and ${quoted[1]}`;
+      } else if (quoted.length <= 4) {
+        head = `${quoted.slice(0, -1).join(', ')}, and ${quoted[quoted.length - 1]}`;
+      } else {
+        head = `${quoted.slice(0, 3).join(', ')}, and ${quoted.length - 3} more`;
+      }
+      return `${head} ${verb} on the listening centre — cannot triangulate.`;
+    }
+    case 'collinear':
+      return `Speakers are collinear from the listening centre — layout needs spatial spread${mergeNote(r)}.`;
+    case 'hull-open':
+      return `Open hull — ${r.count} points don't enclose the listening centre${mergeNote(r)}.`;
+    case 'numerical-issue':
+      return `Numerical issue — triangulation withheld (${r.count} points)${mergeNote(r)}.`;
+    case 'planar':
+      // mergeNote sits outside the parens to avoid nested-paren ugliness:
+      // "(4 points) (1 sliver-merged)" reads cleaner than "(4 points (1 sliver-merged))".
+      return `Planar layout — 2D ring shown in place of triangulation (${r.points.length} points)${mergeNote(r)}.`;
+    case 'ok':
+      // Health summary + symmetry now live in the Layout Health panel.
+      return `3D layout — ${r.points.length} points → ${r.faces.length} triangles${mergeNote(r)}.`;
+    default:
+      return '';
+  }
+}
+
+function updateTriangulationStatusDom() {
+  const el = document.getElementById('triangulation-status');
+  if (!el) return;
+  const text = triangulationStatusText(TRIANGULATION.result);
+  el.textContent = text;
+  // Tag the row by kind so CSS can colour-code (red / yellow / green).
+  const row = el.closest('.triangulation-status');
+  if (row) row.dataset.kind = TRIANGULATION.result ? TRIANGULATION.result.kind : '';
+  // Layout Health panel mirrors the same result through a richer surface.
+  updateHealthPanelDom();
+}
+
+// ---------------------------------------------------------------------------
+// Layout Health panel (SPEC §8.3). Produces a list of {text, level}
+// lines from the analyseTriangulation result, where level ∈ {ok, info,
+// warn, fail} drives the icon and colour. The panel framing paragraph is
+// static markup in index.html — these lines fill the dynamic status block.
+//
+// Lines emitted:
+//   1. A primary line summarising the layout kind:
+//      - ok 'green'            → ✓ Layout looks healthy.
+//      - ok 'yellow'           → ⚠ N suspect triangle(s) detected in <region>. Coverage may degrade.
+//      - ok 'red'              → ✗ N problematic triangle(s) detected in <region>. Consider adding phantom speaker(s).
+//      - planar                → ℹ Planar layout — 2D ring shown in place of triangulation.
+//      - hull-open             → ⚠ Layout doesn't enclose the listening centre — … (no triangle scores)
+//      - numerical-issue       → ⚠ Numerical issue — … no health scores are shown.
+//      - too-few               → ⚠ Add ≥ 4 enabled speakers or phantoms — only N reachable.
+//      - collinear             → ⚠ Speakers are collinear from the listening centre — layout needs spatial spread.
+//      - point-at-centre       → ✗ N point(s) sit on the listening centre — cannot triangulate.
+//   2. (independent) Symmetry warning when level is yellow / red:
+//      - ⚠ Layout is asymmetric (L/R, Δ = X.XX rad). Sources panning across the centerline may behave inconsistently.
+// ---------------------------------------------------------------------------
+
+function pluralize(n, singular, plural) {
+  return n === 1 ? singular : (plural || singular + 's');
+}
+
+function composeHealthLines(r) {
+  if (!r) return [];
+  const lines = [];
+
+  switch (r.kind) {
+    case 'too-few':
+      lines.push({
+        level: 'warn',
+        text: `⚠ Add ≥ 4 enabled speakers or phantoms — only ${r.count} reachable.`,
+      });
+      break;
+    case 'point-at-centre': {
+      const n = r.names.length;
+      const verb = pluralize(n, 'sits', 'sit');
+      const noun = pluralize(n, 'point', 'points');
+      lines.push({
+        level: 'fail',
+        text: `✗ ${n} ${noun} ${verb} on the listening centre — cannot triangulate.`,
+      });
+      break;
+    }
+    case 'collinear':
+      lines.push({
+        level: 'warn',
+        text: '⚠ Speakers are collinear from the listening centre — layout needs spatial spread.',
+      });
+      break;
+    case 'hull-open':
+      lines.push({
+        level: 'warn',
+        text: '⚠ Layout doesn\'t enclose the listening centre — add a phantom above or below to close the panning grid.',
+      });
+      break;
+    case 'numerical-issue':
+      lines.push({
+        level: 'warn',
+        text: '⚠ Numerical issue — the triangulation for this layout could not be built reliably, so no health scores are shown.',
+      });
+      break;
+    case 'planar':
+      lines.push({
+        level: 'info',
+        text: 'ℹ Planar layout — 2D ring shown in place of triangulation.',
+      });
+      break;
+    case 'ok': {
+      const s = r.healthSummary;
+      if (s.red > 0) {
+        const region = dominantRegion(r.metrics, 'red');
+        const noun = pluralize(s.red, 'triangle');
+        lines.push({
+          level: 'fail',
+          text: `✗ ${s.red} problematic ${noun} detected in ${region}. Consider adding phantom speaker(s).`,
+        });
+      } else if (s.yellow > 0) {
+        const region = dominantRegion(r.metrics, 'yellow');
+        const noun = pluralize(s.yellow, 'triangle');
+        lines.push({
+          level: 'warn',
+          text: `⚠ ${s.yellow} suspect ${noun} detected in ${region}. Coverage may degrade.`,
+        });
+      } else {
+        lines.push({ level: 'ok', text: '✓ Layout looks healthy.' });
+      }
+      break;
+    }
+  }
+
+  // Symmetry — independent line, only on yellow / red. SPEC §8.3 uses ⚠
+  // for both levels (the magnitude is conveyed by the Δ value, not the icon).
+  if (r.symmetry && (r.symmetry.level === 'yellow' || r.symmetry.level === 'red')) {
+    lines.push({
+      level: r.symmetry.level === 'red' ? 'fail' : 'warn',
+      text: `⚠ Layout is asymmetric (L/R, Δ = ${r.symmetry.delta.toFixed(2)} rad). Sources panning across the centerline may behave inconsistently.`,
+    });
+  }
+
+  return lines;
+}
+
+function updateHealthPanelDom() {
+  const host = document.getElementById('health-panel-status');
+  if (!host) return;
+  const lines = composeHealthLines(TRIANGULATION.result);
+  // Rebuild the status block from scratch — line count varies (0 / 1 / 2)
+  // and content is short, so DOM diffing buys nothing.
+  host.innerHTML = '';
+  for (const { text, level } of lines) {
+    const p = document.createElement('p');
+    p.className = 'health-line health-line-' + level;
+    p.textContent = text;
+    host.appendChild(p);
+  }
+}
+
+// Stroke colour per health level. Aligns with SPEC §14's emoji-colour rule
+// (✓ green / ⚠ yellow / ✗ red). Alpha tuned to read clearly above the
+// heatmap without overwhelming it; matches the 2D-ring purple's alpha.
+const LEVEL_STROKE = {
+  green:  [ 80, 180, 100, 220],
+  yellow: [240, 200,  70, 220],
+  red:    [225,  70,  70, 220],
+};
+
+const HULL_OPEN_STROKE = [150, 150, 160, 160];
+
+function drawTriangulation() {
+  const r = TRIANGULATION.result;
+  if (!r) return;
+  // Caller (drawScene) already disabled DEPTH_TEST for this pass.
+  push();
+  noFill();
+  // Triangulation is a user-activated diagnostic — sits above cone wires
+  // (1.0–1.2) and floor grid (1.0), below axes (2.0). 1.8 keeps health
+  // colours legible at typical zoom without dwarfing the geometry.
+  strokeWeight(1.8);
+
+  if (r.kind === 'planar') {
+    // Planar layout has no per-triangle metrics, so use the original
+    // structural-overlay purple to signal "this is a 2D ring, not a hull".
+    stroke(95, 70, 145, 220);
+    beginShape();
+    for (const p of r.points) vertex(p.pos.x, p.pos.y, p.pos.z);
+    endShape(CLOSE);
+  } else if (r.kind === 'hull-open' && r.faces) {
+    // Not enclosing the listening centre: show the hull's shape so the user
+    // can see where it is open, but in a neutral grey — these triangles have
+    // no meaningful health score.
+    stroke(...HULL_OPEN_STROKE);
+    for (const f of r.faces) {
+      const a = r.points[f.a].pos;
+      const b = r.points[f.b].pos;
+      const c = r.points[f.c].pos;
+      beginShape();
+      vertex(a.x, a.y, a.z);
+      vertex(b.x, b.y, b.z);
+      vertex(c.x, c.y, c.z);
+      endShape(CLOSE);
+    }
+  } else if (r.kind === 'ok') {
+    // Each undirected edge is shared by two faces; we paint per-face, so
+    // shared edges get painted twice. When neighbours have different levels
+    // (e.g. one yellow / one red), the second draw wins for that edge —
+    // visually the user sees a mix of both colours in the area, which is
+    // the right read since "this region has a problematic neighbourhood".
+    for (let i = 0; i < r.faces.length; i++) {
+      const f = r.faces[i];
+      const [cr, cg, cb, ca] = LEVEL_STROKE[r.metrics[i].level];
+      stroke(cr, cg, cb, ca);
+      const a = r.points[f.a].pos;
+      const b = r.points[f.b].pos;
+      const c = r.points[f.c].pos;
+      beginShape();
+      vertex(a.x, a.y, a.z);
+      vertex(b.x, b.y, b.z);
+      vertex(c.x, c.y, c.z);
+      endShape(CLOSE);
+    }
+  }
+  pop();
+}
+
+// ---------------------------------------------------------------------------
+// Hover tooltips (triangle + speaker).
+//
+// Two tooltips share a picking framework: speaker takes priority over
+// triangle when both would hit (speakers are foreground markers; user
+// usually wants speaker info if their cursor is on one). Each tooltip is
+// a separate DOM element; the unified updateHoverTooltips handler decides
+// which to show and which to hide based on pickSpeaker / pickTriangle.
+//
+// Triangle picking: project each hull face's three world-space vertices
+// to canvas pixels via projectToScreen, run point-in-triangle, depth-
+// tiebreak by world-space distance from camera eye to face centroid.
+//
+// Speaker picking: project each enabled speaker's position; hit if mouse
+// is within SPEAKER_PICK_PX pixels of the projected center; depth-tiebreak
+// by world-space distance to eye.
+//
+// Hide gates (apply to both): triangulation/speakers layer off (per
+// tooltip), pointer over a panel, orbit drag in progress, no hit.
+//
+// HOVER state: { speakerId, lastTriIdx } — speakerId drives the 3D
+// highlight in drawSpeakerBody; lastTriIdx is a write-skip cache so
+// same-triangle moves only reposition without rewriting text.
+// ---------------------------------------------------------------------------
+
+function pointInTriangle(px, py, ax, ay, bx, by, cx, cy) {
+  // Sign of the 2D cross products (px-bx, py-by) × (ax-bx, ay-by) for each
+  // edge. If all signs agree, point is inside (with edges treated as inside
+  // when the cross product is exactly 0).
+  const d1 = (px - bx) * (ay - by) - (ax - bx) * (py - by);
+  const d2 = (px - cx) * (by - cy) - (bx - cx) * (py - cy);
+  const d3 = (px - ax) * (cy - ay) - (cx - ax) * (py - ay);
+  const hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+  const hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+  return !(hasNeg && hasPos);
+}
+
+function pickTriangle(mx, my) {
+  const r = TRIANGULATION.result;
+  if (!r || r.kind !== 'ok') return -1;
+  if (!STATE.view.layers.triangulation) return -1;
+  if (!cam) return -1;
+
+  let bestIdx = -1;
+  let bestDepthSq = Infinity;
+  const ex = cam.eyeX, ey = cam.eyeY, ez = cam.eyeZ;
+
+  for (let i = 0; i < r.faces.length; i++) {
+    const f = r.faces[i];
+    const pa = r.points[f.a].pos;
+    const pb = r.points[f.b].pos;
+    const pc = r.points[f.c].pos;
+    const sa = projectToScreen(pa.x, pa.y, pa.z);
+    const sb = projectToScreen(pb.x, pb.y, pb.z);
+    const sc = projectToScreen(pc.x, pc.y, pc.z);
+    if (!sa || !sb || !sc) continue;
+    if (sa.behind || sb.behind || sc.behind) continue;
+    if (!pointInTriangle(mx, my, sa.sx, sa.sy, sb.sx, sb.sy, sc.sx, sc.sy)) continue;
+
+    // Depth tiebreak: distance from camera eye to face centroid (squared,
+    // since we only compare).
+    const cx = (pa.x + pb.x + pc.x) / 3;
+    const cy = (pa.y + pb.y + pc.y) / 3;
+    const cz = (pa.z + pb.z + pc.z) / 3;
+    const dx = cx - ex, dy = cy - ey, dz = cz - ez;
+    const d2 = dx*dx + dy*dy + dz*dz;
+    if (d2 < bestDepthSq) { bestDepthSq = d2; bestIdx = i; }
+  }
+  return bestIdx;
+}
+
+// Pixel-radius tolerance for speaker hits. Speaker bodies are drawn as
+// sphere(26) in world units; the projected screen radius varies with
+// camera distance, but for typical orbit zooms a fixed 28-px tolerance
+// covers the marker generously without overlapping neighbours at common
+// 5.1 / 7.1 spacings.
+const SPEAKER_PICK_PX = 28;
+
+function pickSpeaker(mx, my) {
+  if (!cam) return null;
+  if (!STATE.view.layers.speakers) return null;
+
+  let best = null;
+  let bestDepthSq = Infinity;
+  const ex = cam.eyeX, ey = cam.eyeY, ez = cam.eyeZ;
+  const tolSq = SPEAKER_PICK_PX * SPEAKER_PICK_PX;
+
+  for (let i = 0; i < STATE.speakers.length; i++) {
+    const s = STATE.speakers[i];
+    if (!s.enabled) continue;
+    const proj = projectToScreen(s.x, s.y, s.z);
+    if (!proj || proj.behind) continue;
+    const ddx = proj.sx - mx, ddy = proj.sy - my;
+    if (ddx*ddx + ddy*ddy > tolSq) continue;
+    // Depth tiebreak — world-space distance from eye, squared.
+    const wx = s.x - ex, wy = s.y - ey, wz = s.z - ez;
+    const wDistSq = wx*wx + wy*wy + wz*wz;
+    if (wDistSq < bestDepthSq) {
+      bestDepthSq = wDistSq;
+      best = { idx: i, id: s.id, speaker: s };
+    }
+  }
+  return best;
+}
+
+const HOVER = { speakerId: null, lastTriIdx: -1, mx: -1, my: -1 };
+
+function positionTooltip(el, mx, my) {
+  const rect = el.getBoundingClientRect();
+  const pad = 10, offsetX = 14, offsetY = 14;
+  let left = mx + offsetX;
+  let top  = my + offsetY;
+  if (left + rect.width  + pad > window.innerWidth)  left = mx - rect.width  - offsetX;
+  if (top  + rect.height + pad > window.innerHeight) top  = my - rect.height - offsetY;
+  if (left < pad) left = pad;
+  if (top  < pad) top  = pad;
+  el.style.left = left + 'px';
+  el.style.top  = top  + 'px';
+}
+
+function showTriangleTooltip(hit, mx, my, el) {
+  const r = TRIANGULATION.result;
+  const m = r.metrics[hit];
+  const f = r.faces[hit];
+  // Vertex names from each merged point's `names` array (sliver-merge groups
+  // join with " + "). For unmerged points, names is just [originalName].
+  if (hit !== HOVER.lastTriIdx) {
+    const vNames = [f.a, f.b, f.c]
+      .map(i => (r.points[i].names || [r.points[i].name]).join(' + '))
+      .join(', ');
+    el.querySelector('[data-tt="maxAngle"]').textContent = `${(m.maxAngle * 180 / Math.PI).toFixed(1)}°`;
+    el.querySelector('[data-tt="area"]').textContent = `${m.area.toFixed(3)} sr (${m.areaRatio.toFixed(2)}× median)`;
+    el.querySelector('[data-tt="level"]').textContent = m.level;
+    el.querySelector('[data-tt="region"]').textContent = m.region;
+    el.querySelector('[data-tt="vertices"]').textContent = vNames;
+    el.dataset.level = m.level;
+    HOVER.lastTriIdx = hit;
+  }
+  el.hidden = false;
+  positionTooltip(el, mx, my);
+}
+
+function showSpeakerTooltip(hit, mx, my, el) {
+  const s = hit.speaker;
+  // Always rewrite — speaker properties (yaw/pitch/spread/distance) can
+  // change while hovering, e.g. user adjusts a slider. Tiny DOM cost.
+  const u = STATE.view.unit;
+  el.querySelector('[data-tt="name"]').textContent = s.name || '(unnamed)';
+  el.querySelector('[data-tt="position"]').textContent =
+    `${fmtCoord(s.x)}, ${fmtCoord(s.y)}, ${fmtCoord(s.z)} ${u}`;
+  el.querySelector('[data-tt="orientation"]').textContent =
+    `Yaw ${s.yaw}°, Pitch ${s.pitch}°`;
+  el.querySelector('[data-tt="spread"]').textContent =
+    `H ${s.angleH}°, V ${s.angleV}°`;
+  // Distance + delay — same formula as the per-speaker caption.
+  const dx = s.x;
+  const dy = s.y;
+  const dz = s.z - STATE.audience.listeningHeight;
+  const cm = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  const ms = (cm / 100 / SPEED_OF_SOUND_MPS) * 1000;
+  const dist = u === 'm' ? `${(cm/100).toFixed(2)} m` : `${cm.toFixed(0)} cm`;
+  el.querySelector('[data-tt="distance"]').textContent = `${dist} · ${ms.toFixed(1)} ms`;
+  el.hidden = false;
+  positionTooltip(el, mx, my);
+}
+
+function updateHoverTooltips(mx, my, hideForPanel) {
+  const triEl = document.getElementById('triangle-tooltip');
+  const spkEl = document.getElementById('speaker-tooltip');
+  if (!triEl || !spkEl) return;
+
+  // Hide while orbiting — picking is meaningless mid-drag and the tooltip
+  // would jitter wildly. mouseIsPressed comes from p5 globals.
+  const orbiting = (typeof mouseIsPressed !== 'undefined' && mouseIsPressed) && !_dragStartedOnPanel;
+  if (hideForPanel || orbiting) {
+    triEl.hidden = true;
+    spkEl.hidden = true;
+    HOVER.speakerId = null;
+    HOVER.lastTriIdx = -1;
+    return;
+  }
+
+  // Speaker takes priority over triangle when both would hit.
+  const spk = pickSpeaker(mx, my);
+  if (spk) {
+    triEl.hidden = true;
+    HOVER.lastTriIdx = -1;
+    HOVER.speakerId = spk.id;
+    showSpeakerTooltip(spk, mx, my, spkEl);
+    return;
+  }
+  HOVER.speakerId = null;
+  spkEl.hidden = true;
+
+  const triHit = pickTriangle(mx, my);
+  if (triHit < 0) {
+    triEl.hidden = true;
+    HOVER.lastTriIdx = -1;
+    return;
+  }
+  showTriangleTooltip(triHit, mx, my, triEl);
+}
+
+function installTooltipHandlers() {
+  // Listen on document so we get events regardless of which element is the
+  // direct target. Existing _pointerCurrentlyOverPanel tracks panel hover
+  // (set by the panel-guard mousemove listener in capture phase) — we reuse
+  // that signal.
+  document.addEventListener('mousemove', (e) => {
+    HOVER.mx = e.clientX;
+    HOVER.my = e.clientY;
+    updateHoverTooltips(e.clientX, e.clientY, _pointerCurrentlyOverPanel);
+  });
+}
+
+// Dev test harness — run from devtools console: __triangulationDevTests().
+// Pure-function checks against analyseTriangulation. Stashes & restores STATE
+// so the running app isn't disturbed. Not auto-run.
+function __triangulationDevTests() {
+  const results = [];
+  function check(name, cond, detail) {
+    const ok = !!cond;
+    results.push({ name, ok });
+    (ok ? console.log : console.error)((ok ? 'OK  ' : 'FAIL') + ': ' + name, detail || '');
+  }
+
+  const stash = {
+    speakers: STATE.speakers,
+    phantoms: STATE.phantoms,
+    listeningHeight: STATE.audience.listeningHeight,
+  };
+
+  function setLayout(speakers, phantoms = [], listeningHeight = 120) {
+    STATE.audience.listeningHeight = listeningHeight;
+    STATE.speakers = speakers.map((s, i) => ({
+      id: 't' + i, name: s.name || ('S' + i),
+      enabled: s.enabled !== false,
+      x: s.x, y: s.y, z: s.z,
+      yaw: 0, pitch: 0, angleH: 90, angleV: 60,
+    }));
+    STATE.phantoms = phantoms.map((p, i) => ({
+      id: 'tp' + i, name: p.name || ('P' + i),
+      x: p.x, y: p.y, z: p.z,
+    }));
+  }
+
+  // 1. Too-few enabled points.
+  setLayout([{ x: 100, y: 0, z: 120 }, { x: 0, y: 100, z: 120 }, { x: -100, y: 0, z: 120 }]);
+  let r = analyseTriangulation();
+  check('too-few(3)', r.kind === 'too-few' && r.count === 3, r);
+
+  // 2. Point exactly at the listening centre — single name.
+  setLayout([
+    { name: 'X', x: 0, y: 0, z: 120 },
+    { x: 200, y: 0, z: 120 }, { x: 0, y: 200, z: 120 }, { x: -200, y: 0, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('point-at-centre-single',
+    r.kind === 'point-at-centre' && r.names.length === 1 && r.names[0] === 'X',
+    r);
+  check('point-at-centre-grammar-1',
+    triangulationStatusText(r) === '“X” sits on the listening centre — cannot triangulate.',
+    triangulationStatusText(r));
+
+  // 2b. Multiple points at the listening centre — names should be collected,
+  // status grammar should use plural verb and join correctly.
+  setLayout([
+    { name: 'L', x: 0, y: 0, z: 120 },
+    { name: 'R', x: 0, y: 0, z: 120 },
+    { x: 200, y: 0, z: 120 }, { x: 0, y: 200, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('point-at-centre-multi',
+    r.kind === 'point-at-centre' && r.names.length === 2,
+    r);
+  check('point-at-centre-grammar-2',
+    triangulationStatusText(r) === '“L” and “R” sit on the listening centre — cannot triangulate.',
+    triangulationStatusText(r));
+
+  // 2c. Five points at centre → status caption truncates to first 3 + "and N more".
+  setLayout([
+    { name: 'A', x: 0, y: 0, z: 120 },
+    { name: 'B', x: 0, y: 0, z: 120 },
+    { name: 'C', x: 0, y: 0, z: 120 },
+    { name: 'D', x: 0, y: 0, z: 120 },
+    { name: 'E', x: 0, y: 0, z: 120 },
+    { x: 200, y: 0, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('point-at-centre-grammar-many',
+    triangulationStatusText(r) === '“A”, “B”, “C”, and 2 more sit on the listening centre — cannot triangulate.',
+    triangulationStatusText(r));
+
+  // 3. Coplanar — 4 speakers all at ear height (canonical theatre LCR/sub case).
+  setLayout([
+    { x: -300, y: 200, z: 120 }, { x: 300, y: 200, z: 120 },
+    { x: 0, y: -300, z: 120 }, { x: 0, y: 300, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('planar-4pts-ear-height', r.kind === 'planar' && r.points.length === 4, r);
+
+  // 4. Tetrahedron — genuinely 3D, should be 'ok' with 4 faces. Manifold
+  // invariant should hold (each undirected edge shared by exactly 2 faces;
+  // V − E + F = 2). Status text reflects the new "→ K triangles" format.
+  setLayout([
+    { x: 200, y: 200, z: 240 }, { x: -200, y: 200, z: 240 },
+    { x: 0, y: -200, z: 240 }, { x: 0, y: 0, z: 60 },
+  ]);
+  r = analyseTriangulation();
+  check('ok-tetrahedron-points', r.kind === 'ok' && r.points.length === 4, r);
+  check('ok-tetrahedron-faces', r.kind === 'ok' && r.faces.length === 4, r);
+  try {
+    assertManifoldOrThrow(r.faces);
+    check('ok-tetrahedron-manifold', true);
+  } catch (e) {
+    check('ok-tetrahedron-manifold', false, e.message);
+  }
+  check('ok-metrics-shape',
+    r.kind === 'ok'
+    && Array.isArray(r.metrics) && r.metrics.length === 4
+    && r.healthSummary.green + r.healthSummary.yellow + r.healthSummary.red === 4
+    && typeof r.medianArea === 'number',
+    r);
+
+  // 5. Mixed speakers + phantoms — both contribute. (The second phantom is a
+  // nadir so the hull encloses the listening centre; an all-above version
+  // of this layout is hull-open, see the D-cases below.)
+  setLayout(
+    [{ x: -300, y: 200, z: 240 }, { x: 300, y: 200, z: 240 }],
+    [{ x: 0, y: -300, z: 240 }, { x: 0, y: 0, z: -200 }],
+  );
+  r = analyseTriangulation();
+  check('mixed-speaker-phantom-counts', r.kind === 'ok' && r.points.length === 4, r);
+
+  // 6. Disabled speaker is excluded from the count.
+  setLayout([
+    { x: 200, y: 0, z: 240 }, { x: -200, y: 0, z: 240 },
+    { x: 0, y: 200, z: 240 },
+    { x: 0, y: -200, z: 240, enabled: false },
+  ]);
+  r = analyseTriangulation();
+  check('disabled-excluded', r.kind === 'too-few' && r.count === 3, r);
+
+  // 7. Collinear input → falls through to 'too-few' after sliver merge.
+  // Geometric note: a line through origin has at most 2 distinct directions
+  // (forward/back), so any "collinear" input merges to ≤2 points and the
+  // too-few check fires first. The 'collinear' branch in analyseTriangulation
+  // remains as defensive code for numerical edge cases but is essentially
+  // unreachable through the normal user flow.
+  setLayout([
+    { x: 100, y: 0, z: 120 }, { x: 200, y: 0, z: 120 },
+    { x: 300, y: 0, z: 120 }, { x: -100, y: 0, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('collinear-merges-to-too-few',
+    r.kind === 'too-few' && r.count === 2 && r.mergeReduction === 2,
+    r);
+
+  // 8. Azimuth ordering on a planar layout — points should sort around the centre.
+  setLayout([
+    { name: 'E', x: 300, y: 0, z: 120 },
+    { name: 'N', x: 0, y: 300, z: 120 },
+    { name: 'W', x: -300, y: 0, z: 120 },
+    { name: 'S', x: 0, y: -300, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  const order = r.kind === 'planar' ? r.points.map(p => p.name).join('') : '';
+  // Acceptable cyclic orderings: ENWS or its rotations / reverses (depending
+  // on which pair won the cross product and the resulting normal sign).
+  const validCycles = ['ENWS', 'NWSE', 'WSEN', 'SENW', 'SWNE', 'WNES', 'NESW', 'ESWN'];
+  check('planar-azimuth-sorted', validCycles.includes(order), 'order=' + order);
+
+  // 9. Octahedron — 6 points along ±X / ±Y / ±Z directions from listening
+  // centre. Hull = 8 equilateral spherical triangles. Strong stress test:
+  // the seed picks 4 of these 6 vertices and the remaining 2 must be
+  // inserted via horizon walk on opposite sides of the hull.
+  setLayout([
+    { name: '+X', x: 1000, y: 0, z: 120 },
+    { name: '-X', x: -1000, y: 0, z: 120 },
+    { name: '+Y', x: 0, y: 1000, z: 120 },
+    { name: '-Y', x: 0, y: -1000, z: 120 },
+    { name: '+Z', x: 0, y: 0, z: 1120 },  // listeningHeight + 1000
+    { name: '-Z', x: 0, y: 0, z: -880 },  // listeningHeight - 1000
+  ]);
+  r = analyseTriangulation();
+  check('octahedron-faces', r.kind === 'ok' && r.faces.length === 8, r);
+  try {
+    assertManifoldOrThrow(r.faces);
+    check('octahedron-manifold', true);
+  } catch (e) {
+    check('octahedron-manifold', false, e.message);
+  }
+
+  // 10. Cube vertices on the sphere — 8 points, hull is the cube triangulated
+  // = 12 faces. Tests handling of larger horizon walks (each insertion past
+  // the seed deletes 2-3 visible faces).
+  {
+    const c = 600;
+    const z0 = 120;  // listeningHeight; Δz from centre = ±c
+    setLayout([
+      { x: c, y: c, z: z0 + c }, { x: -c, y: c, z: z0 + c },
+      { x: c, y: -c, z: z0 + c }, { x: -c, y: -c, z: z0 + c },
+      { x: c, y: c, z: z0 - c }, { x: -c, y: c, z: z0 - c },
+      { x: c, y: -c, z: z0 - c }, { x: -c, y: -c, z: z0 - c },
+    ]);
+  }
+  r = analyseTriangulation();
+  check('cube-faces', r.kind === 'ok' && r.faces.length === 12, r);
+  try {
+    assertManifoldOrThrow(r.faces);
+    check('cube-manifold', true);
+  } catch (e) {
+    check('cube-manifold', false, e.message);
+  }
+
+  // 11. Sliver pre-merge — two near-identical directions collapse into one.
+  // Setup: 4 well-spread points + 1 sliver-twin of the first → 5 inputs,
+  // 4 merged points, 1 sliver-merged. Result still 'ok' with 4 faces.
+  setLayout([
+    { name: 'A',  x: 300, y: 300, z: 240 },
+    { name: "A'", x: 301, y: 301, z: 240 },  // ~0.001 rad from A — well below 0.05
+    { name: 'B',  x: -300, y: 300, z: 240 },
+    { name: 'C',  x: 0, y: -300, z: 240 },
+    { name: 'D',  x: 0, y: 0, z: 30 },
+  ]);
+  r = analyseTriangulation();
+  check('sliver-merge-count',
+    r.kind === 'ok' && r.points.length === 4 && r.inputCount === 5 && r.mergeReduction === 1,
+    r);
+  check('sliver-merge-status-format',
+    /^3D layout — 4 points → 4 triangles( · \S.*?)? \(1 sliver-merged\)\.$/.test(triangulationStatusText(r)),
+    triangulationStatusText(r));
+
+  // 12. Sliver merge can reduce below 4 → 'too-few'. 4 inputs in 2 sliver pairs.
+  setLayout([
+    { name: 'A1', x: 300, y: 300, z: 240 },
+    { name: 'A2', x: 301, y: 301, z: 240 },
+    { name: 'B1', x: -300, y: -300, z: 240 },
+    { name: 'B2', x: -301, y: -301, z: 240 },
+  ]);
+  r = analyseTriangulation();
+  check('sliver-merge-to-too-few',
+    r.kind === 'too-few' && r.count === 2 && r.inputCount === 4 && r.mergeReduction === 2,
+    r);
+
+  // 13. 50 random 3D points on the sphere → manifold-valid hull.
+  // Deterministic seed via simple LCG so the test is reproducible across runs.
+  let seed = 1;
+  const lcg = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const random50 = [];
+  for (let i = 0; i < 50; i++) {
+    // Uniform sphere sampling: u ∈ [-1, 1], θ ∈ [0, 2π); (sqrt(1−u²)cosθ, sqrt(1−u²)sinθ, u).
+    const u = 2 * lcg() - 1;
+    const theta = 2 * Math.PI * lcg();
+    const r2 = Math.sqrt(1 - u * u);
+    const dx = r2 * Math.cos(theta);
+    const dy = r2 * Math.sin(theta);
+    const dz = u;
+    // Place 1000cm out from the listening centre along (dx, dy, dz).
+    random50.push({ x: dx * 1000, y: dy * 1000, z: 120 + dz * 1000 });
+  }
+  setLayout(random50);
+  r = analyseTriangulation();
+  // For a 3D point cloud with no degeneracies, expect 'ok' and Euler-valid hull.
+  // Vertex count V ≤ 50 (some may be inside hull); F = 2V − 4 by Euler.
+  check('random50-ok', r.kind === 'ok', r.kind);
+  try {
+    assertManifoldOrThrow(r.faces);
+    check('random50-manifold', true);
+  } catch (e) {
+    check('random50-manifold', false, e.message);
+  }
+  // healthSummary buckets must sum to the total face count. Catches both
+  // missing classification and double-counting.
+  {
+    const s = r.healthSummary;
+    check('random50-summary-totals',
+      s.green + s.yellow + s.red === r.faces.length,
+      { summary: s, faces: r.faces.length });
+  }
+
+  // 14. Regular tetrahedron metrics — 4 equilateral spherical triangles with
+  // arc length acos(−1/3) ≈ 109.47°. Closed-form values: area = π per face,
+  // max interior angle = 2π/3 (120°). All faces classify red (max > 90°).
+  // Vertex placements chosen so directions = ±(1,1,1)/√3, etc.
+  const approx = (x, y, eps = 1e-9) => Math.abs(x - y) < eps;
+  setLayout([
+    { x:  100, y:  100, z: 220 },  // direction (+1,+1,+1)/√3
+    { x:  100, y: -100, z:  20 },  // direction (+1,−1,−1)/√3
+    { x: -100, y:  100, z:  20 },  // direction (−1,+1,−1)/√3
+    { x: -100, y: -100, z: 220 },  // direction (−1,−1,+1)/√3
+  ]);
+  r = analyseTriangulation();
+  check('regular-tetra-area',
+    r.metrics.every(m => approx(m.area, Math.PI)),
+    r.metrics.map(m => m.area));
+  check('regular-tetra-max-angle',
+    r.metrics.every(m => approx(m.maxAngle, 2 * Math.PI / 3)),
+    r.metrics.map(m => m.maxAngle));
+  check('regular-tetra-area-ratio',
+    r.metrics.every(m => approx(m.areaRatio, 1)),
+    r.metrics.map(m => m.areaRatio));
+  check('regular-tetra-all-red',
+    r.healthSummary.red === 4 && r.healthSummary.yellow === 0 && r.healthSummary.green === 0,
+    r.healthSummary);
+  // Caption reports only kind + counts. The Layout Health panel carries
+  // severity and symmetry signals.
+  check('regular-tetra-caption',
+    triangulationStatusText(r) === '3D layout — 4 points → 4 triangles.',
+    triangulationStatusText(r));
+  check('regular-tetra-symmetry-red',
+    r.symmetry && r.symmetry.level === 'red' && approx(r.symmetry.delta, Math.acos(1/3)),
+    r.symmetry);
+  // Panel composition: red triangles + red symmetry both surface as fail
+  // lines. Region of all 4 red triangles for the regular tetrahedron is
+  // determined by their centroids — verify a fail-level line is emitted.
+  {
+    const lines = composeHealthLines(r);
+    check('regular-tetra-panel-2-lines', lines.length === 2, lines);
+    check('regular-tetra-panel-fail-triangles',
+      lines[0].level === 'fail' && /problematic triangles? detected/.test(lines[0].text),
+      lines[0]);
+    check('regular-tetra-panel-asymmetric',
+      lines[1].level === 'fail' && /Layout is asymmetric/.test(lines[1].text),
+      lines[1]);
+  }
+
+  // 15. Regular octahedron metrics — 8 equilateral spherical triangles with
+  // arc length π/2 (90°). Area = π/2 per face, max interior angle = π/2.
+  // Classification: YELLOW (max angle > 70° but NOT strictly > 90°).
+  setLayout([
+    { x:  1000, y:     0, z:  120 }, { x: -1000, y:    0, z:  120 },
+    { x:     0, y:  1000, z:  120 }, { x:     0, y: -1000, z:  120 },
+    { x:     0, y:     0, z: 1120 }, { x:     0, y:    0, z: -880 },
+  ]);
+  r = analyseTriangulation();
+  check('regular-octa-area',
+    r.metrics.every(m => approx(m.area, Math.PI / 2)),
+    r.metrics.map(m => m.area));
+  check('regular-octa-max-angle',
+    r.metrics.every(m => approx(m.maxAngle, Math.PI / 2)),
+    r.metrics.map(m => m.maxAngle));
+  check('regular-octa-all-yellow',
+    r.healthSummary.yellow === 8 && r.healthSummary.red === 0 && r.healthSummary.green === 0,
+    r.healthSummary);
+  // Regular octahedron has full L/R symmetry: ±X, ±Y, ±Z are all closed
+  // under the mirror operation (x → -x), so each original's nearest mirror
+  // is itself or its antipode at distance 0.
+  check('regular-octa-symmetry-green',
+    r.symmetry && r.symmetry.level === 'green' && approx(r.symmetry.delta, 0),
+    r.symmetry);
+
+  // ===== Symmetry tests =====
+
+  // S1. Symmetric LCR: mirror pair (L, R) + on-axis (C, P) → Δ ≈ 0, green.
+  setLayout([
+    { name: 'L', x: -300, y: 200, z: 240 },
+    { name: 'R', x:  300, y: 200, z: 240 },
+    { name: 'C', x:    0, y: 200, z: 240 },
+    { name: 'P', x:    0, y: -200, z: 240 },
+  ]);
+  r = analyseTriangulation();
+  check('symmetric-lcr-green',
+    r.symmetry && r.symmetry.level === 'green' && r.symmetry.delta < 1e-9,
+    r.symmetry);
+
+  // S2. Slight asymmetry — R nudged to 400 (not the mirror of L's 300) →
+  // Δ around 0.07 rad, in the yellow band (0.05 < Δ ≤ 0.15).
+  setLayout([
+    { name: 'L', x: -300, y: 200, z: 240 },
+    { name: 'R', x:  400, y: 200, z: 240 },
+    { name: 'C', x:    0, y: 200, z: 240 },
+    { name: 'P', x:    0, y: -200, z: 240 },
+  ]);
+  r = analyseTriangulation();
+  check('asymmetric-r-shift-yellow',
+    r.symmetry && r.symmetry.level === 'yellow',
+    r.symmetry);
+
+  // S3. Heavy asymmetry — single off-X-axis speaker (no mirror partner
+  // anywhere in the set) → Δ large, red. Tests the "1 point" path too.
+  setLayout([{ name: 'X', x: 200, y: 0, z: 240 }]);
+  r = analyseTriangulation();
+  check('single-off-axis-red',
+    r.kind === 'too-few' && r.symmetry && r.symmetry.level === 'red',
+    { kind: r.kind, sym: r.symmetry });
+
+  // S4. Single speaker on the X=0 centerline → mirror is self → Δ exactly 0.
+  setLayout([{ name: 'X', x: 0, y: 200, z: 240 }]);
+  r = analyseTriangulation();
+  check('single-on-centerline-green',
+    r.kind === 'too-few' && r.symmetry && r.symmetry.level === 'green' && r.symmetry.delta === 0,
+    { kind: r.kind, sym: r.symmetry });
+
+  // S5. Left-heavy layout (3 L vs 1 R) → red.
+  setLayout([
+    { name: 'L1', x: -300, y:  200, z: 240 },
+    { name: 'L2', x: -200, y: -100, z: 240 },
+    { name: 'L3', x: -400, y:   50, z: 240 },
+    { name: 'R',  x:  300, y:  100, z: 240 },
+  ]);
+  r = analyseTriangulation();
+  check('left-heavy-red',
+    r.symmetry && r.symmetry.level === 'red',
+    r.symmetry);
+  // Panel emits a separate symmetry line on red — verify wording + level.
+  {
+    const lines = composeHealthLines(r);
+    const symLine = lines.find(l => /Layout is asymmetric/.test(l.text));
+    check('left-heavy-panel-symmetry-fail',
+      symLine && symLine.level === 'fail',
+      symLine);
+  }
+
+  // S6. Symmetric on planar layout — should attach symmetry to the 'planar'
+  // result kind too.
+  setLayout([
+    { name: 'A', x:  300, y:    0, z: 120 },
+    { name: 'B', x: -300, y:    0, z: 120 },
+    { name: 'C', x:    0, y:  300, z: 120 },
+    { name: 'D', x:    0, y: -300, z: 120 },
+  ]);
+  r = analyseTriangulation();
+  check('planar-carries-symmetry',
+    r.kind === 'planar' && r.symmetry && r.symmetry.level === 'green',
+    { kind: r.kind, sym: r.symmetry });
+
+  // ===== Region detection =====
+
+  // SPEC §8.3 rule: |z| > 0.7 first, then |y| > 0.7, else largest |component|.
+  check('region-upper',  regionForDirection({ x: 0, y: 0, z:  0.9 }) === 'upper hemisphere',  '');
+  check('region-lower',  regionForDirection({ x: 0, y: 0, z: -0.9 }) === 'lower hemisphere',  '');
+  check('region-front',  regionForDirection({ x: 0, y:  0.9, z: 0.2 }) === 'front',           '');
+  check('region-rear',   regionForDirection({ x: 0, y: -0.9, z: 0.2 }) === 'rear',            '');
+  check('region-right',  regionForDirection({ x:  0.9, y: 0.2, z: 0.2 }) === 'right side',    '');
+  check('region-left',   regionForDirection({ x: -0.9, y: 0.2, z: 0.2 }) === 'left side',     '');
+  // No 'centerline' / 'surround ring' / 'the surround region' any more: the
+  // largest component decides.
+  check('region-max-component-y',
+    regionForDirection({ x: 0.0, y: 0.6, z: 0.5 }) === 'front', regionForDirection({ x: 0.0, y: 0.6, z: 0.5 }));
+  check('region-max-component-x',
+    regionForDirection({ x: 0.6, y: 0.5, z: 0.0 }) === 'right side', regionForDirection({ x: 0.6, y: 0.5, z: 0.0 }));
+  check('region-max-component-z',
+    regionForDirection({ x: 0.4, y: -0.3, z: -0.6 }) === 'lower hemisphere', '');
+  check('region-labels-only-spec-set', (() => {
+    let s2 = 7, ok = true;
+    const rnd = () => { s2 = (s2 * 1103515245 + 12345) & 0x7fffffff; return s2 / 0x7fffffff * 2 - 1; };
+    for (let i = 0; i < 2000; i++) {
+      const v = { x: rnd(), y: rnd(), z: rnd() };
+      const m = Math.hypot(v.x, v.y, v.z) || 1;
+      if (!REGION_LABELS.includes(regionForDirection({ x: v.x / m, y: v.y / m, z: v.z / m }))) ok = false;
+    }
+    return ok;
+  })(), '');
+
+  // Tie rule: equal top counts → first two tied labels in REGION_LABELS order.
+  check('region-tie-two',
+    dominantRegion([
+      { level: 'red', region: 'rear' }, { level: 'red', region: 'front' },
+      { level: 'red', region: 'rear' }, { level: 'red', region: 'front' },
+      { level: 'yellow', region: 'left side' },
+    ], 'red') === 'front and rear',
+    dominantRegion([{ level: 'red', region: 'rear' }, { level: 'red', region: 'front' }], 'red'));
+  check('region-tie-three-lists-two',
+    dominantRegion([
+      { level: 'red', region: 'left side' }, { level: 'red', region: 'lower hemisphere' },
+      { level: 'red', region: 'rear' },
+    ], 'red') === 'lower hemisphere and rear', '');
+  check('region-no-tie-single',
+    dominantRegion([
+      { level: 'red', region: 'rear' }, { level: 'red', region: 'rear' },
+      { level: 'red', region: 'front' },
+    ], 'red') === 'rear', '');
+
+  // ===== composeHealthLines via synthetic results =====
+  // Build minimal result objects that satisfy the lines composer's reads,
+  // bypassing analyseTriangulation. This isolates the line composition logic
+  // from the upstream pipeline so we can hit every branch deterministically.
+
+  const synthGreen = (level = 'green') => ({
+    kind: 'ok',
+    points: [{}, {}, {}, {}],
+    faces: [{}, {}, {}, {}],
+    metrics: [
+      { level: 'green', region: 'front' },
+      { level: 'green', region: 'rear' },
+      { level: 'green', region: 'upper hemisphere' },
+      { level: 'green', region: 'lower hemisphere' },
+    ],
+    healthSummary: { green: 4, yellow: 0, red: 0 },
+    symmetry: { delta: 0, level },
+    inputCount: 4, mergeReduction: 0,
+  });
+
+  let lines = composeHealthLines(synthGreen('green'));
+  check('lines-ok-all-green',
+    lines.length === 1 && lines[0].level === 'ok'
+    && lines[0].text === '✓ Layout looks healthy.',
+    lines);
+
+  lines = composeHealthLines(synthGreen('yellow'));
+  check('lines-ok-green-with-asymmetric',
+    lines.length === 2
+    && lines[0].text === '✓ Layout looks healthy.'
+    && lines[1].level === 'warn'
+    && /Layout is asymmetric/.test(lines[1].text),
+    lines);
+
+  // ok with 3 yellow triangles, all in upper hemisphere → dominantRegion
+  // selects 'upper hemisphere'.
+  lines = composeHealthLines({
+    kind: 'ok',
+    points: [{}, {}, {}, {}],
+    faces: [{}, {}, {}, {}],
+    metrics: [
+      { level: 'yellow', region: 'upper hemisphere' },
+      { level: 'yellow', region: 'upper hemisphere' },
+      { level: 'yellow', region: 'front' },
+      { level: 'green', region: 'rear' },
+    ],
+    healthSummary: { green: 1, yellow: 3, red: 0 },
+    symmetry: { delta: 0, level: 'green' },
+    inputCount: 4, mergeReduction: 0,
+  });
+  check('lines-ok-yellow-region',
+    lines.length === 1 && lines[0].level === 'warn'
+    && lines[0].text === '⚠ 3 suspect triangles detected in upper hemisphere. Coverage may degrade.',
+    lines);
+
+  // ok with red dominates: red line wins over yellow.
+  lines = composeHealthLines({
+    kind: 'ok',
+    points: [{}, {}, {}, {}],
+    faces: [{}, {}, {}, {}],
+    metrics: [
+      { level: 'red', region: 'rear' },
+      { level: 'yellow', region: 'front' },
+      { level: 'green', region: 'front' },
+      { level: 'green', region: 'left side' },
+    ],
+    healthSummary: { green: 2, yellow: 1, red: 1 },
+    symmetry: { delta: 0, level: 'green' },
+    inputCount: 4, mergeReduction: 0,
+  });
+  check('lines-ok-red-wins',
+    lines.length === 1 && lines[0].level === 'fail'
+    && lines[0].text === '✗ 1 problematic triangle detected in rear. Consider adding phantom speaker(s).',
+    lines);
+
+  // too-few kind
+  lines = composeHealthLines({
+    kind: 'too-few', count: 3, inputCount: 3, mergeReduction: 0,
+    symmetry: { delta: 0, level: 'green' },
+  });
+  check('lines-too-few',
+    lines.length === 1 && lines[0].level === 'warn'
+    && lines[0].text === '⚠ Add ≥ 4 enabled speakers or phantoms — only 3 reachable.',
+    lines);
+
+  // planar kind → info line, no severity
+  lines = composeHealthLines({
+    kind: 'planar', points: [{}, {}, {}, {}], normal: {}, inputCount: 4, mergeReduction: 0,
+    symmetry: { delta: 0, level: 'green' },
+  });
+  check('lines-planar',
+    lines.length === 1 && lines[0].level === 'info'
+    && /Planar layout/.test(lines[0].text),
+    lines);
+
+  // point-at-centre with multiple names → fail level + plural grammar
+  lines = composeHealthLines({ kind: 'point-at-centre', names: ['L', 'R'] });
+  check('lines-point-at-centre-plural',
+    lines.length === 1 && lines[0].level === 'fail'
+    && lines[0].text === '✗ 2 points sit on the listening centre — cannot triangulate.',
+    lines);
+
+  // collinear kind
+  lines = composeHealthLines({
+    kind: 'collinear', count: 4, inputCount: 4, mergeReduction: 0,
+    symmetry: { delta: 0, level: 'green' },
+  });
+  check('lines-collinear',
+    lines.length === 1 && lines[0].level === 'warn'
+    && /Speakers are collinear/.test(lines[0].text),
+    lines);
+
+  // Small circle above the ears: 4 speakers at z=240, listener at z=120.
+  // Every elevation is the same (~16°), so the spread is 0° → a planar ring
+  // (B1: a single ring at one height is a 2D ring wherever it sits).
+  setLayout([
+    { x: -300, y: -300, z: 240 },
+    { x:  300, y: -300, z: 240 },
+    { x:  300, y:  300, z: 240 },
+    { x: -300, y:  300, z: 240 },
+  ]);
+  r = analyseTriangulation();
+  check('small-circle-above-ears-planar', r.kind === 'planar', r.kind);
+  // Adding a phantom ABOVE does not enclose the listening centre either: all
+  // five directions are above ear level. (Before the F-01 fix this case was
+  // asserted as a healthy 'ok' hull with 6 scored triangles.)
+  setLayout(
+    [
+      { x: -300, y: -300, z: 240 },
+      { x:  300, y: -300, z: 240 },
+      { x:  300, y:  300, z: 240 },
+      { x: -300, y:  300, z: 240 },
+    ],
+    [{ x: 0, y: 0, z: 600 }],
+  );
+  r = analyseTriangulation();
+  check('small-circle-plus-zenith-hull-open',
+    r.kind === 'hull-open' && r.count === 5 && !r.metrics && !r.healthSummary,
+    { kind: r.kind, count: r.count });
+  // …a phantom BELOW the listener closes it.
+  setLayout(
+    [
+      { x: -300, y: -300, z: 240 },
+      { x:  300, y: -300, z: 240 },
+      { x:  300, y:  300, z: 240 },
+      { x: -300, y:  300, z: 240 },
+    ],
+    [{ x: 0, y: 0, z: -200 }],
+  );
+  r = analyseTriangulation();
+  check('small-circle-plus-nadir-ok', r.kind === 'ok' && r.points.length === 5 && r.faces.length === 6,
+    { kind: r.kind });
+
+  lines = composeHealthLines({
+    kind: 'hull-open', count: 4, inputCount: 4, mergeReduction: 0,
+    symmetry: { delta: 0, level: 'green' },
+  });
+  check('lines-hull-open',
+    lines.length === 1 && lines[0].level === 'warn'
+    && lines[0].text === '⚠ Layout doesn\'t enclose the listening centre — add a phantom above or below to close the panning grid.',
+    lines);
+
+  lines = composeHealthLines({
+    kind: 'numerical-issue', count: 12, inputCount: 12, mergeReduction: 0,
+    symmetry: { delta: 0, level: 'green' },
+  });
+  check('lines-numerical-issue',
+    lines.length === 1 && lines[0].level === 'warn' && /^⚠ Numerical issue/.test(lines[0].text)
+    && !/triangles? detected/.test(lines[0].text),
+    lines);
+
+  // ===== Enclosure, planar and manifold cases =====
+  const ring = (n, rad, z, phase = 0, prefix = 'R', dec = 6) => Array.from({ length: n }, (_, i) => {
+    const a = phase + 2 * Math.PI * i / n;
+    const f = v => dec == null ? v : +v.toFixed(dec);
+    return { name: prefix + i, x: f(rad * Math.sin(a)), y: f(rad * Math.cos(a)), z };
+  });
+  const tops = () => ring(4, 200, 400, Math.PI / 4, 'T');
+  const enclosesCentre = (res) => res.faces.every(f => {
+    const a = res.points[f.a].dir;
+    return f.nx * a.x + f.ny * a.y + f.nz * a.z > 0;
+  });
+
+  // D1: everything hangs above the ears → not enclosed → warning only.
+  setLayout([...ring(8, 300, 240), ...tops()]);
+  r = analyseTriangulation();
+  check('D1-all-above-hull-open', r.kind === 'hull-open' && !r.metrics, r.kind);
+  lines = composeHealthLines(r);
+  check('D1-panel-no-scores',
+    lines[0].level === 'warn' && /doesn't enclose the listening centre/.test(lines[0].text)
+    && !lines.some(l => /triangles? detected/.test(l.text)),
+    lines);
+  // D2: + zenith phantom → still all above → still hull-open.
+  setLayout([...ring(8, 300, 240), ...tops()], [{ name: 'Zenith', x: 0, y: 0, z: 700 }]);
+  r = analyseTriangulation();
+  check('D2-plus-zenith-still-open', r.kind === 'hull-open', r.kind);
+  // D3: + zenith + nadir → encloses; with 6-decimal ring coords this used to
+  // build a broken 36-face mesh. Must be a valid manifold now.
+  setLayout([...ring(8, 300, 240), ...tops()],
+    [{ name: 'Zenith', x: 0, y: 0, z: 700 }, { name: 'Nadir', x: 0, y: 0, z: -400 }]);
+  r = analyseTriangulation();
+  check('D3-zenith-nadir-ok-manifold',
+    r.kind === 'ok' && r.faces.length === 2 * r.points.length - 4 && enclosesCentre(r),
+    { kind: r.kind, faces: r.faces && r.faces.length });
+  check('D3-area-sums-to-sphere',
+    r.kind === 'ok' && approx(r.metrics.reduce((t, m) => t + m.area, 0), 4 * Math.PI, 1e-6), '');
+  // D4 is the old small-circle-closed-by-phantom case (above).
+  // D5: ear-level 8-ring + 4 tops (7.1.4-like) — ring passes through the
+  // centre, nothing below → plane offset 0 → not enclosed.
+  setLayout([...ring(8, 300, 120), ...tops()]);
+  r = analyseTriangulation();
+  check('D5-ear-ring-plus-tops-hull-open', r.kind === 'hull-open', r.kind);
+  // D6: D5 + nadir phantom → enclosed and scored.
+  setLayout([...ring(8, 300, 120), ...tops()], [{ name: 'Nadir', x: 0, y: 0, z: -400 }]);
+  r = analyseTriangulation();
+  check('D6-plus-nadir-ok', r.kind === 'ok' && enclosesCentre(r) && r.faces.length === 22, r.kind);
+  // D7: lower ring (z=40) + upper ring (z=300) encloses the centre. Its 8 red
+  // triangles are the top and bottom caps; by face normal they now read as
+  // upper / lower hemisphere (were 'the surround region' by centroid).
+  setLayout([...ring(6, 300, 40, 0, 'Lo'), ...ring(6, 300, 300, Math.PI / 6, 'Hi')]);
+  r = analyseTriangulation();
+  check('D7-two-rings-ok', r.kind === 'ok' && r.healthSummary.red === 8, r.kind === 'ok' ? r.healthSummary : r.kind);
+  check('D7-red-caps-are-upper-lower',
+    r.kind === 'ok' && r.metrics.filter(m => m.level === 'red')
+      .every(m => m.region === 'upper hemisphere' || m.region === 'lower hemisphere'),
+    r.kind === 'ok' && r.metrics.filter(m => m.level === 'red').map(m => m.region));
+  lines = composeHealthLines(r);
+  check('D7-panel-tie-lists-two',
+    lines[0].text === '✗ 8 problematic triangles detected in upper hemisphere and lower hemisphere. Consider adding phantom speaker(s).',
+    lines[0]);
+  // Big cap triangles: two interleaved 8-rings at ±3° elevation. The caps
+  // are huge flat triangles whose vertices all sit near the horizon, so
+  // their chord centroids point sideways (front / rear / sides) while the
+  // face normals point straight up / down. Region must follow the normal.
+  {
+    const t3 = 300 * Math.tan(3 * Math.PI / 180);
+    setLayout([
+      ...ring(8, 300, 120 + t3, 0, 'Up', null),
+      ...ring(8, 300, 120 - t3, Math.PI / 8, 'Dn', null),
+    ]);
+    r = analyseTriangulation();
+    const capRegions = r.kind === 'ok'
+      ? r.metrics.filter((m, i) => Math.abs(r.faces[i].nz) > 0.99).map(m => m.region) : [];
+    check('region-big-caps-follow-face-normal',
+      r.kind === 'ok' && capRegions.length === 12
+      && capRegions.every(g => g === 'upper hemisphere' || g === 'lower hemisphere'),
+      { kind: r.kind, capRegions });
+  }
+
+  // F2: ear-level ring + zenith phantom only → lower hemisphere still open.
+  setLayout(ring(8, 300, 120), [{ name: 'Zenith', x: 0, y: 0, z: 500 }]);
+  r = analyseTriangulation();
+  check('F2-ring-plus-zenith-hull-open', r.kind === 'hull-open', r.kind);
+  // F3: ring + zenith + nadir → enclosed.
+  setLayout(ring(8, 300, 120), [{ name: 'Zenith', x: 0, y: 0, z: 500 }, { name: 'Nadir', x: 0, y: 0, z: -300 }]);
+  r = analyseTriangulation();
+  check('F3-ring-zenith-nadir-ok', r.kind === 'ok' && enclosesCentre(r), r.kind);
+  // Repo demo: Dolby Atmos 7.1.4 (demo/Dolby-Atmos-7.1.4-coverage-sketch.html),
+  // listening height 200, ear-level bed + 4 tops, no phantoms → hull-open.
+  setLayout([
+    { name: 'L',   x: -230.94, y:  400,    z: 200 }, { name: 'R',   x: 230.94, y:  400,    z: 200 },
+    { name: 'C',   x:    0,    y:  400,    z: 200 }, { name: 'Lss', x: -400,   y:    0,    z: 200 },
+    { name: 'Rss', x:  400,    y:    0,    z: 200 }, { name: 'Lrs', x: -230.94, y: -400,   z: 200 },
+    { name: 'Rrs', x:  230.94, y: -400,    z: 200 }, { name: 'Tfl', x: -127.28, y: 127.28, z: 380 },
+    { name: 'Tfr', x:  127.28, y:  127.28, z: 380 }, { name: 'Tbl', x: -127.28, y: -127.28, z: 380 },
+    { name: 'Tbr', x:  127.28, y: -127.28, z: 380 },
+  ], [], 200);
+  r = analyseTriangulation();
+  check('demo-atmos-714-hull-open', r.kind === 'hull-open' && !r.healthSummary, r.kind);
+
+  // P-03 / B1: planar tolerance is a 2° elevation SPREAD (max − min),
+  // independent of distance. ringAt alternates ±elevDeg/2 → spread = elevDeg.
+  {
+    const ringAt = (rad, elevDeg) => ring(8, rad, 120, 0, 'E', null).map((p, i) => ({
+      ...p, z: 120 + (i % 2 ? 1 : -1) * rad * Math.tan(elevDeg / 2 * Math.PI / 180),
+    }));
+    for (const rad of [150, 300, 3000]) {
+      setLayout(ringAt(rad, 1.9));  // spread 1.9°
+      check(`planar-tolerance-1.9deg-r${rad}`, analyseTriangulation().kind === 'planar', '');
+      setLayout(ringAt(rad, 2.2));  // spread 2.2°
+      check(`not-planar-2.2deg-r${rad}`, analyseTriangulation().kind !== 'planar', '');
+    }
+    // Case G: ±0.25 cm of height noise on an ear-level ring used
+    // to flip to "✗ 12 problematic triangles". Now it stays planar.
+    let sd = 12345;
+    const rnd2 = () => ((sd = (sd * 1664525 + 1013904223) >>> 0) / 4294967296);
+    setLayout(ring(8, 300, 120).map(p => ({ ...p, z: 120 + (rnd2() * 2 - 1) * 0.25 })));
+    check('G-ear-ring-jitter-planar', analyseTriangulation().kind === 'planar', '');
+    // T1: ±5 cm hanging-height noise on a 3 m ear ring is planar too.
+    setLayout(ring(8, 300, 120).map((p, i) => ({ ...p, z: 120 + (i % 2 ? 5 : -5) })));
+    check('planar-ear-ring-pm5cm', analyseTriangulation().kind === 'planar', '');
+  }
+
+  // Regression: ring + nadir / zenith / tops with coordinates
+  // rounded to 0–6 decimals — every hull must be a valid manifold.
+  {
+    let bad = 0, tot = 0, first = '';
+    for (const dec of [null, 0, 1, 2, 3, 4, 5, 6]) {
+      for (const n of [5, 6, 7, 8, 10, 12, 16]) for (const z of [180, 240, 400]) {
+        for (const extra of ['nadir', 'zenith+nadir', 'tops+nadir']) {
+          const pts = ring(n, 300, z, 0, 'J', dec);
+          if (extra.includes('tops')) pts.push(...ring(4, 200, z + 160, Math.PI / 4, 'T', dec));
+          if (extra.includes('zenith')) pts.push({ x: 0, y: 0, z: 700 });
+          pts.push({ x: 0, y: 0, z: -400 });
+          setLayout(pts);
+          const res = analyseTriangulation();
+          tot++;
+          let ok = res.kind === 'ok';
+          if (ok) { try { assertManifoldOrThrow(res.faces); } catch (e) { ok = false; } }
+          if (!ok) { bad++; if (!first) first = `dec=${dec} n=${n} z=${z} ${extra}: ${res.kind}`; }
+        }
+      }
+    }
+    check('J-rounding-0-of-504-non-manifold', bad === 0, `${bad}/${tot} ${first}`);
+  }
+  // J2: insertion order must not matter (nadir last used to break).
+  {
+    const base = [...ring(8, 300, 240), ...ring(4, 200, 400, Math.PI / 4, 'T')];
+    const nadir = { x: 0, y: 0, z: -400 }, zenith = { x: 0, y: 0, z: 700 };
+    setLayout([...base, zenith, nadir]);
+    const a = analyseTriangulation();
+    setLayout([nadir, ...base, zenith]);
+    const b = analyseTriangulation();
+    check('J2-order-independent',
+      a.kind === 'ok' && b.kind === 'ok' && a.faces.length === 24 && b.faces.length === 24, [a.kind, b.kind]);
+  }
+  // Guard: a non-manifold face list is caught by assertManifoldOrThrow (the
+  // check analyseTriangulation now runs on every hull before scoring).
+  check('manifold-guard-detects-duplicate-edge', (() => {
+    try {
+      assertManifoldOrThrow([{ a: 0, b: 1, c: 2 }, { a: 0, b: 1, c: 3 }, { a: 2, b: 1, c: 0 }]);
+      return false;
+    } catch (e) { return true; }
+  })(), '');
+
+  // ===== pointInTriangle =====
+  // Reference triangle: A=(0,0), B=(10,0), C=(0,10). Centroid (10/3, 10/3).
+  check('pit-inside-centroid', pointInTriangle(3, 3, 0, 0, 10, 0, 0, 10) === true,  '');
+  check('pit-outside-far',     pointInTriangle(20, 20, 0, 0, 10, 0, 0, 10) === false, '');
+  check('pit-on-vertex',       pointInTriangle(0, 0, 0, 0, 10, 0, 0, 10) === true,  '');
+  check('pit-on-edge-AB',      pointInTriangle(5, 0, 0, 0, 10, 0, 0, 10) === true,  '');
+  check('pit-on-edge-hypot',   pointInTriangle(5, 5, 0, 0, 10, 0, 0, 10) === true,  '');
+  check('pit-just-outside-AB', pointInTriangle(5, -0.01, 0, 0, 10, 0, 0, 10) === false, '');
+  // Reverse vertex winding — pointInTriangle is winding-agnostic (sign test).
+  check('pit-reverse-winding', pointInTriangle(3, 3, 0, 0, 0, 10, 10, 0) === true,  '');
+
+  STATE.speakers = stash.speakers;
+  STATE.phantoms = stash.phantoms;
+  STATE.audience.listeningHeight = stash.listeningHeight;
+  TRIANGULATION.dirty = true;  // force fresh next access; we mutated state above
+
+  const passed = results.filter(x => x.ok).length;
+  console.log(`Triangulation tests: ${passed}/${results.length} passed.`);
+  return { passed, total: results.length, results };
+}
+if (typeof window !== 'undefined') window.__triangulationDevTests = __triangulationDevTests;
+
+// =============================================================================
+// p5 lifecycle
+// =============================================================================
+
+function setup() {
+  // setAttributes MUST be called before createCanvas — calling it after
+  // recreates the WEBGL canvas (and detaches it from #canvas-host), which
+  // breaks orbitControl drag because event listeners are bound to the
+  // now-orphaned old canvas. preserveDrawingBuffer is needed so the PNG
+  // export can drawImage() the WEBGL canvas without it having been
+  // cleared after compositing.
+  setAttributes({ antialias: true, preserveDrawingBuffer: true });
+  const c = createCanvas(windowWidth, windowHeight, WEBGL);
+  c.parent('canvas-host');
+  // Grab default camera reference BEFORE applyCamera() so we can set yScale
+  // (do NOT use createCamera() — that switches the camera to "custom" type
+  // and breaks orbitControl drag).
+  cam = _renderer._curCamera;
+  applyCamera();
+  syncSpeakerLabels();
+  syncPhantomLabels();
+  syncCoordLabels();
+  installPanelEventGuards();
+  installTooltipHandlers();
+  computeCoverage();
+}
+
+function windowResized() {
+  resizeCanvas(windowWidth, windowHeight);
+  // Projection only: a resize must not throw away a mouse-orbited view.
+  applyProjection();
+}
+
+function draw() {
+  background('#f3f3f6');
+  // Single mechanism for handedness: cam.yScale = -1 set in applyCamera().
+  // No per-view scale flips — every preset stays right-handed by construction.
+  if (allowCanvasInteraction()) {
+    orbitControl(1.5, 1.5, 0.5);
+    enforceCameraDistance();
+  } else if (typeof _renderer !== 'undefined' && _renderer) {
+    // Drop any wheel-zoom inertia accumulated while the pointer was over a
+    // panel, so moving back onto the canvas doesn't snap-zoom.
+    _renderer.zoomVelocity = 0;
+  }
+  trackFreeCamera();
+  drawScene();
+  try {
+    updateLabels();
+  } catch (e) {
+    console.warn('updateLabels error:', e);
+  }
+}
+
+// =============================================================================
+// Scene rendering — coords are world (+X right, +Y forward, +Z up).
+// =============================================================================
+
+function drawScene() {
+  const L = STATE.view.layers;
+  // Soft scene lighting: gives spheres (origin marker, listening centre,
+  // speaker bodies) a subtle 3D shading without competing with the
+  // diagrammatic flat aesthetic. Tuned so a fully-lit fragment is roughly
+  // the original fill colour and a fully-shaded fragment is about half —
+  // gentle gradient, no harsh contrast.
+  // p5's stroke() is not affected by lights, so axes, floor grid, and cone
+  // wireframes stay crisp regardless. Direction is in world coords; chosen
+  // so the lit side faces the perspective camera (upper-front-right), which
+  // is the most common viewing angle.
+  ambientLight(120);
+  directionalLight(180, 180, 170, -0.3, 0.4, -0.85);
+
+  if (L.floor)              drawFloorGrid();
+  if (L.axes)               drawAxesLines();
+  if (L.audience)           drawAudience();
+  if (L['listening-plane']) drawListeningPlane();
+  // Heatmap sits 1cm above the listening plane; render it after the plane so
+  // ordering matches the eye-line order. Depth test stays on so cones / drop
+  // line below the heatmap are unaffected.
+  if (L['coverage-heat'])   drawCoverageHeat();
+  // Drop line is depth-tested so it sits "inside" the scene properly
+  // (audience plane, listening plane, etc. occlude it where appropriate).
+  if (L['listening-centre']) drawListeningCentreDropLine();
+
+  // First pass: cones, depth-tested as usual.
+  if (L.cones) {
+    for (const s of STATE.speakers) {
+      if (s.enabled) drawSpeakerCone(s);
+    }
+  }
+
+  // Second pass: position markers as "always on top" — depth test disabled so
+  // they're never occluded. Treat them as 2D-feeling anchors, like the HTML
+  // labels. Listening-centre marker shares this pass for the same reason: it
+  // is the conceptual anchor of the entire layout and must always be visible.
+  // Phantoms also belong here: they're sketches of "panning slots", same
+  // semantic role as a speaker body marker.
+  const wantSpeakers      = L.speakers;
+  const wantCentre        = L['listening-centre'];
+  const wantPhantoms      = L.phantoms;
+  const wantTriangulation = L.triangulation;
+  if (wantTriangulation) ensureTriangulationFresh();
+  if (wantSpeakers || wantCentre || wantPhantoms || wantTriangulation) {
+    const gl = drawingContext;
+    gl.disable(gl.DEPTH_TEST);
+    // Triangulation drawn first in the pass so speaker / centre / phantom
+    // markers paint on top of its lines — markers are the foreground anchors,
+    // the geometric overlay is the background structure.
+    if (wantTriangulation) drawTriangulation();
+    if (wantSpeakers) {
+      for (const s of STATE.speakers) {
+        if (s.enabled) drawSpeakerBody(s);
+      }
+    }
+    if (wantCentre) drawListeningCentreMarker();
+    if (wantPhantoms) {
+      for (const p of STATE.phantoms) drawPhantomBody(p);
+    }
+    gl.enable(gl.DEPTH_TEST);
+  }
+}
+
+function drawFloorGrid() {
+  push();
+  noFill();
+  strokeWeight(1);
+  stroke(210);
+  const step = 100;
+  const extent = 1200;
+  for (let v = -extent; v <= extent; v += step) {
+    if (v === 0) continue;  // origin lines are coloured by drawAxesLines
+    beginShape(LINES); vertex(v, -extent, 0); vertex(v,  extent, 0); endShape();
+    beginShape(LINES); vertex(-extent, v, 0); vertex( extent, v, 0); endShape();
+  }
+  // origin marker (lifted brightness so the directional gradient registers)
+  push();
+  noStroke();
+  fill(110);
+  sphere(7);
+  pop();
+  pop();
+}
+
+function drawAxesLines() {
+  push();
+  strokeWeight(2);
+  const len = 500;
+  stroke(220, 60, 60);
+  beginShape(LINES); vertex(0, 0, 0); vertex(len, 0, 0); endShape();
+  stroke(60, 160, 80);
+  beginShape(LINES); vertex(0, 0, 0); vertex(0, len, 0); endShape();
+  stroke(60, 100, 220);
+  beginShape(LINES); vertex(0, 0, 0); vertex(0, 0, len); endShape();
+  pop();
+  // Labels rendered via HTML overlay; see updateLabels().
+}
+
+function drawAudience() {
+  const lx = STATE.audience.length / 2;
+  const ly = STATE.audience.width / 2;
+  push();
+  noStroke();
+  fill(80, 80, 100, 50);
+  beginShape();
+  vertex(-lx, -ly, 0); vertex(+lx, -ly, 0); vertex(+lx, +ly, 0); vertex(-lx, +ly, 0);
+  endShape(CLOSE);
+  stroke(80, 80, 100, 180);
+  strokeWeight(1);
+  noFill();
+  beginShape();
+  vertex(-lx, -ly, 0); vertex(+lx, -ly, 0); vertex(+lx, +ly, 0); vertex(-lx, +ly, 0);
+  endShape(CLOSE);
+  pop();
+}
+
+function drawListeningPlane() {
+  const lx = STATE.audience.length / 2;
+  const ly = STATE.audience.width / 2;
+  const z  = STATE.audience.listeningHeight;
+  // When the coverage heatmap is on, skip the blue fill — the heatmap will
+  // tint the same plane just above (z+1cm), and the extra translucent layer
+  // here would only mute the heatmap's colour bands. Outline still drawn so
+  // the plane edge stays legible.
+  const fillPlane = !STATE.view.layers['coverage-heat'];
+  push();
+  if (fillPlane) {
+    noStroke();
+    fill(180, 200, 255, 45);
+    beginShape();
+    vertex(-lx, -ly, z); vertex(+lx, -ly, z); vertex(+lx, +ly, z); vertex(-lx, +ly, z);
+    endShape(CLOSE);
+  }
+  stroke(140, 170, 220, 140);
+  strokeWeight(1);
+  noFill();
+  beginShape();
+  vertex(-lx, -ly, z); vertex(+lx, -ly, z); vertex(+lx, +ly, z); vertex(-lx, +ly, z);
+  endShape(CLOSE);
+  pop();
+}
+
+function drawSpeakerBody(s) {
+  push();
+  noStroke();
+  // Soft slate-navy: previous (30, 35, 55) was so dark that even fully-lit
+  // shading topped out around (60, 70, 95) — visually indistinguishable from
+  // black, so spheres looked like flat discs. This tone keeps the "tasteful
+  // dark" feel but lives in the range where the directional gradient is
+  // actually visible.
+  // Hover highlight: the speaker pointed at by HOVER.speakerId
+  // brightens toward a soft sky tone so the user can confirm "this is the
+  // speaker the tooltip describes". Same hue family as the base, just lifted.
+  if (HOVER.speakerId === s.id) {
+    fill(180, 200, 240);
+  } else {
+    fill(110, 122, 150);
+  }
+  translate(s.x, s.y, s.z);
+  sphere(26);
+  pop();
+}
+
+// Phantom marker — soft violet, smaller than speaker bodies and slightly
+// translucent so it reads as "imagined / sketched" rather than "real cabinet".
+// Drawn in the same depth-test-off pass as speaker bodies (callers handle
+// the GL state). Distinct hue from speaker navy / listening-centre teal /
+// cone orange — phantoms are a 4th category and earn their own colour slot.
+// SPEC §8.4 frames phantoms as "reserve a panning slot", which the visual
+// translates as "marker that takes the same anchor role as a speaker body
+// but reads as virtual".
+function drawPhantomBody(p) {
+  push();
+  noStroke();
+  // Pale lavender — reads as "imagined / ghostly" against the listening
+  // plane while staying distinct from the speaker navy / listening-centre
+  // teal / cone orange palette.
+  fill(200, 180, 220, 220);
+  translate(p.x, p.y, p.z);
+  sphere(16);
+  pop();
+}
+
+// Listening centre = the conceptual anchor of the whole layout, at
+// (0, 0, listeningHeight). Rendered as a teal sphere with a dashed drop
+// line down to the floor projection (the world origin where the axes meet),
+// so the relationship "Z is measured from floor; ears live up here" is
+// visible at a glance. Teal is chosen to stand apart from speaker navy,
+// cone orange, and axis R/G/B.
+function drawListeningCentreDropLine() {
+  const h = STATE.audience.listeningHeight;
+  if (h <= 0) return;
+  push();
+  stroke(40, 150, 150, 200);
+  strokeWeight(1.2);
+  const dash = 8;
+  const gap = 8;
+  for (let z = 0; z < h; z += dash + gap) {
+    const z1 = Math.min(z + dash, h);
+    beginShape(LINES);
+    vertex(0, 0, z);
+    vertex(0, 0, z1);
+    endShape();
+  }
+  pop();
+}
+
+function drawListeningCentreMarker() {
+  const h = STATE.audience.listeningHeight;
+  push();
+  noStroke();
+  fill(40, 150, 150);
+  translate(0, 0, h);
+  sphere(11);
+  pop();
+}
+
+// Wireframe cone (rectangular pyramid): 4 edge rays + base outline + very
+// faint base fill. Base is flat and perpendicular to the speaker forward
+// direction, so it always renders as a real rectangle regardless of pitch.
+// Speaker body is drawn with depth test off elsewhere, so we don't need to
+// avoid the apex.
+//
+// Edge alphas are tuned for "readable on top of heatmap": rays carry the
+// least information (just connect apex to corners) so they get the lowest
+// alpha; the base outline shows where the cone's footprint lands and is
+// kept stronger.
+function drawSpeakerCone(s) {
+  const length = 400;
+  const corners = coneCorners(s, length);
+
+  push();
+  // very faint base fill — kept low so the heatmap colour band underneath
+  // still reads at the cone footprint.
+  noStroke();
+  fill(255, 190, 70, 14);
+  beginShape();
+  for (const c of corners) vertex(c.x, c.y, c.z);
+  endShape(CLOSE);
+
+  // edge rays — softened to avoid fighting the heatmap.
+  stroke(220, 150, 40, 90);
+  strokeWeight(1);
+  noFill();
+  for (const c of corners) {
+    beginShape(LINES);
+    vertex(s.x, s.y, s.z);
+    vertex(c.x, c.y, c.z);
+    endShape();
+  }
+
+  // base outline — slightly stronger than the rays since it carries the
+  // useful "where the cone lands" information.
+  stroke(220, 150, 40, 140);
+  strokeWeight(1.2);
+  beginShape();
+  for (const c of corners) vertex(c.x, c.y, c.z);
+  endShape(CLOSE);
+  pop();
+}
+
+// =============================================================================
+// HTML overlay labels — replaces unreliable p5 WEBGL text().
+// =============================================================================
+
+function syncSpeakerLabels() {
+  const host = document.getElementById('speaker-labels');
+  if (!host) return;
+  const wantedIds = new Set(STATE.speakers.map(s => 'speaker-label-' + s.id));
+  Array.from(host.children).forEach(el => {
+    if (!wantedIds.has(el.id)) el.remove();
+  });
+  for (const s of STATE.speakers) {
+    const id = 'speaker-label-' + s.id;
+    let el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('span');
+      el.id = id;
+      el.className = 'overlay-label speaker-label';
+      host.appendChild(el);
+    }
+    el.textContent = s.name;
+  }
+}
+
+function syncPhantomLabels() {
+  const host = document.getElementById('phantom-labels');
+  if (!host) return;
+  const wantedIds = new Set(STATE.phantoms.map(p => 'phantom-label-' + p.id));
+  Array.from(host.children).forEach(el => {
+    if (!wantedIds.has(el.id)) el.remove();
+  });
+  for (const p of STATE.phantoms) {
+    const id = 'phantom-label-' + p.id;
+    let el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('span');
+      el.id = id;
+      el.className = 'overlay-label phantom-label';
+      host.appendChild(el);
+    }
+    el.textContent = p.name;
+  }
+}
+
+// =============================================================================
+// Coord overlay labels — one span per speaker plus an origin span. Visibility
+// follows STATE.view.layers.coords; they're created up-front and toggled.
+// =============================================================================
+
+function syncCoordLabels() {
+  const host = document.getElementById('coord-labels');
+  if (!host) return;
+  const wantedIds = new Set(STATE.speakers.map(s => 'coord-label-' + s.id));
+  for (const p of STATE.phantoms) wantedIds.add('coord-label-' + p.id);
+  wantedIds.add('coord-label-origin');
+  wantedIds.add('coord-label-centre');
+  Array.from(host.children).forEach(el => {
+    if (!wantedIds.has(el.id)) el.remove();
+  });
+  ensureLabel('coord-label-origin', 'coord-label-origin');
+  ensureLabel('coord-label-centre', 'coord-label-centre');
+  for (const s of STATE.speakers) {
+    ensureLabel('coord-label-' + s.id, '');
+  }
+  for (const p of STATE.phantoms) {
+    // Phantom coord labels share the soft-violet styling with the name label
+    // so the user can see at a glance which value belongs to which marker.
+    ensureLabel('coord-label-' + p.id, 'coord-label-phantom');
+  }
+
+  function ensureLabel(id, extraClass) {
+    if (document.getElementById(id)) return;
+    const el = document.createElement('span');
+    el.id = id;
+    el.className = 'overlay-label coord-label' + (extraClass ? ' ' + extraClass : '');
+    host.appendChild(el);
+  }
+}
+
+function fmtCoord(cm) {
+  const v = lenDisplay(cm);
+  // Show ints clean, fractions to 1 dp; trim trailing zero.
+  const rounded = Math.abs(v - Math.round(v)) < 1e-6 ? Math.round(v).toString() : v.toFixed(1);
+  return rounded;
+}
+
+function updateCoordLabelTexts() {
+  const u = STATE.view.unit;
+  for (const s of STATE.speakers) {
+    const el = document.getElementById('coord-label-' + s.id);
+    if (!el) continue;
+    el.textContent = `${s.name} (${fmtCoord(s.x)}, ${fmtCoord(s.y)}, ${fmtCoord(s.z)} ${u})`;
+  }
+  for (const p of STATE.phantoms) {
+    const el = document.getElementById('coord-label-' + p.id);
+    if (!el) continue;
+    el.textContent = `${p.name} (${fmtCoord(p.x)}, ${fmtCoord(p.y)}, ${fmtCoord(p.z)} ${u})`;
+  }
+  const origin = document.getElementById('coord-label-origin');
+  if (origin) origin.textContent = `Origin (0, 0, 0 ${u})`;
+  const centre = document.getElementById('coord-label-centre');
+  if (centre) centre.textContent = `Listening centre (0, 0, ${fmtCoord(STATE.audience.listeningHeight)} ${u})`;
+}
+
+// Project a world-space point to canvas pixel coordinates by manually
+// multiplying the view × projection matrix that p5 maintains on the camera.
+// Avoids screenX/screenY which are unreliable in p5 v1.11 WEBGL.
+// projMatrix already reflects yScale = -1, so the (1 - cy/cw) flip below
+// continues to produce correct pixel y for all camera presets.
+function projectToScreen(x, y, z) {
+  if (!cam || !cam.cameraMatrix || !cam.projMatrix) return null;
+  const vm = cam.cameraMatrix.mat4;  // column-major Float32Array
+  const pm = cam.projMatrix.mat4;
+
+  // world -> view
+  const vx = vm[0]*x + vm[4]*y + vm[8] *z + vm[12];
+  const vy = vm[1]*x + vm[5]*y + vm[9] *z + vm[13];
+  const vz = vm[2]*x + vm[6]*y + vm[10]*z + vm[14];
+  const vw = vm[3]*x + vm[7]*y + vm[11]*z + vm[15];
+
+  // view -> clip
+  const cx = pm[0]*vx + pm[4]*vy + pm[8] *vz + pm[12]*vw;
+  const cy = pm[1]*vx + pm[5]*vy + pm[9] *vz + pm[13]*vw;
+  const cw = pm[3]*vx + pm[7]*vy + pm[11]*vz + pm[15]*vw;
+
+  if (cw <= 0) return { sx: 0, sy: 0, behind: true };
+
+  return {
+    sx: (cx / cw + 1) * width  / 2,
+    sy: (1 - cy / cw)  * height / 2,
+    behind: false,
+  };
+}
+
+function updateLabels() {
+  if (!cam) return;
+  positionLabel(document.getElementById('axis-label-x'), 540, 0, 0);
+  positionLabel(document.getElementById('axis-label-y'), 0, 540, 0);
+  positionLabel(document.getElementById('axis-label-z'), 0, 0, 540);
+  // Speaker name labels belong to the speakers layer (SPEC §6: "body +
+  // label"): hidden with the layer, and per-label when the speaker is
+  // disabled — otherwise the label would freeze at its last screen position.
+  const showSpeakers = STATE.view.layers.speakers;
+  const speakerHost = document.getElementById('speaker-labels');
+  if (speakerHost) speakerHost.style.display = showSpeakers ? '' : 'none';
+  if (showSpeakers) {
+    for (const s of STATE.speakers) {
+      const el = document.getElementById('speaker-label-' + s.id);
+      if (!el) continue;
+      if (!s.enabled) { el.style.visibility = 'hidden'; continue; }
+      positionLabel(el, s.x, s.y, s.z + 40);
+    }
+  }
+
+  // Phantom name labels — only when the phantoms layer is on; otherwise hide
+  // (the label host stays in the DOM so re-enabling the layer resumes
+  // immediately without resyncing).
+  const showPhantoms = STATE.view.layers.phantoms;
+  const phantomHost = document.getElementById('phantom-labels');
+  if (phantomHost) phantomHost.style.display = showPhantoms ? '' : 'none';
+  if (showPhantoms) {
+    for (const p of STATE.phantoms) {
+      // Smaller offset than speakers: phantom marker is r=16 vs speaker r=26,
+      // so the label sits closer.
+      positionLabel(document.getElementById('phantom-label-' + p.id), p.x, p.y, p.z + 28);
+    }
+  }
+
+  const showCoords = STATE.view.layers.coords;
+  const coordHost = document.getElementById('coord-labels');
+  if (coordHost) coordHost.style.display = showCoords ? '' : 'none';
+  if (showCoords) {
+    updateCoordLabelTexts();
+    for (const s of STATE.speakers) {
+      const el = document.getElementById('coord-label-' + s.id);
+      if (!el) continue;
+      if (!s.enabled) { el.style.visibility = 'hidden'; continue; }
+      // Place coord label below the speaker name (which sits at z+40).
+      positionLabel(el, s.x, s.y, s.z - 30);
+    }
+    for (const p of STATE.phantoms) {
+      const el = document.getElementById('coord-label-' + p.id);
+      if (!el) continue;
+      // Hide phantom coord labels when the phantom layer is off — the marker
+      // they describe wouldn't be visible.
+      if (!showPhantoms) { el.style.visibility = 'hidden'; continue; }
+      positionLabel(el, p.x, p.y, p.z - 22);
+    }
+    positionLabel(document.getElementById('coord-label-origin'), 0, 0, 0);
+    // Listening-centre coord label: only shown if its layer is on too —
+    // otherwise the label would float at an invisible point.
+    const centreEl = document.getElementById('coord-label-centre');
+    if (centreEl) {
+      if (STATE.view.layers['listening-centre']) {
+        positionLabel(centreEl, 0, 0, STATE.audience.listeningHeight);
+      } else {
+        centreEl.style.visibility = 'hidden';
+      }
+    }
+  }
+}
+
+function positionLabel(el, x, y, z) {
+  if (!el) return;
+  const proj = projectToScreen(x, y, z);
+  if (!proj || proj.behind) {
+    el.style.visibility = 'hidden';
+    return;
+  }
+  el.style.visibility = '';
+  el.style.left = proj.sx + 'px';
+  el.style.top  = proj.sy + 'px';
+}
+
+// =============================================================================
+// Panel event guards — when the pointer is over a floating function panel,
+// dragging and wheel must not affect the 3D scene.
+//
+// Strategy: stop propagation in the bubbling phase on `document` for events
+// whose target is inside a panel. p5 binds its mouse / wheel listeners on
+// `window`, which sits above `document` in the bubble path, so document-
+// level stopPropagation prevents p5 from ever seeing the event. The panel
+// itself still receives the event in target / earlier-bubble phases, so
+// scrollable panels (#disclaimer, #speakers-list) keep their default
+// scroll behaviour. mouseup intentionally NOT blocked: a drag that started
+// on the canvas and ends on a panel must still release p5's mouseIsPressed.
+// =============================================================================
+
+const PANEL_SELECTOR = '.panel, dialog, #disclaimer, #mobile-banner, #overlay-labels, #tool-footer, #offline-notice';
+
+function pointerOnPanel(target) {
+  return !!(target && target.closest && target.closest(PANEL_SELECTOR));
+}
+
+let _pointerCurrentlyOverPanel = false;
+let _dragStartedOnPanel = false;
+
+function allowCanvasInteraction() {
+  // While a canvas-originated drag is in progress, allow orbit even if the
+  // pointer crosses over a panel. Otherwise, suppress when over a panel.
+  if (typeof mouseIsPressed !== 'undefined' && mouseIsPressed && !_dragStartedOnPanel) return true;
+  if (_dragStartedOnPanel) return false;
+  return !_pointerCurrentlyOverPanel;
+}
+
+function installPanelEventGuards() {
+  document.addEventListener('mousemove', (e) => {
+    _pointerCurrentlyOverPanel = pointerOnPanel(e.target);
+  }, true);
+
+  document.addEventListener('mousedown', (e) => {
+    _dragStartedOnPanel = pointerOnPanel(e.target);
+    if (_dragStartedOnPanel) e.stopPropagation();
+  });
+
+  document.addEventListener('mouseup', () => {
+    _dragStartedOnPanel = false;
+  }, true);
+
+  document.addEventListener('wheel', (e) => {
+    if (pointerOnPanel(e.target)) e.stopPropagation();
+  }, { passive: true });
+}
+
+// =============================================================================
+// Editor UI — speaker list, audience inputs, layout name, unit toggle.
+// =============================================================================
+
+// Speed of sound for delay estimates. Standard 343 m/s for ~20 °C dry air;
+// the variation across realistic theatre temperatures (15–28 °C) is ≲ 1%,
+// well below typical delay-alignment tolerance, so a fixed constant is
+// honest enough for the "delay-line ballpark" use case.
+const SPEED_OF_SOUND_MPS = 343;
+
+// Update one speaker's distance / delay caption from the current STATE.
+// Distance is the 3D Euclidean from speaker (s.x, s.y, s.z) to the listening
+// centre (0, 0, listeningHeight); delay = distance / speed-of-sound.
+function updateSpeakerDerived(s, el) {
+  const dx = s.x;
+  const dy = s.y;
+  const dz = s.z - STATE.audience.listeningHeight;
+  const cm = Math.sqrt(dx*dx + dy*dy + dz*dz);
+  const ms = (cm / 100 / SPEED_OF_SOUND_MPS) * 1000;
+  const dist = STATE.view.unit === 'm'
+    ? `${(cm / 100).toFixed(2)} m`
+    : `${cm.toFixed(0)} cm`;
+  el.textContent = `${dist} · ${ms.toFixed(1)} ms`;
+}
+
+// Refresh every visible speaker row's caption — used when a global input
+// changes (listeningHeight moves, unit toggle flips).
+function updateAllSpeakerDerived() {
+  for (const item of document.querySelectorAll('.speaker-item')) {
+    const id = item.dataset.id;
+    const s = STATE.speakers.find(x => x.id === id);
+    const el = item.querySelector('.speaker-derived');
+    if (s && el) updateSpeakerDerived(s, el);
+  }
+}
+
+// Wire a numeric input to a STATE field through the shared validators.
+// Invalid entries (empty, non-finite, out of range) are not stored; the
+// field is marked .invalid while typing and reverts to the stored value when
+// the edit is committed (blur / Enter). Lengths are converted from the
+// display unit to cm first, so validation always sees cm.
+function bindNumberInput(inp, { kind, get, set, validate, onChange }) {
+  inp.addEventListener('input', () => {
+    const typed = parseFloat(inp.value);
+    const v = kind === 'len' ? lenStore(typed) : typed;
+    if (!validate(v)) {
+      inp.classList.add('invalid');
+      return;
+    }
+    inp.classList.remove('invalid');
+    set(v);
+    if (onChange) onChange();
+  });
+  inp.addEventListener('change', () => {
+    if (!inp.classList.contains('invalid')) return;
+    inp.classList.remove('invalid');
+    inp.value = kind === 'len' ? lenDisplay(get()) : get();
+  });
+}
+
+const SPEAKER_FIELDS = [
+  { key: 'x', label: 'X', kind: 'len',
+    title: 'Right (+) / left (-) of listening centre' },
+  { key: 'y', label: 'Y', kind: 'len',
+    title: 'Forward (+) / back (-) of listening centre. +Y is toward the stage' },
+  { key: 'z', label: 'Z', kind: 'len',
+    title: 'Height above the audience floor (z = 0). Listening centre sits at z = listen height.' },
+  { key: 'yaw', label: 'Yaw°', kind: 'angle',
+    title: 'Horizontal aim. 0° = pointed at +Y (forward). +° rotates right (clockwise looking down)' },
+  { key: 'pitch', label: 'Pitch°', kind: 'angle',
+    title: 'Vertical aim. 0° = horizontal. +° tilts up' },
+  { key: 'angleH', label: 'Spread H°', kind: 'angle',
+    title: 'Horizontal dispersion — total angle, between 0° and 180° (e.g. 90° for typical FOH cabinets). Spec-sheet angles usually cite the −6 dB point at ~2 kHz; LF coverage is broader.' },
+  { key: 'angleV', label: 'Spread V°', kind: 'angle',
+    title: 'Vertical dispersion — total angle, between 0° and 180°. Spec-sheet angles usually cite the −6 dB point at ~2 kHz; LF coverage is broader.' },
+];
+
+function renderSpeakersList() {
+  const list = document.getElementById('speakers-list');
+  if (!list) return;
+  list.innerHTML = '';
+  for (const s of STATE.speakers) {
+    list.appendChild(buildSpeakerItem(s));
+  }
+}
+
+function buildSpeakerItem(s) {
+  const li = document.createElement('li');
+  li.className = 'speaker-item';
+  li.dataset.id = s.id;
+
+  // Header row
+  const header = document.createElement('header');
+
+  const enabled = document.createElement('input');
+  enabled.type = 'checkbox';
+  enabled.checked = s.enabled;
+  enabled.title = 'Enable / disable in calculations';
+  enabled.addEventListener('change', () => {
+    s.enabled = enabled.checked;
+    markCoverageDirty();
+    markTriangulationDirty();
+  });
+
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.value = s.name;
+  name.title = 'Speaker name';
+  name.addEventListener('input', () => {
+    s.name = name.value;
+    const lab = document.getElementById('speaker-label-' + s.id);
+    if (lab) lab.textContent = s.name;
+    // Triangulation caches point names at compute time; without this the
+    // triangle hover tooltip would keep showing the pre-rename name until
+    // some other edit invalidates the cache.
+    markTriangulationDirty();
+  });
+
+  const expandBtn = document.createElement('button');
+  expandBtn.className = 'expand-btn';
+  expandBtn.textContent = '▾';
+  expandBtn.title = 'Expand / collapse fields';
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'delete-btn';
+  deleteBtn.textContent = '✕';
+  deleteBtn.title = 'Delete speaker';
+  deleteBtn.addEventListener('click', () => {
+    if (!confirm(`Delete speaker "${s.name || '(unnamed)'}"?`)) return;
+    STATE.speakers = STATE.speakers.filter(x => x.id !== s.id);
+    syncSpeakerLabels();
+    syncCoordLabels();
+    renderSpeakersList();
+    markCoverageDirty();
+    markTriangulationDirty();
+  });
+
+  header.append(enabled, name, expandBtn, deleteBtn);
+  li.appendChild(header);
+
+  // Distance + delay caption. Always visible (one row per speaker, even when
+  // collapsed) — sound designers scan this for delay-line alignment.
+  const derived = document.createElement('div');
+  derived.className = 'speaker-derived';
+  derived.title = 'Distance from listening centre · estimated delay at 343 m/s (20 °C dry air)';
+  updateSpeakerDerived(s, derived);
+  li.appendChild(derived);
+
+  // Editor body. Visibility is controlled by the .expanded class on `li`
+  // (see CSS) — do NOT set the `hidden` attribute here, because the editor
+  // has `display: grid` which overrides hidden's implicit display: none.
+  const body = document.createElement('div');
+  body.className = 'speaker-editor';
+
+  for (const f of SPEAKER_FIELDS) {
+    const fieldLabel = document.createElement('label');
+    fieldLabel.className = 'field';
+    if (f.title) fieldLabel.title = f.title;
+
+    const span = document.createElement('span');
+    span.textContent = f.label;
+
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = 'any';
+    inp.dataset.field = f.key;
+    inp.dataset.kind = f.kind;
+    inp.value = f.kind === 'len' ? lenDisplay(s[f.key]) : s[f.key];
+    bindNumberInput(inp, {
+      kind: f.kind,
+      get: () => s[f.key],
+      set: (v) => { s[f.key] = v; },
+      validate: validatorForField(f.key),
+      onChange: () => {
+        if (f.kind === 'len') updateSpeakerDerived(s, derived);
+        markCoverageDirty();
+        markTriangulationDirty();
+      },
+    });
+
+    fieldLabel.append(span, inp);
+    body.appendChild(fieldLabel);
+  }
+
+  // Aim-at-centre button — fills yaw + pitch with the values that point this
+  // speaker at the listening centre (0, 0, listeningHeight). User can override
+  // afterwards.
+  const aimBtn = document.createElement('button');
+  aimBtn.type = 'button';
+  aimBtn.className = 'aim-btn';
+  aimBtn.textContent = '⊙ Aim at centre';
+  aimBtn.title = 'Set Yaw and Pitch so this speaker points at the listening centre (0, 0, listen height)';
+  aimBtn.addEventListener('click', () => {
+    const aim = aimAtCentre(s.x, s.y, s.z);
+    s.yaw   = aim.yaw;
+    s.pitch = aim.pitch;
+    const yawInp   = body.querySelector('input[data-field="yaw"]');
+    const pitchInp = body.querySelector('input[data-field="pitch"]');
+    if (yawInp)   yawInp.value   = aim.yaw;
+    if (pitchInp) pitchInp.value = aim.pitch;
+    markCoverageDirty();
+    markTriangulationDirty();
+  });
+  body.appendChild(aimBtn);
+
+  li.appendChild(body);
+
+  expandBtn.addEventListener('click', () => {
+    const expanded = li.classList.toggle('expanded');
+    expandBtn.textContent = expanded ? '▴' : '▾';
+    expandBtn.setAttribute('aria-expanded', String(expanded));
+  });
+
+  return li;
+}
+
+// =============================================================================
+// Phantom list. Phantoms only carry x/y/z/name (SPEC §5.2) — no yaw/pitch/
+// angle, no enabled flag (every phantom listed is "in" the triangulation).
+// Item shape mirrors speaker items so the visual / interaction language is
+// the same; the editor body just has 3 fields instead of 7.
+// =============================================================================
+
+const PHANTOM_FIELDS = [
+  { key: 'x', label: 'X', kind: 'len',
+    title: 'Right (+) / left (-) of listening centre' },
+  { key: 'y', label: 'Y', kind: 'len',
+    title: 'Forward (+) / back (-) of listening centre. +Y is toward the stage' },
+  { key: 'z', label: 'Z', kind: 'len',
+    title: 'Height above the audience floor (z = 0)' },
+];
+
+function renderPhantomsList() {
+  const list = document.getElementById('phantoms-list');
+  if (!list) return;
+  list.innerHTML = '';
+  for (const p of STATE.phantoms) {
+    list.appendChild(buildPhantomItem(p));
+  }
+}
+
+function buildPhantomItem(p) {
+  const li = document.createElement('li');
+  li.className = 'phantom-item';
+  li.dataset.id = p.id;
+
+  const header = document.createElement('header');
+
+  const name = document.createElement('input');
+  name.type = 'text';
+  name.value = p.name;
+  name.title = 'Phantom name';
+  name.addEventListener('input', () => {
+    p.name = name.value;
+    const lab = document.getElementById('phantom-label-' + p.id);
+    if (lab) lab.textContent = p.name;
+    // Same cache-invalidation reason as speaker rename above.
+    markTriangulationDirty();
+  });
+
+  const expandBtn = document.createElement('button');
+  expandBtn.className = 'expand-btn';
+  expandBtn.textContent = '▾';
+  expandBtn.title = 'Expand / collapse fields';
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'delete-btn';
+  deleteBtn.textContent = '✕';
+  deleteBtn.title = 'Delete phantom';
+  deleteBtn.addEventListener('click', () => {
+    if (!confirm(`Delete phantom "${p.name || '(unnamed)'}"?`)) return;
+    STATE.phantoms = STATE.phantoms.filter(x => x.id !== p.id);
+    syncPhantomLabels();
+    syncCoordLabels();
+    renderPhantomsList();
+    markTriangulationDirty();
+  });
+
+  header.append(name, expandBtn, deleteBtn);
+  li.appendChild(header);
+
+  const body = document.createElement('div');
+  body.className = 'phantom-editor';
+
+  for (const f of PHANTOM_FIELDS) {
+    const fieldLabel = document.createElement('label');
+    fieldLabel.className = 'field';
+    if (f.title) fieldLabel.title = f.title;
+
+    const span = document.createElement('span');
+    span.textContent = f.label;
+
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = 'any';
+    inp.dataset.field = f.key;
+    inp.dataset.kind = f.kind;
+    inp.value = lenDisplay(p[f.key]);
+    bindNumberInput(inp, {
+      kind: 'len',
+      get: () => p[f.key],
+      set: (v) => { p[f.key] = v; },
+      validate: isValidFinite,
+      onChange: markTriangulationDirty,
+    });
+
+    fieldLabel.append(span, inp);
+    body.appendChild(fieldLabel);
+  }
+
+  li.appendChild(body);
+
+  expandBtn.addEventListener('click', () => {
+    const expanded = li.classList.toggle('expanded');
+    expandBtn.textContent = expanded ? '▴' : '▾';
+    expandBtn.setAttribute('aria-expanded', String(expanded));
+  });
+
+  return li;
+}
+
+function renderAudienceInputs() {
+  for (const key of ['length', 'width', 'listeningHeight']) {
+    const inp = document.querySelector(`input[data-audience="${key}"]`);
+    if (inp) inp.value = lenDisplay(STATE.audience[key]);
+  }
+}
+
+function renderLayoutName() {
+  const inp = document.getElementById('layout-name');
+  if (inp) inp.value = STATE.metadata.layoutName;
+}
+
+function renderUnitToggle() {
+  document.querySelectorAll('#meta-panel button[data-unit]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.unit === STATE.view.unit);
+  });
+}
+
+// On unit change, re-render all numeric inputs so displayed values match the
+// new unit. Stored values stay in cm.
+function refreshUnitInputs() {
+  renderAudienceInputs();
+  for (const item of document.querySelectorAll('.speaker-item')) {
+    const id = item.dataset.id;
+    const s = STATE.speakers.find(x => x.id === id);
+    if (!s) continue;
+    item.querySelectorAll('input[data-kind="len"]').forEach(inp => {
+      inp.value = lenDisplay(s[inp.dataset.field]);
+    });
+  }
+  for (const item of document.querySelectorAll('.phantom-item')) {
+    const id = item.dataset.id;
+    const p = STATE.phantoms.find(x => x.id === id);
+    if (!p) continue;
+    item.querySelectorAll('input[data-kind="len"]').forEach(inp => {
+      inp.value = lenDisplay(p[inp.dataset.field]);
+    });
+  }
+  // Distance / delay caption text depends on the displayed unit too.
+  updateAllSpeakerDerived();
+}
+
+// =============================================================================
+// Full UI sync from STATE — runs on initial boot (always) and after the
+// upload path replaces STATE. Idempotent: every render* / sync* helper
+// is safe to call repeatedly.
+// =============================================================================
+
+function syncUiFromState() {
+  // Text inputs and unit toggle.
+  renderLayoutName();
+  renderUnitToggle();
+  renderAudienceInputs();
+
+  // Speaker / phantom rows + their world-space labels.
+  renderSpeakersList();
+  renderPhantomsList();
+  syncSpeakerLabels();
+  syncPhantomLabels();
+  syncCoordLabels();
+
+  // View preset button active state — mirrors STATE.view.cameraPreset.
+  document.querySelectorAll('#view-controls button[data-view]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.view === STATE.view.cameraPreset);
+  });
+
+  // Layer checkboxes — mirror STATE.view.layers (default HTML attribute may
+  // be stale after a state load).
+  document.querySelectorAll('#layers-panel input[data-layer]').forEach(inp => {
+    const k = inp.dataset.layer;
+    if (k in STATE.view.layers) inp.checked = !!STATE.view.layers[k];
+  });
+
+  // Health-panel aside follows its own layer toggle.
+  const healthEl = document.getElementById('health-panel');
+  if (healthEl) healthEl.hidden = !STATE.view.layers['health-panel'];
+
+  // Camera. Only safe after setup() — pre-setup, p5 globals like width /
+  // height are 0 and camera() / perspective() throw. setup() runs its own
+  // applyCamera() when cam is first assigned, so the initial-boot pass
+  // intentionally skips this branch and the upload pass hits it.
+  if (cam) applyCamera();
+
+  updateAllSpeakerDerived();
+  markCoverageDirty();
+  markTriangulationDirty();
+}
+
+// =============================================================================
+// PNG export — composite WEBGL canvas + HTML overlay labels into a
+// 2× viewport PNG. The labels live in the DOM (because p5 WEBGL text()
+// is unreliable), so we re-render them via 2D ctx.fillText using their
+// computed font / colour. Panel UI and tooltips are intentionally
+// excluded — the PNG should read as "the scene".
+// =============================================================================
+
+const PNG_EXPORT_SCALE = 2;
+// Selectors for label elements that should appear in the PNG. Each spans
+// inside #overlay-labels carries .overlay-label; axis labels are direct
+// children with their own ids.
+const PNG_LABEL_SELECTORS = [
+  '#axis-label-x',
+  '#axis-label-y',
+  '#axis-label-z',
+  '#speaker-labels > .overlay-label',
+  '#phantom-labels > .overlay-label',
+  '#coord-labels > .overlay-label',
+].join(', ');
+
+async function exportPng() {
+  const scale = PNG_EXPORT_SCALE;
+  const outW = Math.round(windowWidth * scale);
+  const outH = Math.round(windowHeight * scale);
+
+  const scratch = document.createElement('canvas');
+  scratch.width = outW;
+  scratch.height = outH;
+  const ctx = scratch.getContext('2d');
+
+  // Match the WEBGL clear colour so labels with text-shadow halos blend.
+  ctx.fillStyle = '#f3f3f6';
+  ctx.fillRect(0, 0, outW, outH);
+
+  const srcCanvas = document.querySelector('#canvas-host canvas');
+  if (!srcCanvas) throw new Error('canvas not found');
+
+  // Real 2× render (SPEC §11): temporarily switch p5 to pixel
+  // density 2 and redraw, so a DPR-1 screen exports a sharp 2× image rather
+  // than an upscaled 1× one. pixelDensity() resizes the canvas, which resets
+  // p5's projection, so the projection is re-applied (the eye/centre/up are
+  // kept). Synchronous redraw() means the framebuffer holds this exact frame
+  // — overlay labels are repositioned by updateLabels() inside draw() too.
+  const prevDensity = pixelDensity();
+  try {
+    if (prevDensity !== scale) {
+      pixelDensity(scale);
+      applyProjection();
+    }
+    redraw();
+    ctx.drawImage(srcCanvas, 0, 0, outW, outH);
+  } finally {
+    if (prevDensity !== scale) {
+      pixelDensity(prevDensity);
+      applyProjection();
+      redraw();
+    }
+  }
+
+  drawLabelsOntoExportCanvas(ctx, scale);
+
+  const blob = await new Promise(resolve => scratch.toBlob(resolve, 'image/png'));
+  if (!blob) throw new Error('toBlob returned null');
+
+  const filename = pngFilename();
+  triggerDownload(blob, filename);
+}
+
+function drawLabelsOntoExportCanvas(ctx, scale) {
+  const labels = document.querySelectorAll(PNG_LABEL_SELECTORS);
+  for (const el of labels) {
+    const text = el.textContent;
+    if (!text) continue;
+    const cs = getComputedStyle(el);
+    if (cs.visibility === 'hidden' || cs.display === 'none') continue;
+    // Parent host may be hidden when a layer is off (e.g. coords) — skip.
+    const parent = el.parentElement;
+    if (parent && getComputedStyle(parent).display === 'none') continue;
+
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) continue;
+
+    // .overlay-label uses transform: translate(-50%,-50%), so the rect's
+    // centre is the original anchor point. Draw text centred on that point.
+    const cx = (rect.left + rect.width / 2) * scale;
+    const cy = (rect.top + rect.height / 2) * scale;
+
+    const sizePx = parseFloat(cs.fontSize) * scale;
+    ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${sizePx}px ${cs.fontFamily}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Approximate the multi-layer text-shadow halo (background-coloured)
+    // with a single shadowBlur — enough to keep labels readable over the
+    // heatmap without re-drawing the text six times.
+    ctx.save();
+    ctx.shadowColor = '#f3f3f6';
+    ctx.shadowBlur = 4 * scale;
+    ctx.fillStyle = '#f3f3f6';
+    // Stamp the halo a few times to thicken it (single shadowBlur pass is
+    // too subtle on busy heatmap pixels).
+    for (let i = 0; i < 3; i++) ctx.fillText(text, cx, cy);
+    ctx.restore();
+
+    ctx.fillStyle = cs.color;
+    ctx.fillText(text, cx, cy);
+  }
+}
+
+// Layout name → filename stem Only removes what file systems
+// actually reject — \ / : * ? " < > |, control characters — plus whitespace
+// runs (→ "-") and leading dots, so Chinese / Japanese / accented names
+// survive: "工作坊 7.1.4" → "工作坊-7.1.4". Empty → "untitled" (same case for
+// HTML and PNG).
+function filenameStem(name) {
+  const safe = String(name || '')
+    .normalize('NFC')
+    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]+/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '');
+  return safe || 'untitled';
+}
+
+function pngFilename() {
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  return `${filenameStem(STATE.metadata.layoutName)}-coverage-${ts}.png`;
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke after the click has been processed by the browser.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+// =============================================================================
+// HTML export — produce a self-contained HTML that opens with the
+// current layout pre-loaded. Strategy:
+//   1. Use the current document as the template (so the live tool and a
+//      previously-downloaded copy share one code path; this also avoids a
+//      fetch() that'd fail on file://).
+//   2. Replace <link rel="stylesheet" href="coverage.css"> with an inline
+//      <style id="coverage-style-inline"> on the first save, or update the
+//      existing inline tag on subsequent saves.
+//   3. Same trick for <script src="coverage.js"> → <script id="coverage-script-inline">.
+//   4. Inject / update <script id="coverage-state" type="application/json">.
+//   5. Prepend an HTML comment with metadata (SPEC §10.2) and set <title>.
+// p5.js stays as an external CDN script — keeps the file small.
+// =============================================================================
+
+function serializeState() {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    metadata: {
+      layoutName: STATE.metadata.layoutName || '',
+      createdAt: new Date().toISOString(),
+      sourceUrl: SOURCE_URL,
+      toolVersion: TOOL_VERSION,
+    },
+    audience: { ...STATE.audience },
+    speakers: STATE.speakers.map(s => ({ ...s })),
+    phantoms: STATE.phantoms.map(p => ({ ...p })),
+    view: {
+      unit: STATE.view.unit,
+      cameraPreset: STATE.view.cameraPreset,
+      // Free (orbited) camera, or null when the view is exactly the preset.
+      camera: STATE.view.camera
+        ? { eye: STATE.view.camera.eye.slice(), centre: STATE.view.camera.centre.slice(), up: STATE.view.camera.up.slice() }
+        : null,
+      layers: { ...STATE.view.layers },
+    },
+  };
+}
+
+async function getCoverageCss() {
+  const inline = document.getElementById('coverage-style-inline');
+  if (inline) return inline.textContent;
+  const res = await fetch('coverage.css');
+  if (!res.ok) throw new Error('coverage.css fetch failed: ' + res.status);
+  return await res.text();
+}
+
+async function getCoverageJs() {
+  const inline = document.getElementById('coverage-script-inline');
+  if (inline) return inline.textContent;
+  const res = await fetch('coverage.js');
+  if (!res.ok) throw new Error('coverage.js fetch failed: ' + res.status);
+  return await res.text();
+}
+
+// Selectors for elements whose contents are populated at runtime from STATE.
+// Must be cleared in the cloned doc before serialization so the saved file
+// boots from a clean slate (the embedded state drives re-population).
+//
+// #canvas-host is critical: p5's createCanvas() inserts a <canvas> child at
+// runtime, and document.documentElement.outerHTML captures it. If we don't
+// strip it, the saved file boots with the dead canvas already in DOM, p5
+// adds a SECOND one, and the layout breaks (no scene renders).
+const HTML_EXPORT_DYNAMIC_SELECTORS = [
+  '#canvas-host',
+  '#speaker-labels',
+  '#phantom-labels',
+  '#coord-labels',
+  '#speakers-list',
+  '#phantoms-list',
+  '#health-panel-status',
+];
+
+async function buildSelfContainedHtml(state) {
+  // Parse a clone of the current document so live mutations stay untouched.
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(
+    '<!doctype html>' + document.documentElement.outerHTML,
+    'text/html'
+  );
+
+  // Inline CSS — replace <link> on the first save, or update <style> on
+  // subsequent saves of an already-downloaded file.
+  const cssText = escapeInlineStyle(await getCoverageCss());
+  const linkEl = doc.querySelector('link[rel="stylesheet"][href*="coverage.css"]');
+  if (linkEl) {
+    const styleEl = doc.createElement('style');
+    styleEl.id = 'coverage-style-inline';
+    styleEl.textContent = cssText;
+    linkEl.replaceWith(styleEl);
+  } else {
+    const existing = doc.getElementById('coverage-style-inline');
+    if (existing) existing.textContent = cssText;
+  }
+
+  // Inline JS. escapeInlineScript() keeps any "</script" inside the source
+  // from closing the <script> element early.
+  const jsText = escapeInlineScript(await getCoverageJs());
+  const srcScript = doc.querySelector('script[src*="coverage.js"]');
+  if (srcScript) {
+    const inlineScript = doc.createElement('script');
+    inlineScript.id = 'coverage-script-inline';
+    // defer is meaningless on inline scripts; drop it.
+    inlineScript.textContent = jsText;
+    srcScript.replaceWith(inlineScript);
+  } else {
+    const existing = doc.getElementById('coverage-script-inline');
+    if (existing) existing.textContent = jsText;
+  }
+
+  // Embedded state script — escape '<' so the JSON can't accidentally close
+  // the surrounding <script> tag. Critical: the state script must come
+  // BEFORE the inline coverage.js script in document order, otherwise the
+  // boot loader (an IIFE at module top) runs while state is not yet parsed
+  // into the DOM and the saved layout won't apply.
+  const stateJson = JSON.stringify(state, null, 2).replace(/</g, '\\u003c');
+  let stateEl = doc.getElementById('coverage-state');
+  if (!stateEl) {
+    stateEl = doc.createElement('script');
+    stateEl.id = 'coverage-state';
+    stateEl.type = 'application/json';
+    const inlineCoverage = doc.getElementById('coverage-script-inline');
+    if (inlineCoverage && inlineCoverage.parentNode) {
+      inlineCoverage.parentNode.insertBefore(stateEl, inlineCoverage);
+    } else {
+      doc.head.appendChild(stateEl);
+    }
+  }
+  stateEl.textContent = stateJson;
+
+  // Title.
+  const layoutName = (state.metadata.layoutName || '').trim();
+  const title = doc.querySelector('title');
+  if (title) {
+    title.textContent = layoutName || 'Sound Coverage Sketch — Untitled';
+  }
+
+  // Strip dynamic content so the saved file boots clean.
+  for (const sel of HTML_EXPORT_DYNAMIC_SELECTORS) {
+    const el = doc.querySelector(sel);
+    if (el) el.innerHTML = '';
+  }
+  // Transient validation marks (an input left mid-edit) don't belong in the file.
+  doc.querySelectorAll('.invalid').forEach(el => el.classList.remove('invalid'));
+  // Reset disclaimer to expanded so the saved file always shows the framing.
+  const disc = doc.getElementById('disclaimer');
+  if (disc) disc.classList.remove('collapsed');
+  const discToggle = doc.getElementById('disclaimer-toggle');
+  if (discToggle) {
+    discToggle.setAttribute('aria-expanded', 'true');
+    const caret = discToggle.querySelector('.caret');
+    if (caret) caret.textContent = '▴';
+  }
+
+  // Assemble final HTML with metadata comment header.
+  const metaComment = buildMetadataComment(state);
+  return '<!doctype html>\n'
+    + metaComment
+    + '\n'
+    + doc.documentElement.outerHTML
+    + '\n';
+}
+
+// Inline <script> text must not contain "</script" (case-insensitive): the
+// HTML parser would end the element there and the rest of coverage.js would
+// spill into the page. "<\/script" means the same thing to JavaScript
+// (inside strings, template literals, regex literals and comments), so the
+// substitution is safe; it is also idempotent (a second save leaves it
+// alone). "<!--" is escaped for the same reason: inside a script it can
+// switch the parser into the "escaped" state, where a later "<script" makes
+// "</script>" stop working. (coverage.js does contain both sequences in
+// comments and in the regexes below; they are escaped like anything else.)
+function escapeInlineScript(text) {
+  return String(text)
+    .replace(/<\/(script)/gi, '<\\/$1')
+    .replace(/<!--/g, '<\\!--');
+}
+function escapeInlineStyle(text) {
+  return String(text).replace(/<\/(style)/gi, '<\\/$1');
+}
+
+function buildMetadataComment(state) {
+  const safe = s => String(s == null ? '' : s).replace(/--/g, '- -');
+  const name = safe(state.metadata.layoutName) || '(untitled)';
+  return [
+    '<!--',
+    '  Generated by Sound Coverage Sketch',
+    '  Layout name: ' + name,
+    '  Generated at: ' + safe(state.metadata.createdAt),
+    '  Source: ' + safe(state.metadata.sourceUrl),
+    '  Tool version: ' + safe(state.metadata.toolVersion),
+    '',
+    '  This file is fully editable.',
+    '  Open it in a modern browser, or upload it back to the source URL to continue editing.',
+    '-->',
+  ].join('\n');
+}
+
+function htmlFilename() {
+  return `${filenameStem(STATE.metadata.layoutName)}-coverage-sketch.html`;
+}
+
+async function exportHtml() {
+  const state = serializeState();
+  const html = await buildSelfContainedHtml(state);
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  triggerDownload(blob, htmlFilename());
+}
+
+// =============================================================================
+// HTML import — accept a previously-saved file, parse out the embedded
+// state, validate, apply. Failures throw with a user-readable message; the
+// caller surfaces them via alert() and STATE is left untouched.
+// applyLoadedState() throws BEFORE mutating STATE on the schemaVersion guard,
+// so a bad-version file can never partially overwrite the current layout.
+// =============================================================================
+
+function extractEmbeddedState(htmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlText, 'text/html');
+  const stateEl = doc.getElementById('coverage-state');
+  if (!stateEl) {
+    throw new Error("Couldn't find an embedded layout in this file. Make sure it was saved by this tool.");
+  }
+  const text = (stateEl.textContent || '').trim();
+  if (!text) {
+    throw new Error('Embedded layout is empty.');
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    throw new Error('Embedded layout is not valid JSON: ' + e.message);
+  }
+  return parsed;
+}
+
+async function importHtmlFile(file) {
+  const text = await file.text();
+  const parsed = extractEmbeddedState(text);
+  const loss = applyLoadedState(parsed);
+  syncUiFromState();
+  // Keep the tab title in step with the opened layout.
+  document.title = layoutTitle(STATE.metadata.layoutName);
+  return loadWarning(loss);
+}
+
+// Live-tool tab title for a layout name. (Saved files use the bare layout
+// name as <title>, SPEC §10.2.)
+function layoutTitle(name) {
+  const n = String(name || '').trim();
+  return n ? `${n} — Sound Coverage Sketch` : 'Sound Coverage Sketch';
+}
+
+// Shared button-busy wrapper for the export buttons. Disables the button,
+// swaps its label to "Saving…", runs the async fn, restores on completion.
+async function runExport(btn, label, fn) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const originalLabel = btn.textContent;
+  btn.textContent = 'Saving…';
+  try {
+    await fn();
+  } catch (err) {
+    console.error(label + ' failed:', err);
+    alert(label + ' failed: ' + (err && err.message ? err.message : err));
+  } finally {
+    btn.textContent = originalLabel;
+    btn.disabled = false;
+  }
+}
+
+// =============================================================================
+// Add Speaker / Add Phantom forms (SPEC §9.2, decision Q-07a).
+//
+// Speaker form is pre-filled with the default new speaker: centred, 200 cm
+// beyond the audience front edge (+Y), 240 cm high, yaw/pitch aimed at the
+// listening centre. Yaw/pitch keep following X/Y/Z (auto-aim) until the user
+// edits either of them; "Aim at centre" re-aims and resumes following.
+//
+// Phantom form leaves X/Y/Z EMPTY on purpose: SPEC §8.4 — the tool never
+// proposes a position for a phantom. The user has to type one.
+//
+// Both forms validate with the same rules as the inline editors and the
+// file loader (isValidFinite / isValidSpread).
+// =============================================================================
+
+function defaultNewSpeaker() {
+  const x = 0;
+  const y = STATE.audience.width / 2 + 200;  // 200 cm beyond audience front edge (+Y)
+  const z = 240;
+  const aim = aimAtCentre(x, y, z);
+  return {
+    name: 'Speaker ' + (STATE.speakers.length + 1),
+    x, y, z, yaw: aim.yaw, pitch: aim.pitch, angleH: 90, angleV: 60,
+  };
+}
+
+// Read + validate one numeric form field. Returns the stored value (cm for
+// lengths) or null, toggling the .invalid class either way.
+function readFormNumber(inp, validator) {
+  const typed = inp.value.trim() === '' ? NaN : parseFloat(inp.value);
+  const v = inp.dataset.kind === 'len' ? lenStore(typed) : typed;
+  const ok = validator(v);
+  inp.classList.toggle('invalid', !ok);
+  return ok ? v : null;
+}
+
+function fillUnitTags(form) {
+  form.querySelectorAll('.unit-tag').forEach(el => { el.textContent = '(' + STATE.view.unit + ')'; });
+}
+
+function openAddSpeakerDialog() {
+  const dlg = document.getElementById('add-speaker-dialog');
+  const form = document.getElementById('add-speaker-form');
+  if (!dlg || !form) return;
+  const d = defaultNewSpeaker();
+  form.elements.name.value = d.name;
+  for (const k of ['x', 'y', 'z']) form.elements[k].value = lenDisplay(d[k]);
+  for (const k of ['yaw', 'pitch', 'angleH', 'angleV']) form.elements[k].value = d[k];
+  form.querySelectorAll('input').forEach(i => i.classList.remove('invalid'));
+  form.dataset.autoAim = 'on';
+  fillUnitTags(form);
+  dlg.showModal();
+  form.elements.name.select();
+}
+
+function openAddPhantomDialog() {
+  const dlg = document.getElementById('add-phantom-dialog');
+  const form = document.getElementById('add-phantom-form');
+  if (!dlg || !form) return;
+  form.elements.name.value = 'Phantom ' + (STATE.phantoms.length + 1);
+  for (const k of ['x', 'y', 'z']) form.elements[k].value = '';
+  form.querySelectorAll('input').forEach(i => i.classList.remove('invalid'));
+  fillUnitTags(form);
+  dlg.showModal();
+  form.elements.x.focus();
+}
+
+function aimSpeakerForm(form) {
+  const x = readFormNumber(form.elements.x, isValidFinite);
+  const y = readFormNumber(form.elements.y, isValidFinite);
+  const z = readFormNumber(form.elements.z, isValidFinite);
+  if (x === null || y === null || z === null) return;
+  const aim = aimAtCentre(x, y, z);
+  form.elements.yaw.value = aim.yaw;
+  form.elements.pitch.value = aim.pitch;
+  form.elements.yaw.classList.remove('invalid');
+  form.elements.pitch.classList.remove('invalid');
+}
+
+function submitAddSpeaker(form) {
+  const v = {};
+  let firstBad = null;
+  for (const k of ['x', 'y', 'z', 'yaw', 'pitch', 'angleH', 'angleV']) {
+    v[k] = readFormNumber(form.elements[k], validatorForField(k));
+    if (v[k] === null && !firstBad) firstBad = form.elements[k];
+  }
+  if (firstBad) { firstBad.focus(); return false; }
+  const name = form.elements.name.value.trim() || ('Speaker ' + (STATE.speakers.length + 1));
+  const speaker = { id: nextSpeakerId(), name, enabled: true, ...v };
+  STATE.speakers.push(speaker);
+  syncSpeakerLabels();
+  syncCoordLabels();
+  renderSpeakersList();
+  revealListItem('speakers-list', speaker.id);
+  markCoverageDirty();
+  markTriangulationDirty();
+  return true;
+}
+
+function submitAddPhantom(form) {
+  const v = {};
+  let firstBad = null;
+  for (const k of ['x', 'y', 'z']) {
+    v[k] = readFormNumber(form.elements[k], isValidFinite);
+    if (v[k] === null && !firstBad) firstBad = form.elements[k];
+  }
+  if (firstBad) { firstBad.focus(); return false; }
+  const name = form.elements.name.value.trim() || ('Phantom ' + (STATE.phantoms.length + 1));
+  const phantom = { id: nextPhantomId(), name, ...v };
+  STATE.phantoms.push(phantom);
+  syncPhantomLabels();
+  syncCoordLabels();
+  renderPhantomsList();
+  revealListItem('phantoms-list', phantom.id);
+  markTriangulationDirty();
+  return true;
+}
+
+// Scroll a freshly added row into view so the user sees where it went.
+function revealListItem(listId, id) {
+  const li = document.querySelector(`#${listId} > li[data-id="${id}"]`);
+  if (li && li.scrollIntoView) li.scrollIntoView({ block: 'nearest' });
+}
+
+function installAddDialogs() {
+  const addBtn = document.getElementById('add-speaker-btn');
+  const spkDlg = document.getElementById('add-speaker-dialog');
+  const spkForm = document.getElementById('add-speaker-form');
+  if (addBtn && spkDlg && spkForm) {
+    addBtn.addEventListener('click', openAddSpeakerDialog);
+    spkForm.addEventListener('input', (e) => {
+      const k = e.target && e.target.name;
+      if (k === 'yaw' || k === 'pitch') spkForm.dataset.autoAim = 'off';
+      if ((k === 'x' || k === 'y' || k === 'z') && spkForm.dataset.autoAim === 'on') aimSpeakerForm(spkForm);
+    });
+    spkForm.querySelector('[data-action="aim"]').addEventListener('click', () => {
+      spkForm.dataset.autoAim = 'on';
+      aimSpeakerForm(spkForm);
+    });
+    spkForm.querySelector('[data-action="cancel"]').addEventListener('click', () => spkDlg.close());
+    spkForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (submitAddSpeaker(spkForm)) spkDlg.close();
+    });
+  }
+
+  const addPhBtn = document.getElementById('add-phantom-btn');
+  const phDlg = document.getElementById('add-phantom-dialog');
+  const phForm = document.getElementById('add-phantom-form');
+  if (addPhBtn && phDlg && phForm) {
+    addPhBtn.addEventListener('click', openAddPhantomDialog);
+    phForm.querySelector('[data-action="cancel"]').addEventListener('click', () => phDlg.close());
+    phForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (submitAddPhantom(phForm)) phDlg.close();
+    });
+  }
+}
+
+// =============================================================================
+// UI wiring
+// =============================================================================
+
+window.addEventListener('DOMContentLoaded', () => {
+  // p5.js comes from a CDN (SPEC §10.1). If it didn't load — typically a
+  // saved file opened offline — say so in the middle of the screen instead
+  // of leaving a silent blank scene. Everything else (panels,
+  // lists, Layout Health) runs without p5.
+  if (typeof p5 === 'undefined') {
+    const notice = document.getElementById('offline-notice');
+    if (notice) notice.hidden = false;
+  }
+
+  // Tool version footer (populated from TOOL_VERSION so downloaded HTML
+  // shows the version it was saved with).
+  const versionEl = document.getElementById('tool-version-text');
+  if (versionEl) versionEl.textContent = TOOL_VERSION;
+
+  // View presets
+  document.querySelectorAll('#view-controls button[data-view]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#view-controls button[data-view]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      STATE.view.cameraPreset = btn.dataset.view;
+      STATE.view.camera = null;  // a preset replaces any free (orbited) view
+      applyCamera();
+    });
+  });
+
+  // Layer toggles
+  document.querySelectorAll('#layers-panel input[data-layer]').forEach(inp => {
+    inp.addEventListener('change', () => {
+      const key = inp.dataset.layer;
+      STATE.view.layers[key] = inp.checked;
+      // health-panel is an HTML aside, not a 3D draw layer — toggle the
+      // element's hidden attribute directly. (Other layers gate inside
+      // drawScene each frame, so they don't need DOM updates here.)
+      if (key === 'health-panel') {
+        const el = document.getElementById('health-panel');
+        if (el) el.hidden = !inp.checked;
+      }
+      // Layer-off → hide the corresponding tooltip immediately, don't wait
+      // for the next mousemove.
+      if (key === 'triangulation' && !inp.checked) {
+        const tt = document.getElementById('triangle-tooltip');
+        if (tt) tt.hidden = true;
+        HOVER.lastTriIdx = -1;
+      }
+      if (key === 'speakers' && !inp.checked) {
+        const tt = document.getElementById('speaker-tooltip');
+        if (tt) tt.hidden = true;
+        HOVER.speakerId = null;
+      }
+    });
+  });
+
+  // Initial visibility for the health-panel layer — the checkbox starts
+  // checked per the layout in index.html, but we mirror that into the DOM
+  // explicitly to handle any future default change in one place.
+  const healthEl = document.getElementById('health-panel');
+  if (healthEl) healthEl.hidden = !STATE.view.layers['health-panel'];
+
+  // Layout name
+  const nameInput = document.getElementById('layout-name');
+  if (nameInput) {
+    nameInput.addEventListener('input', () => {
+      STATE.metadata.layoutName = nameInput.value;
+    });
+  }
+
+  // Unit toggle
+  document.querySelectorAll('#meta-panel button[data-unit]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      STATE.view.unit = btn.dataset.unit;
+      renderUnitToggle();
+      refreshUnitInputs();
+    });
+  });
+
+  // Save PNG — disable button while exporting so a double-click doesn't
+  // queue two downloads.
+  const savePngBtn = document.getElementById('save-png-btn');
+  if (savePngBtn) {
+    savePngBtn.addEventListener('click', () => runExport(savePngBtn, 'PNG export', exportPng));
+  }
+
+  // Save HTML / Open HTML — both are live-tool-only.
+  // A downloaded HTML is a frozen snapshot: it can be viewed and locally
+  // edited, but file I/O (re-saving, importing other layouts) belongs on
+  // the live tool. Detection: presence of #coverage-script-inline.
+  const isSnapshot = !!document.getElementById('coverage-script-inline');
+
+  const saveHtmlBtn = document.getElementById('save-html-btn');
+  if (saveHtmlBtn) {
+    if (isSnapshot) {
+      saveHtmlBtn.hidden = true;
+    } else {
+      saveHtmlBtn.addEventListener('click', () => runExport(saveHtmlBtn, 'HTML export', exportHtml));
+    }
+  }
+
+  const openHtmlBtn = document.getElementById('open-html-btn');
+  const openHtmlInput = document.getElementById('open-html-input');
+  if (openHtmlBtn && openHtmlInput) {
+    if (isSnapshot) {
+      openHtmlBtn.hidden = true;
+    } else {
+      openHtmlBtn.addEventListener('click', () => openHtmlInput.click());
+      openHtmlInput.addEventListener('change', async () => {
+        const file = openHtmlInput.files && openHtmlInput.files[0];
+        // Reset the input value first so picking the same file twice fires
+        // change again. Done before await so an early return still resets.
+        openHtmlInput.value = '';
+        if (!file) return;
+        try {
+          const warning = await importHtmlFile(file);
+          if (warning) alert(warning);
+        } catch (err) {
+          console.error('HTML import failed:', err);
+          alert('Open HTML failed:\n\n' + (err && err.message ? err.message : err));
+        }
+      });
+    }
+  }
+
+  // Audience editor
+  document.querySelectorAll('input[data-audience]').forEach(inp => {
+    const key = inp.dataset.audience;
+    bindNumberInput(inp, {
+      kind: 'len',
+      get: () => STATE.audience[key],
+      set: (v) => { STATE.audience[key] = v; },
+      validate: isValidAudienceValue,
+      onChange: () => {
+        // Listening view depends on listeningHeight — refresh if active.
+        if (key === 'listeningHeight' && STATE.view.cameraPreset === 'listening' && !STATE.view.camera) {
+          applyCamera();
+        }
+        // listeningHeight moves the centre → every speaker's distance changes.
+        if (key === 'listeningHeight') updateAllSpeakerDerived();
+        markCoverageDirty();
+        markTriangulationDirty();
+      },
+    });
+  });
+
+  installAddDialogs();
+
+  // Initial renders. Calling syncUiFromState() also handles the post-load
+  // case (boot loader or HTML upload) where STATE has been replaced and
+  // every input / checkbox / camera button needs to be re-derived.
+  syncUiFromState();
+
+  // Disclaimer collapse toggle (header always visible, body folds away).
+  const disclaimer = document.getElementById('disclaimer');
+  const disclaimerToggle = document.getElementById('disclaimer-toggle');
+  if (disclaimer && disclaimerToggle) {
+    disclaimerToggle.addEventListener('click', () => {
+      const collapsed = disclaimer.classList.toggle('collapsed');
+      disclaimerToggle.querySelector('.caret').textContent = collapsed ? '▾' : '▴';
+      disclaimerToggle.setAttribute('aria-expanded', String(!collapsed));
+    });
+  }
+
+  // Mobile banner (SPEC §13). Session-scoped dismiss: once the user
+  // hits ✕ the banner stays away until reload, even if they resize
+  // back and forth across the 1024px threshold. Reload re-evaluates
+  // afresh — there is no localStorage involvement on purpose.
+  const banner = document.getElementById('mobile-banner');
+  if (banner) {
+    let dismissed = false;
+    const updateBanner = () => {
+      banner.hidden = dismissed || window.innerWidth >= 1024;
+    };
+    updateBanner();
+    window.addEventListener('resize', updateBanner);
+    document.getElementById('mobile-banner-dismiss').addEventListener('click', () => {
+      dismissed = true;
+      banner.hidden = true;
+    });
+  }
+});
+
+// Boot-time embedded-state loader. Runs synchronously at module top level so
+// STATE is already up-to-date by the time p5 calls setup() on DOMContentLoaded.
+// Failures are non-fatal and logged — UI still boots with the default layout.
+// It must stay at the very end of the file: applyLoadedState() reads
+// top-level consts (CAMERA_DISTANCE_LIMITS, LAYER_KEYS, …) that are in their
+// temporal dead zone until their declaration has run; placed near the top,
+// the loader throws and the saved layout is silently replaced by defaults.
+(function loadEmbeddedStateOnBoot() {
+  const el = typeof document !== 'undefined' && document.getElementById('coverage-state');
+  if (!el) return;
+  const text = el.textContent || '';
+  if (!text.trim()) return;
+  try {
+    const parsed = JSON.parse(text);
+    applyLoadedState(parsed);
+  } catch (e) {
+    console.warn('Embedded coverage-state failed to load; using defaults.', e);
+  }
+})();

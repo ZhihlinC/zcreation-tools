@@ -7,7 +7,7 @@
 
 ## 變更紀錄 / Changelog
 
-- **1.1.0-beta（2026-11-09）**：2026-11-05 稽核修正加後續調整。
+- **1.1.0-beta（2026-11-09）**：2026-11-05 一批修正與後續調整。
   - 平面判定改為「所有點彼此的仰角差 ≤ 2°」，同一高度的單圈環不論高低都算平面（§8.1）；包圍檢查 `ε = sin 1°` 不變（與平面容忍度各自獨立）。
   - 移除 `surround ring` 標籤（§8.3）；dispersion angle 中文統一為「擴散角」、`Pulkki-VBAP` 統一寫法；中文定位語首句沿用原版（§2）。
   - 開檔時有值但驗證不過、被換成預設值的欄位，會跳英文提示，不再悄悄改值（§10.3）；`< 1024px` 只顯示 3D 畫面的實際行為寫入 §13。
@@ -51,7 +51,7 @@
 >
 > How it actually sounds is still up to your renderer and your ears.
 
-> **文字調整說明（2026-11-05）**：原文首句「這是幾何瞄準與覆蓋草圖工具。」讀起來太武斷，頁面上的中文首句已由 Yves 改寫；本版以「不武斷、但誠實說明不是聲學模擬」為原則，把中英兩版、手機提示條、README、meta description、landing page 一起對齊。新文字**待 Yves 確認**（對照表見 `audits/2026-11-05-coverage-fixes.md`）。
+> **文字調整說明（2026-11-05）**：原文首句「這是幾何瞄準與覆蓋草圖工具。」讀起來太武斷，已改寫頁面上的中文首句；並以「不武斷、但誠實說明不是聲學模擬」為原則，把中英兩版、手機提示條、README、meta description、landing page 一起對齊。
 
 此段話必須**完整、可見**地呈現於工具首頁第一屏與下載出 HTML 檔的開頭，中英版本同步。
 不要為了視覺優雅而省略其中任何一句。
@@ -296,7 +296,7 @@ phantom speaker 完全由使用者手動放置。
 
 **Phantom speaker 的語義 / Semantics of "phantom speaker"**：phantom 是「我假裝這個方向有顆音響、看 layout 健康度怎麼變」的 sketch 工具，**不一定要事後補成實體音響**。Spat / Panoramix 的實際 workflow 也是這樣：phantom speaker 在 render 時，靠 triangulation 把 gain 攤回鄰近的實體 speaker（zenith / nadir 補洞最常見）。Tool UI 文字應把 phantom 框成「在球面上預訂一個 panning 位置 / reserve a panning slot」，而不是「未來要買的音響」——這個用語選擇影響使用者怎麼理解工具用途。
 
-目前 UI 的做法（2026-11-05）：Phantoms 面板標題下、以及 Add Phantom 表單裡，常駐顯示一行小字（文案待 Yves 確認）：
+目前 UI 的做法（2026-11-05）：Phantoms 面板標題下、以及 Add Phantom 表單裡，常駐顯示一行小字：
 
 > Phantoms reserve a panning position on the sphere — they are not speakers to buy. Add one to see how the layout health changes when that direction is covered.
 
@@ -307,7 +307,7 @@ phantom speaker 完全由使用者手動放置。
 ### 9.1 Camera
 
 - 滑鼠拖曳：旋轉視角，圍繞 (0, 0, 0)
-- 滾輪：縮放。相機到旋轉中心的距離限制在 **100–5000 cm**（程式常數 `CAMERA_DISTANCE_LIMITS`，數值待 Yves 確認），避免穿模或飛太遠
+- 滾輪：縮放。相機到旋轉中心的距離限制在 **100–5000 cm**（程式常數 `CAMERA_DISTANCE_LIMITS`），避免穿模或飛太遠
 - 預設視角按鈕：
     - `Perspective`（預設啟動視角）
     - `Top`（從正上方俯視）
@@ -349,7 +349,7 @@ phantom speaker 完全由使用者手動放置。
     - inline 的 JS／CSS 會把 `</script`、`<!--`（JS）與 `</style`（CSS）跳脫，避免原始碼裡出現這些字串時把 `<script>`／`<style>` 提早結束
 3. 觸發瀏覽器下載（檔名：`{layoutName}-coverage-sketch.html` 或 `untitled-coverage-sketch.html`）
     - 檔名只移除檔案系統真正不允許的字元（`\ / : * ? " < > |`、控制字元）與開頭的點，空白換成 `-`；**保留中文、日文、帶重音的字母等 Unicode 字元**（例：`工作坊 7.1.4` → `工作坊-7.1.4-coverage-sketch.html`）
-4. p5.js 走 CDN，所以離線開啟存檔時 3D 畫面無法顯示。這時畫面中央顯示（文案待 Yves 確認）：`The 3D view needs an internet connection to load p5.js. Your layout data in this file is intact — reconnect and reload to see the scene.` 面板、清單與 Layout Health 不依賴 p5，照常運作
+4. p5.js 走 CDN，所以離線開啟存檔時 3D 畫面無法顯示。這時畫面中央顯示：`The 3D view needs an internet connection to load p5.js. Your layout data in this file is intact — reconnect and reload to see the scene.` 面板、清單與 Layout Health 不依賴 p5，照常運作
 
 ### 10.2 下載出 HTML 的特性 / Properties of Saved HTML
 

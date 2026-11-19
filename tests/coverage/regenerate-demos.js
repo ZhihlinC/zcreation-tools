@@ -3,7 +3,7 @@
 // HTML", and write the download back over the demo file. Layout data is
 // carried over exactly (checked below); only the embedded tool code, the
 // generated-at timestamp and the metadata comment change.
-// Usage: P5_LOCAL=/path/to/p5.min.js node regenerate-demos.js
+// Usage: node regenerate-demos.js   (P5_LOCAL optional, see README.md)
 'use strict';
 const { chromium } = require('playwright');
 const fs = require('fs');

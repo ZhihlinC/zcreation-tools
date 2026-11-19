@@ -1,4 +1,4 @@
-// Node tests for ../assemble.js. Oracle: pdf.js (an independent implementation
+// Node tests for site/pdf/assemble.js. Oracle: pdf.js (an independent implementation
 // of PDF geometry), never assemble.js's own helpers.
 //   cd tests/pdf && npm install && node test-assemble.js
 // Env ASSEMBLE_JS overrides the module under test (used by mutation-check.js).

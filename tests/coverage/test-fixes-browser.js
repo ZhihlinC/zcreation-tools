@@ -1,6 +1,6 @@
-// Headless-Chromium tests for the 2026-11-05 coverage fixes.
-// Usage: P5_LOCAL=/path/to/p5.min.js node test-fixes-browser.js
-// Optional: SHOTS_DIR=<dir> also writes the screenshots listed in the report.
+// Headless-Chromium regression tests for the coverage tool.
+// Usage: node test-fixes-browser.js   (P5_LOCAL optional, see README.md)
+// Optional: SHOTS_DIR=<dir> also writes screenshots of the checked states.
 'use strict';
 const { chromium } = require('playwright');
 const fs = require('fs');

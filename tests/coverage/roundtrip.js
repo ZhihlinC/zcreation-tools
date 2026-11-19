@@ -7,9 +7,8 @@
 //   - §2 probe string follows the new English wording ("It is not an
 //     acoustic simulation");
 //   - extra lines: free-camera equality, disabled-speaker label after reopen.
-// Usage: P5_LOCAL=/path/to/p5.min.js node roundtrip.js
-//   P5_LOCAL: a local copy of p5@1.11.0/lib/p5.min.js (e.g. from `npm pack p5@1.11.0`).
-//   The CDN request in coverage/index.html is routed to that file so the test
+// Usage: node roundtrip.js   (p5 comes from node_modules/p5; P5_LOCAL overrides it)
+//   The CDN request in site/coverage/index.html is routed to that file so the test
 //   runs without network access to cdn.jsdelivr.net.
 'use strict';
 const { chromium } = require('playwright');

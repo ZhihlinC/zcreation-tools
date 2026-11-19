@@ -4,7 +4,7 @@
 //
 // Usage:
 //   node mutation-check.js                 # Node-suite mutations only (fast)
-//   P5_LOCAL=... node mutation-check.js --browser   # also browser-suite ones (~2–3 min each, 3 in parallel)
+//   node mutation-check.js --browser       # also browser-suite ones (~2–3 min each, 3 in parallel)
 'use strict';
 const fs = require('fs');
 const os = require('os');
@@ -16,13 +16,13 @@ const JS = fs.readFileSync(path.join(ROOT, 'coverage/coverage.js'), 'utf8');
 const HTML = fs.readFileSync(path.join(ROOT, 'coverage/index.html'), 'utf8');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cov-mut-'));
 
-// Each mutation: id (finding), what it does, file, find → replace (find must
+// Each mutation: id (the guarded fix), what it does, file, find → replace (find must
 // occur exactly once), suite, and a regex one of the FAIL lines must match.
 const M = [
   // ---- Node suite
-  { id: 'F-01', what: 'drop the enclosure check', suite: 'node', expect: /F-01|D1|D5|atmos/i,
+  { id: 'F-01', what: 'drop the enclosure check', suite: 'node', expect: /F-01|\bD1-|\bD5-|atmos/i,
     find: 'if (!(minPlaneOffset > ENCLOSE_EPS)) {', replace: 'if (false) {' },
-  { id: 'F-01', what: 'enclosure ε = 0 instead of sin 1°', suite: 'node', expect: /F-01|D5|F2|atmos/i,
+  { id: 'F-01', what: 'enclosure ε = 0 instead of sin 1°', suite: 'node', expect: /F-01|\bD5-|\bF2-|atmos/i,
     find: 'const ENCLOSE_EPS = Math.sin(ENCLOSE_DEG * Math.PI / 180);', replace: 'const ENCLOSE_EPS = 0;' },
   { id: 'B1', what: 'planar test back to "every point within ±1° of ear level"', suite: 'node', expect: /B1|P-03|planar|small-circle/,
     find: 'if (Math.max(...elev) - Math.min(...elev) <= PLANAR_ELEVATION_DEG * Math.PI / 180) {', replace: 'if (merged.every(p => Math.abs(p.dir.z) <= Math.sin(Math.PI / 180))) {' },

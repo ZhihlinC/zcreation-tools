@@ -1,4 +1,4 @@
-// Shared Playwright helpers for the 2026-11-05 coverage fix tests.
+// Shared Playwright helpers for the coverage regression tests.
 // Serves the repo root over http, routes the p5 CDN URL to a local copy
 // (P5_LOCAL), and can substitute coverage.js with another file
 // (COVERAGE_JS_OVERRIDE) and coverage/index.html (INDEX_HTML_OVERRIDE) — used by mutation-check.js to prove the browser
@@ -59,7 +59,7 @@ async function newPage(browser, opts = {}) {
 // Chromium on Linux converts download filenames through the process locale;
 // under the container's default C locale every non-ASCII name becomes
 // "download". Real desktop browsers run with a UTF-8 locale, so the tests do
-// too (otherwise the F-06 Unicode-filename check can't be observed).
+// too (otherwise the Unicode-filename check can't be observed).
 function launch(chromium, opts = {}) {
   return chromium.launch({ ...opts, args: ['--use-mock-keychain', '--password-store=basic'], env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' } });
 }

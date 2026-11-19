@@ -1,4 +1,4 @@
-// Node unit tests for the 2026-11-05 coverage fixes (no browser needed).
+// Node regression tests for the coverage tool (no browser needed).
 // Usage: node test-fixes-node.js          (exit code 1 on any failure)
 // Each block names the fix it guards. Every check is
 // written so that reverting the fix makes it fail (see mutation-check.js).

@@ -3,8 +3,9 @@
 ```bash
 cd tests/coverage && npm ci && npx playwright install chromium
 npm test                 # Node: triangulation dev tests + fix checks (no browser)
-cd site && python3 -m http.server 8000   # from the repo root: open http://localhost:8000/coverage/
 ```
+
+Serve the site locally from the repo root: `cd site && python3 -m http.server 8000`, then open http://localhost:8000/coverage/.
 
 The tool itself lives in `site/coverage/`. These scripts load it from there.
 

@@ -4,7 +4,7 @@ A small browser-based tool for sound designers — sketch multichannel speaker l
 
 → **Live**: <https://tools.zcreation.art/coverage/>
 
-![Coverage view of a 32-channel dome layout](og-image.png)
+![Coverage view of a 32-channel dome layout](site/og-image.png)
 
 ## What it does
 
@@ -34,8 +34,15 @@ Built and maintained by [Zhih-Lin Chen](https://zcreation.art) alongside a July 
 
 - Vanilla HTML + JavaScript + [p5.js](https://p5js.org/) (CDN). No build pipeline, no framework, no npm install.
 - Self-contained downloads: every saved layout is a single HTML file with the editing UI inlined.
-- Hosted on Cloudflare Pages.
+- Hosted on Cloudflare Pages; only the `site/` folder is published.
 - Design spec: [SPEC.md](./SPEC.md) (Chinese body with English headings + key terms — the spec is the single source of truth and contains the full standards-alignment caveats).
+
+## Development
+
+The published site is `site/` (serve it locally with `cd site && python3 -m http.server 8000`). Tests live in `tests/`, one folder per tool, each installed with `npm ci && npx playwright install chromium`:
+
+- [`tests/coverage/README.md`](tests/coverage/README.md) — Sound Coverage Sketch regression tests
+- [`tests/pdf/README.md`](tests/pdf/README.md) — PDF page tool: usage notes, tests and library upgrades
 
 ## Feedback (beta)
 

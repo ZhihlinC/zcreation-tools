@@ -1,0 +1,14 @@
+{
+  "private": true,
+  "description": "Dev-only test deps for the coverage tool. The tool itself loads p5 from its CDN and needs no install.",
+  "scripts": {
+    "test": "node test-fixes-node.js",
+    "test:browser": "node test-fixes-browser.js && node roundtrip.js",
+    "mutation": "node mutation-check.js",
+    "mutation:browser": "node mutation-check.js --browser"
+  },
+  "devDependencies": {
+    "p5": "1.11.0",
+    "playwright": "1.65.1"
+  }
+}
